@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly LLVM="$ROOT/build/toolchain/llvm-golem-analog"
+readonly GCC="$ROOT/build/toolchain/riscv64-musl-toolchain"
+readonly SYSROOT="${RISCV_SYSROOT:-$GCC/sysroot}"
+args=(--target=riscv64-unknown-linux-musl -mcpu=golem-analog -fuse-ld=lld
+      -Wno-unused-command-line-argument "-B$LLVM/bin" "--sysroot=$SYSROOT"
+      "--gcc-toolchain=$GCC")
+user_args=()
+openmp=false
+for arg in "$@"; do
+  if [[ "$arg" == -fopenmp || "$arg" == -fopenmp=* ]]; then
+    user_args+=(-Xclang -fopenmp)
+    openmp=true
+  else
+    user_args+=("$arg")
+  fi
+done
+if "$openmp"; then
+  test -f "$SYSROOT/usr/lib/libomp.a" || { echo 'libomp missing: run ./bootstrap.sh toolchain' >&2; exit 1; }
+  args+=(-pthread -isystem "$SYSROOT/usr/include" "-L$SYSROOT/usr/lib" -lomp)
+fi
+exec "$LLVM/bin/clang++" "${args[@]}" "${user_args[@]}"
