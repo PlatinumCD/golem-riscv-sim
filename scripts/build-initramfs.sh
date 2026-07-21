@@ -2,7 +2,7 @@
 set -euo pipefail
 readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly STAGING="$ROOT/build/initramfs-root"
-readonly SOURCE="${TEST_SOURCE:-$ROOT/emulation/five-core-openmp.cpp}"
+readonly SOURCE="${TEST_SOURCE:-$ROOT/emulation/hundred-core-openmp.cpp}"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/dev"
 "$ROOT/toolchain/golem-clang" -static -fopenmp "$SOURCE" -o "$STAGING/test"

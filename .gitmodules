@@ -4,3 +4,6 @@
 [submodule "third_party/riscv-gnu-toolchain"]
 	path = third_party/riscv-gnu-toolchain
 	url = https://github.com/riscv-collab/riscv-gnu-toolchain.git
+[submodule "third_party/linux"]
+	path = third_party/linux
+	url = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
