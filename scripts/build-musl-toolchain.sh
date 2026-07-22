@@ -14,6 +14,9 @@ elif ! git -C "$SOURCE" apply --reverse --check "$PATCH"; then
   exit 1
 fi
 
+# Fetch GCC, MUSL, and binutils only when this toolchain is actually built.
+git -C "$SOURCE" submodule update --init --recursive
+
 mkdir -p "$BUILD"
 cd "$BUILD"
 "$SOURCE/configure" --prefix="$INSTALL" --with-arch=rv64gc --with-abi=lp64d \
