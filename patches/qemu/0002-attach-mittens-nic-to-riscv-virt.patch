@@ -1,0 +1,39 @@
+diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
+index d2eac24..5b7337b 100644
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -41,6 +41,7 @@
+ #include "hw/intc/riscv_imsic.h"
+ #include "hw/intc/sifive_plic.h"
+ #include "hw/misc/sifive_test.h"
++#include "hw/misc/mittens_nic.h"
+ #include "hw/platform-bus.h"
+ #include "chardev/char.h"
+ #include "sysemu/device_tree.h"
+@@ -95,6 +96,7 @@ static const MemMapEntry virt_memmap[] = {
+     [VIRT_APLIC_M] =      {  0xc000000, APLIC_SIZE(VIRT_CPUS_MAX) },
+     [VIRT_APLIC_S] =      {  0xd000000, APLIC_SIZE(VIRT_CPUS_MAX) },
+     [VIRT_UART0] =        { 0x10000000,         0x100 },
++    [VIRT_MITTENS_NIC] =  { 0x10010000,        0x1000 },
+     [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
+     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
+     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
+@@ -1513,3 +1515,6 @@ static void virt_machine_init(MachineState *machine)
++    /* Mittens SST mesh NIC */
++    mittens_nic_create(memmap[VIRT_MITTENS_NIC].base);
++
+     /* VirtIO MMIO devices */
+     for (i = 0; i < VIRTIO_COUNT; i++) {
+         sysbus_create_simple("virtio-mmio",
+diff --git a/include/hw/riscv/virt.h b/include/hw/riscv/virt.h
+index e5c474b..01c925a 100644
+--- a/include/hw/riscv/virt.h
++++ b/include/hw/riscv/virt.h
+@@ -73,6 +73,7 @@ enum {
+     VIRT_APLIC_M,
+     VIRT_APLIC_S,
+     VIRT_UART0,
++    VIRT_MITTENS_NIC,
+     VIRT_VIRTIO,
+     VIRT_FW_CFG,
+     VIRT_IMSIC_M,
