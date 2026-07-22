@@ -9,6 +9,8 @@ The two source dependencies are pinned Git submodules:
   `golem-analog`.
 - `third_party/riscv-gnu-toolchain`: GNU MUSL sysroot/runtime, commit
   `aa35d4554`.
+- `third_party/sst-core`: SST Core `v16.0.0_Final`.
+- `third_party/sst-elements`: SST Elements `v16.0.0_Final`.
 
 QEMU is deliberately a host package. Linux is a pinned submodule and is built
 with `CONFIG_NR_CPUS=128`, which is required because the Debian installer
@@ -26,6 +28,16 @@ Build every toolchain component using all host cores by default:
 ```bash
 ./bootstrap.sh
 ```
+
+Build SST independently, including the matching Elements library:
+
+```bash
+./bootstrap.sh sst
+```
+
+This installs optimized SST Core and Elements beneath `build/`. SST Core uses
+`-O3 -march=native -DNDEBUG`, with MPI enabled; it is intentionally tuned only
+for this AArch64 host.
 
 Build the 100-CPU guest, then run QEMU in the foreground:
 

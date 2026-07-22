@@ -7,3 +7,9 @@
 [submodule "third_party/linux"]
 	path = third_party/linux
 	url = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+[submodule "third_party/sst-core"]
+	path = third_party/sst-core
+	url = https://github.com/sstsimulator/sst-core.git
+[submodule "third_party/sst-elements"]
+	path = third_party/sst-elements
+	url = https://github.com/sstsimulator/sst-elements.git
