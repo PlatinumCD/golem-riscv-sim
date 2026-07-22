@@ -1,59 +1,68 @@
 # Golem RISC-V simulation
 
-Reproducible AArch64-hosted LLVM/MLIR RISC-V compiler, static MUSL OpenMP
-runtime, and a 10x10 (100 CPU) QEMU/OpenMP proof program.
+This repository reproduces an AArch64-hosted compiler and simulation stack for
+the bare-metal Golem RISC-V tile platform. It builds the custom LLVM/MLIR
+compiler, QEMU with the Mittens mesh NIC, SST Core, and the Merlin and Mittens
+SST elements. Each simulated tile is an independent single-hart QEMU process
+with private memory.
 
-The two source dependencies are pinned Git submodules:
+Platform v0 is deliberately bare-metal. Linux, MUSL, pthreads, and OpenMP are
+not part of the required build or runtime.
 
-- `third_party/llvm-project`: PlatinumCD LLVM, commit `d5685386e` on
-  `golem-analog`.
-- `third_party/riscv-gnu-toolchain`: GNU MUSL sysroot/runtime, commit
-  `aa35d4554`.
-- `third_party/sst-core`: SST Core `v16.0.0_Final`.
-- `third_party/sst-elements`: SST Elements `v16.0.0_Final`.
+## Quick start
 
-QEMU is deliberately a host package. Linux is a pinned submodule and is built
-with `CONFIG_NR_CPUS=128`, which is required because the Debian installer
-kernel used in the first proof was limited to 64 CPUs.
-
-On Debian/Ubuntu, install the host prerequisites (package names may vary):
+After installing the host dependencies documented in
+[`docs/building.md`](docs/building.md), run:
 
 ```bash
-sudo apt install build-essential cmake ninja-build git autoconf automake bison flex \
-  gawk gperf texinfo curl cpio gzip qemu-system-misc opensbi
-```
-
-Build every toolchain component using all host cores by default:
-
-```bash
+git clone --recurse-submodules https://github.com/PlatinumCD/golem-riscv-sim.git
+cd golem-riscv-sim
 ./bootstrap.sh
 ```
 
-Build SST independently, including the matching Elements library:
+Bootstrap uses every online host CPU by default. Override that with `JOBS`:
 
 ```bash
-./bootstrap.sh sst
+JOBS=8 ./bootstrap.sh
 ```
 
-This installs optimized SST Core and Elements beneath `build/`. SST Core uses
-`-O3 -march=native -DNDEBUG`, with MPI enabled; it is intentionally tuned only
-for this AArch64 host.
-
-Build the 100-CPU guest, then run QEMU in the foreground:
+The build succeeds only after both system proofs pass:
 
 ```bash
-./bootstrap.sh run
+./tests/hello/run-test.sh
+./tests/mesh-pair/run-test.sh
 ```
 
-The guest maps OpenMP worker `n` to logical grid cell `(n / 10, n % 10)` and
-pins it to Linux CPU `n`. QEMU `virt` supplies 100 SMP CPUs; it does not model
-a physical mesh network. The demo requires at least 100 CPUs.
+## Repository layout
 
-Compile another static RISC-V program:
-
-```bash
-./toolchain/golem-clang -static -fopenmp hello.cpp -o hello
+```text
+build-scripts/                  reproducible preparation and build operations
+bridge/                         shared QEMU/SST bridge ABI
+components/devices/             project-owned QEMU device sources
+components/elements/mittens/    project-owned SST element and its tests
+config/                         pinned revisions and Platform v0 build settings
+docs/                           platform, build, and testing documentation
+patches/qemu/                   minimal upstream QEMU integration changes
+platform/                       bare-metal startup, linker script, and MMIO API
+tests/                          complete system test scenarios
+third_party/                    pinned, pristine Git submodules
+build/                          generated source and build trees (ignored)
+install/                        generated local installation (ignored)
 ```
 
-All generated output is in `build/`, and is excluded from Git. `run` uses the
-prebuilt toolchain; after a fresh clone, run `./bootstrap.sh` once first.
+The upstream submodules remain pristine. Preparation scripts create detached
+Git worktrees below `build/sources/`, overlay project-owned code, and apply the
+small integration patches there.
+
+## Pinned upstreams
+
+- PlatinumCD LLVM `golem-analog` at `d5685386e`;
+- QEMU `v8.2.2`;
+- SST Core `v16.0.0_Final`; and
+- SST Elements `v16.0.0_Final`.
+
+Exact commit IDs are recorded in `config/versions.env` and by the Git
+submodule links.
+
+See [`docs/platform-v0.md`](docs/platform-v0.md) for the locked guest-visible
+address map and NIC interface.

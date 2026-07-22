@@ -1,3 +1,7 @@
 /build/
-/emulation/kernel/
-/emulation/initramfs.cpio.gz
+/install/
+
+# Local remnants from the retired hosted Linux/MUSL prototype.
+/emulation/
+/third_party/linux/
+/third_party/riscv-gnu-toolchain/

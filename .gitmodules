@@ -1,15 +1,12 @@
 [submodule "third_party/llvm-project"]
 	path = third_party/llvm-project
 	url = https://github.com/PlatinumCD/llvm-project.git
-[submodule "third_party/riscv-gnu-toolchain"]
-	path = third_party/riscv-gnu-toolchain
-	url = https://github.com/riscv-collab/riscv-gnu-toolchain.git
-[submodule "third_party/linux"]
-	path = third_party/linux
-	url = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
 [submodule "third_party/sst-core"]
 	path = third_party/sst-core
 	url = https://github.com/sstsimulator/sst-core.git
 [submodule "third_party/sst-elements"]
 	path = third_party/sst-elements
 	url = https://github.com/sstsimulator/sst-elements.git
+[submodule "third_party/qemu"]
+	path = third_party/qemu
+	url = https://gitlab.com/qemu-project/qemu.git
