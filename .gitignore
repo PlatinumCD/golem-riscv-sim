@@ -1,5 +1,7 @@
 /build/
 /install/
+__pycache__/
+*.py[cod]
 
 # Local remnants from the retired hosted Linux/MUSL prototype.
 /emulation/

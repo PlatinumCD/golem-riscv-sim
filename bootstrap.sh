@@ -19,15 +19,17 @@ usage() {
 usage: ./bootstrap.sh [action]
 
 actions:
-  all            initialize, build, and run the two system tests (default)
+  all            initialize, build, and run all system tests (default)
   build          initialize and build the complete environment
   check          verify host build dependencies
   llvm           initialize and build LLVM/Clang/LLD/MLIR
   qemu           initialize and build QEMU with the Mittens NIC
   sst-core       initialize and build SST Core
   sst            initialize and build SST Core, Merlin, and Mittens
+  runtime        build and install the bare-metal runtime archive
   platform       build all bare-metal test images
-  test           run the hello and mesh-pair system tests
+  test           run all boot, communication, routing, and compute proofs
+  test-runtime   run host and RISC-V QEMU runtime-library proofs
   test-elements  run the complete Mittens element test directory
 EOF
 }
@@ -46,8 +48,13 @@ build_environment() {
 }
 
 run_system_tests() {
+    "${ROOT}/runtime/tests/run-test.sh"
+    "${ROOT}/tests/runtime-library/run-test.sh"
     "${ROOT}/tests/hello/run-test.sh"
     "${ROOT}/tests/mesh-pair/run-test.sh"
+    "${ROOT}/tests/mesh-3x3/run-test.sh"
+    "${ROOT}/tests/mesh-pipeline/run-test.sh"
+    "${ROOT}/tests/distributed-matvec/run-test.sh"
 }
 
 case "${ACTION}" in
@@ -82,6 +89,9 @@ case "${ACTION}" in
         "${ROOT}/build-scripts/build-sst-core.sh"
         "${ROOT}/build-scripts/build-sst-elements.sh"
         ;;
+    runtime)
+        "${ROOT}/build-scripts/build-runtime.sh"
+        ;;
     platform)
         "${ROOT}/build-scripts/build-platform.sh" all
         ;;
@@ -90,6 +100,10 @@ case "${ACTION}" in
         ;;
     test-elements)
         "${ROOT}/components/elements/mittens/tests/run-test.sh"
+        ;;
+    test-runtime)
+        "${ROOT}/runtime/tests/run-test.sh"
+        "${ROOT}/tests/runtime-library/run-test.sh"
         ;;
     -h|--help|help)
         usage

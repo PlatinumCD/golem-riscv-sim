@@ -21,7 +21,7 @@ router.addParams(
     {
         "id": 0,
         "num_ports": 2,
-        "flit_size": "8B",
+        "flit_size": "4B",
         "xbar_bw": "1GB/s",
         "link_bw": "1GB/s",
         "input_buf_size": "64B",

@@ -231,7 +231,7 @@ void Tile::serviceBridge()
 void Tile::serviceOutgoingPackets()
 {
     constexpr int kVirtualNetwork = 0;
-    constexpr int kPacketBits = 64;
+    constexpr int kPacketBits = 32;
 
     while (true) {
         if (!pendingTransmit_.has_value()) {

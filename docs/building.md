@@ -39,8 +39,21 @@ Useful partial builds are:
 ./bootstrap.sh qemu
 ./bootstrap.sh sst-core
 ./bootstrap.sh sst
+./bootstrap.sh runtime
 ./bootstrap.sh platform
 ```
+
+`./bootstrap.sh runtime` compiles the freestanding runtime with the pinned
+Golem Clang and installs:
+
+```text
+install/runtime/include/golem/runtime/
+install/runtime/lib/libgolem-runtime.a
+```
+
+Every platform image links this archive statically. Running
+`build-scripts/build-platform.sh` also refreshes the archive, so individual
+test builds cannot accidentally use stale runtime objects.
 
 ## Source preparation
 

@@ -14,7 +14,8 @@ if [[ ! -x "${SST}" || ! -x "${QEMU}" ]]; then
     exit 1
 fi
 
-"${PROJECT_ROOT}/build-scripts/build-platform.sh" all
+"${PROJECT_ROOT}/build-scripts/build-platform.sh" hello
+"${PROJECT_ROOT}/build-scripts/build-platform.sh" mesh-pair
 
 export SST_LIB_PATH="${ELEMENT_LIBRARY}${SST_LIB_PATH:+:${SST_LIB_PATH}}"
 export MITTENS_TEST_QEMU="${QEMU}"

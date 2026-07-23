@@ -26,11 +26,17 @@ Bootstrap uses every online host CPU by default. Override that with `JOBS`:
 JOBS=8 ./bootstrap.sh
 ```
 
-The build succeeds only after both system proofs pass:
+The build succeeds only after the runtime unit test and all six target/system
+proofs pass:
 
 ```bash
+./runtime/tests/run-test.sh
+./tests/runtime-library/run-test.sh
 ./tests/hello/run-test.sh
 ./tests/mesh-pair/run-test.sh
+./tests/mesh-3x3/run-test.sh
+./tests/mesh-pipeline/run-test.sh
+./tests/distributed-matvec/run-test.sh
 ```
 
 ## Repository layout
@@ -44,6 +50,7 @@ config/                         pinned revisions and Platform v0 build settings
 docs/                           platform, build, and testing documentation
 patches/qemu/                   minimal upstream QEMU integration changes
 platform/                       bare-metal startup, linker script, and MMIO API
+runtime/                        freestanding task/dataflow runtime library
 tests/                          complete system test scenarios
 third_party/                    pinned, pristine Git submodules
 build/                          generated source and build trees (ignored)
@@ -53,6 +60,18 @@ install/                        generated local installation (ignored)
 The upstream submodules remain pristine. Preparation scripts create detached
 Git worktrees below `build/sources/`, overlay project-owned code, and apply the
 small integration patches there.
+
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) explains component ownership,
+  lifecycle, and the complete packet data path.
+- [`docs/platform-v0.md`](docs/platform-v0.md) defines the guest-visible address
+  map, NIC registers, and mesh-routing contract.
+- [`docs/timing-model.md`](docs/timing-model.md) defines which timing and
+  performance claims are valid in the current QEMU/SST integration.
+- [`docs/building.md`](docs/building.md) documents host requirements and build
+  entry points.
+- [`docs/testing.md`](docs/testing.md) describes every system and element proof.
 
 ## Pinned upstreams
 
@@ -64,5 +83,9 @@ small integration patches there.
 Exact commit IDs are recorded in `config/versions.env` and by the Git
 submodule links.
 
-See [`docs/platform-v0.md`](docs/platform-v0.md) for the locked guest-visible
-address map and NIC interface.
+The runtime directory contains the implemented Platform v0 foundations:
+tensor/task ABI types, immutable registries, the fixed task-instance pool,
+the ready queue, and a transport-neutral 32-bit word interface. The complete
+scheduler and tensor arena remain later integration stages; the distributed
+matvec proof currently exercises the fixed word stream directly from its tile
+application.

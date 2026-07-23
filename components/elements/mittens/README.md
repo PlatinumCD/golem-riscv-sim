@@ -13,7 +13,10 @@ until QEMU exits. The default `launch_mode=disabled` is useful for element and
 configuration tests. When `networkIF` is attached, the component creates a
 per-tile shared-memory bridge and passes it to the custom QEMU `mittens-nic`
 device. Bridge queues are polled at `process_poll_frequency`. Simulation-time
-synchronization will be implemented separately.
+synchronization is not implemented; QEMU instruction progress remains
+independent of SST time. See
+[`../../../docs/timing-model.md`](../../../docs/timing-model.md) before using
+simulation timestamps as performance measurements.
 
 `tests/multi_tile_boot.py` creates two or more independently managed tiles in
 one SST simulation. It defaults to four tiles and accepts the tile count from
@@ -29,3 +32,6 @@ The intended component boundary is:
 ```text
 bare-metal ELF <-> QEMU <-> mittens.tile <-> merlin.linkcontrol <-> Merlin mesh
 ```
+
+The ownership boundaries and complete packet path are documented in
+[`../../../docs/architecture.md`](../../../docs/architecture.md).
