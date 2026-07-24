@@ -1,5 +1,5 @@
-#ifndef MITTENS_BRIDGE_H
-#define MITTENS_BRIDGE_H
+#ifndef MITTENS_NIC_TILE_BRIDGE_H
+#define MITTENS_NIC_TILE_BRIDGE_H
 
 #include <stdint.h>
 

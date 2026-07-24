@@ -1,0 +1,107 @@
+diff --git a/accel/tcg/tcg-accel-ops-icount.c b/accel/tcg/tcg-accel-ops-icount.c
+--- a/accel/tcg/tcg-accel-ops-icount.c
++++ b/accel/tcg/tcg-accel-ops-icount.c
+@@ -24,6 +24,7 @@
+ #include "sysemu/replay.h"
+ #include "sysemu/cpu-timers.h"
+ #include "qemu/main-loop.h"
++#include "hw/misc/mittens_sync.h"
+ #include "qemu/guest-random.h"
+ #include "exec/exec-all.h"
+ 
+@@ -105,6 +106,8 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+ {
+     int insns_left;
+ 
++    cpu_budget = mittens_sync_wait_for_grant(cpu_budget);
++
+     /*
+      * These should always be cleared by icount_process_data after
+      * each vCPU execution. However u16.high can be raised
+@@ -116,7 +119,9 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+ 
+     replay_mutex_lock();
+ 
+-    cpu->icount_budget = MIN(icount_get_limit(), cpu_budget);
++    cpu->icount_budget = mittens_sync_available() ?
++        cpu_budget :
++        MIN(icount_get_limit(), cpu_budget);
+     insns_left = MIN(0xffff, cpu->icount_budget);
+     cpu->neg.icount_decr.u16.low = insns_left;
+     cpu->icount_extra = cpu->icount_budget - insns_left;
+@@ -131,9 +134,11 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+         icount_notify_aio_contexts();
+         qemu_mutex_unlock_iothread();
+     }
++    mittens_sync_begin_quantum(cpu->icount_budget);
+ }
+ 
+ void icount_process_data(CPUState *cpu)
+ {
++    mittens_sync_quantum_end();
+     /* Account for executed instructions */
+     icount_update(cpu);
+ 
+diff --git a/accel/tcg/icount-common.c b/accel/tcg/icount-common.c
+--- a/accel/tcg/icount-common.c
++++ b/accel/tcg/icount-common.c
+@@ -29,6 +29,7 @@
+ #include "qemu/error-report.h"
+ #include "sysemu/cpus.h"
+ #include "sysemu/qtest.h"
++#include "hw/misc/mittens_sync.h"
+ #include "qemu/main-loop.h"
+ #include "qemu/option.h"
+ #include "qemu/seqlock.h"
+@@ -76,6 +77,9 @@ static int64_t icount_get_executed(CPUState *cpu)
+ static void icount_update_locked(CPUState *cpu)
+ {
+     int64_t executed = icount_get_executed(cpu);
++    mittens_sync_account_icount(
++        executed,
++        cpu->icount_budget - executed);
+     cpu->icount_budget -= executed;
+ 
+     qatomic_set_i64(&timers_state.qemu_icount,
+@@ -339,7 +343,8 @@ static void icount_start_warp_timer(void)
+                                           ~QEMU_TIMER_ATTR_EXTERNAL);
+     if (deadline < 0) {
+         static bool notified;
+-        if (!icount_sleep && !notified) {
++        if (!icount_sleep && !notified &&
++            !mittens_sync_available()) {
+             warn_report("icount sleep disabled and no active timers");
+             notified = true;
+         }
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -33,6 +33,7 @@ system_ss.add(when: 'CONFIG_MCHP_PFSOC_SYSREG', if_true: files('mchp_pfsoc_sysr
+ system_ss.add(when: 'CONFIG_SIFIVE_TEST', if_true: files('sifive_test.c'))
+ system_ss.add(when: 'CONFIG_RISCV_VIRT', if_true: files('mittens_nic.c'))
+ system_ss.add(when: 'CONFIG_RISCV_VIRT', if_true: files('mittens_analog.c'))
++system_ss.add(when: 'CONFIG_RISCV_VIRT', if_true: files('mittens_sync.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_E_PRCI', if_true: files('sifive_e_prci.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_E_AON', if_true: files('sifive_e_aon.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_U_OTP', if_true: files('sifive_u_otp.c'))
+diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -42,6 +42,7 @@
+ #include "hw/intc/sifive_plic.h"
+ #include "hw/misc/sifive_test.h"
+ #include "hw/misc/mittens_analog.h"
++#include "hw/misc/mittens_sync.h"
+ #include "hw/misc/mittens_nic.h"
+ #include "hw/platform-bus.h"
+ #include "chardev/char.h"
+@@ -1513,6 +1514,9 @@ static void virt_machine_init(MachineState *machine)
+     /* SiFive Test MMIO device */
+     sifive_test_create(memmap[VIRT_TEST].base);
+ 
++    /* Mittens SST/QEMU execution synchronization */
++    mittens_sync_create();
++
+     /* Mittens SST mesh NIC */
+     mittens_nic_create(memmap[VIRT_MITTENS_NIC].base);
+ 

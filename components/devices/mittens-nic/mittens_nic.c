@@ -9,12 +9,13 @@
 #include "qemu/osdep.h"
 
 #include "hw/misc/mittens_nic.h"
+#include "hw/misc/mittens_sync.h"
 #include "hw/qdev-properties.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 
-#include "mittens/bridge.h"
+#include "mittens/NICTileBridge.h"
 
 #define MITTENS_NIC_MMIO_SIZE 0x1000
 
@@ -123,6 +124,9 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
             !mittens_bridge_tx_push(s->bridge, packet)) {
             mittens_nic_set_error(s, MITTENS_BRIDGE_ERROR_TX_FULL,
                                   "TX_DATA write while TX_READY is clear");
+        } else if (mittens_sync_available()) {
+            mittens_sync_yield_nic(
+                MITTENS_SYNC_STOP_NIC_TRANSMIT);
         }
         return;
 

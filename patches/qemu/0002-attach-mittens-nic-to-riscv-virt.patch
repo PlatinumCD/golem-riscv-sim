@@ -2,10 +2,11 @@ diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
 index d2eac24..5b7337b 100644
 --- a/hw/riscv/virt.c
 +++ b/hw/riscv/virt.c
-@@ -41,6 +41,7 @@
+@@ -41,6 +41,8 @@
  #include "hw/intc/riscv_imsic.h"
  #include "hw/intc/sifive_plic.h"
  #include "hw/misc/sifive_test.h"
++#include "hw/misc/mittens_analog.h"
 +#include "hw/misc/mittens_nic.h"
  #include "hw/platform-bus.h"
  #include "chardev/char.h"
@@ -18,9 +19,12 @@ index d2eac24..5b7337b 100644
      [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
      [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
      [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
-@@ -1513,3 +1515,6 @@ static void virt_machine_init(MachineState *machine)
+@@ -1513,3 +1516,9 @@ static void virt_machine_init(MachineState *machine)
 +    /* Mittens SST mesh NIC */
 +    mittens_nic_create(memmap[VIRT_MITTENS_NIC].base);
++
++    /* Mittens SST tile-local analog accelerator */
++    mittens_analog_create();
 +
      /* VirtIO MMIO devices */
      for (i = 0; i < VIRTIO_COUNT; i++) {
