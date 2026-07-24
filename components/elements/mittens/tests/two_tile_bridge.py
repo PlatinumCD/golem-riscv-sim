@@ -40,7 +40,7 @@ for tile_id, image in enumerate(images):
             "elf": image,
             "memory": "16M",
             "launch_mode": "managed",
-            "process_poll_frequency": "1MHz",
+            "cpu_clock": "1GHz",
             "verbose": 2,
         }
     )

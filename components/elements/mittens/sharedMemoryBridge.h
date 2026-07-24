@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "mittens/bridge.h"
+#include "mittens/NICTileBridge.h"
 
 namespace SST {
 namespace Mittens {

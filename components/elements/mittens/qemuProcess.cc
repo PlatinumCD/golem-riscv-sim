@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <spawn.h>
 #include <stdexcept>
 #include <system_error>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include <sys/wait.h>
+#include <unistd.h>
 
 extern char** environ;
 
@@ -24,7 +26,16 @@ namespace {
 
 constexpr auto kTerminateGracePeriod = std::chrono::seconds(1);
 constexpr auto kTerminatePollInterval = std::chrono::milliseconds(10);
+constexpr int kChildSyncBridgeFileDescriptor = 41;
 constexpr int kChildBridgeFileDescriptor = 42;
+constexpr int kChildAnalogBridgeFileDescriptor = 43;
+constexpr int kFirstStagingFileDescriptor = 64;
+
+struct BridgeFileDescriptorMapping {
+    int source;
+    int target;
+    int staging;
+};
 
 std::vector<std::string> buildArguments(const QemuConfiguration& config)
 {
@@ -49,11 +60,25 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
         "-no-reboot",
     };
 
+    if (config.syncBridgeFileDescriptor >= 0) {
+        arguments.push_back("-icount");
+        arguments.push_back("shift=0,sleep=off");
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.bridge-fd=" +
+            std::to_string(kChildSyncBridgeFileDescriptor));
+    }
     if (config.bridgeFileDescriptor >= 0) {
         arguments.push_back("-global");
         arguments.push_back(
             "mittens-nic.bridge-fd=" +
             std::to_string(kChildBridgeFileDescriptor));
+    }
+    if (config.analogBridgeFileDescriptor >= 0) {
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-analog.bridge-fd=" +
+            std::to_string(kChildAnalogBridgeFileDescriptor));
     }
 
     return arguments;
@@ -116,27 +141,78 @@ void QemuProcess::start(const QemuConfiguration& config)
 
     posix_spawn_file_actions_t fileActions;
     posix_spawn_file_actions_t* fileActionsPointer = nullptr;
+    std::vector<BridgeFileDescriptorMapping> bridgeMappings;
 
-    if (config.bridgeFileDescriptor >= 0) {
+    const auto addBridgeMapping =
+        [&bridgeMappings](int source, int target) {
+            if (source >= 0) {
+                bridgeMappings.push_back({source, target, -1});
+            }
+        };
+    addBridgeMapping(
+        config.syncBridgeFileDescriptor,
+        kChildSyncBridgeFileDescriptor);
+    addBridgeMapping(
+        config.bridgeFileDescriptor,
+        kChildBridgeFileDescriptor);
+    addBridgeMapping(
+        config.analogBridgeFileDescriptor,
+        kChildAnalogBridgeFileDescriptor);
+
+    const auto closeStagingFileDescriptors =
+        [&bridgeMappings]() noexcept {
+            for (const BridgeFileDescriptorMapping& mapping :
+                 bridgeMappings) {
+                if (mapping.staging >= 0) {
+                    (void)::close(mapping.staging);
+                }
+            }
+        };
+
+    if (!bridgeMappings.empty()) {
+        for (BridgeFileDescriptorMapping& mapping : bridgeMappings) {
+            mapping.staging = ::fcntl(
+                mapping.source,
+                F_DUPFD_CLOEXEC,
+                kFirstStagingFileDescriptor);
+            if (mapping.staging < 0) {
+                const int error = errno;
+                closeStagingFileDescriptors();
+                throw std::system_error(
+                    error,
+                    std::generic_category(),
+                    "failed to stage QEMU bridge fd");
+            }
+        }
+
         int actionResult = posix_spawn_file_actions_init(&fileActions);
         if (actionResult != 0) {
+            closeStagingFileDescriptors();
             throw std::system_error(actionResult,
                                     std::generic_category(),
                                     "failed to initialize QEMU file actions");
         }
         fileActionsPointer = &fileActions;
 
-        actionResult = posix_spawn_file_actions_adddup2(
-            &fileActions,
-            config.bridgeFileDescriptor,
-            kChildBridgeFileDescriptor);
-        if (actionResult == 0 &&
-            config.bridgeFileDescriptor != kChildBridgeFileDescriptor) {
-            actionResult = posix_spawn_file_actions_addclose(
-                &fileActions, config.bridgeFileDescriptor);
+        for (const BridgeFileDescriptorMapping& mapping :
+             bridgeMappings) {
+            actionResult = posix_spawn_file_actions_adddup2(
+                &fileActions,
+                mapping.staging,
+                mapping.target);
+            if (actionResult == 0) {
+                actionResult = posix_spawn_file_actions_addclose(
+                    &fileActions,
+                    mapping.staging);
+            }
+            if (actionResult != 0) {
+                break;
+            }
         }
+
         if (actionResult != 0) {
             posix_spawn_file_actions_destroy(&fileActions);
+            closeStagingFileDescriptors();
             throw std::system_error(actionResult,
                                     std::generic_category(),
                                     "failed to configure QEMU bridge fd");
@@ -155,6 +231,7 @@ void QemuProcess::start(const QemuConfiguration& config)
     if (fileActionsPointer != nullptr) {
         posix_spawn_file_actions_destroy(&fileActions);
     }
+    closeStagingFileDescriptors();
 
     if (result != 0) {
         throw std::system_error(result, std::generic_category(),

@@ -15,7 +15,9 @@ struct QemuConfiguration {
     std::string executable;
     std::string elfPath;
     std::string memory;
+    int syncBridgeFileDescriptor = -1;
     int bridgeFileDescriptor = -1;
+    int analogBridgeFileDescriptor = -1;
 };
 
 struct QemuExitStatus {
@@ -40,6 +42,7 @@ class QemuProcess final
 
     void start(const QemuConfiguration& config);
     std::optional<QemuExitStatus> pollExit();
+    QemuExitStatus waitForExit();
     void terminate() noexcept;
 
     bool running() const noexcept { return pid_ > 0; }
@@ -47,7 +50,6 @@ class QemuProcess final
 
   private:
     static QemuExitStatus decodeWaitStatus(int status);
-    QemuExitStatus waitForExit();
 
     pid_t pid_ = -1;
 };

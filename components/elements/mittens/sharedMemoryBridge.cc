@@ -8,6 +8,7 @@
 #include <string>
 #include <system_error>
 
+#include <linux/memfd.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -29,7 +30,7 @@ void SharedMemoryBridge::create(std::uint32_t tileId)
 #if defined(SYS_memfd_create)
     const std::string name = "mittens-tile-" + std::to_string(tileId);
     fileDescriptor_ = static_cast<int>(
-        syscall(SYS_memfd_create, name.c_str(), 0));
+        syscall(SYS_memfd_create, name.c_str(), MFD_CLOEXEC));
 #else
     throw std::runtime_error("memfd_create is not supported on this host");
 #endif

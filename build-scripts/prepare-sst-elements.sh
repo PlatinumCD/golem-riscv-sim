@@ -9,13 +9,17 @@ readonly SUBMODULE="${PROJECT_ROOT}/third_party/sst-elements"
 readonly SOURCE="${PREPARED_SOURCE_ROOT}/sst-elements"
 readonly ELEMENT="${PROJECT_ROOT}/components/elements/mittens"
 readonly DESTINATION="${SOURCE}/src/sst/elements/mittens"
-readonly BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/bridge.h"
+readonly NIC_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/NICTileBridge.h"
+readonly ANALOG_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/AnalogTileBridge.h"
+readonly SYNC_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/SyncTileBridge.h"
 
 for command in find git install; do
     require_command "${command}"
 done
 require_file "${ELEMENT}/Makefile.am"
-require_file "${BRIDGE_HEADER}"
+require_file "${NIC_BRIDGE_HEADER}"
+require_file "${ANALOG_BRIDGE_HEADER}"
+require_file "${SYNC_BRIDGE_HEADER}"
 
 prepare_worktree "${SUBMODULE}" "${SOURCE}" "${SST_ELEMENTS_COMMIT}" \
     "SST Elements"
@@ -24,10 +28,14 @@ while IFS= read -r -d '' file; do
     relative="${file#${ELEMENT}/}"
     install -D -m 0644 "${file}" "${DESTINATION}/${relative}"
 done < <(find "${ELEMENT}" -type f -print0)
-install -D -m 0644 "${BRIDGE_HEADER}" \
-    "${DESTINATION}/include/mittens/bridge.h"
+install -D -m 0644 "${NIC_BRIDGE_HEADER}" \
+    "${DESTINATION}/include/mittens/NICTileBridge.h"
+install -D -m 0644 "${ANALOG_BRIDGE_HEADER}" \
+    "${DESTINATION}/include/mittens/AnalogTileBridge.h"
+install -D -m 0644 "${SYNC_BRIDGE_HEADER}" \
+    "${DESTINATION}/include/mittens/SyncTileBridge.h"
 
-# Platform v0 needs only the Merlin network and the Mittens tile element.
+# Platform v0.1 needs only the Merlin network and the Mittens tile element.
 while IFS= read -r -d '' directory; do
     element_name="$(basename -- "${directory}")"
     case "${element_name}" in
