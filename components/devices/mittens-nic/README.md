@@ -16,8 +16,8 @@ See the complete data path in
 ## Guest-visible registers
 
 All defined accesses are aligned, little-endian, 32-bit operations. The
-register interface is also part of the Platform v0 contract in
-[`../../../docs/platform-v0.md`](../../../docs/platform-v0.md).
+register interface is also part of the Platform v0.1 contract in
+[`../../../docs/platform-v0.1.md`](../../../docs/platform-v0.1.md).
 
 | Offset | Name | Access | Meaning |
 | ---: | --- | --- | --- |
@@ -30,7 +30,9 @@ register interface is also part of the Platform v0 contract in
 To transmit, software waits for `STATUS.TX_READY`, writes `TX_DEST`, executes
 an I/O memory fence, and writes the 32-bit payload to `TX_DATA`. The
 `TX_DATA` write is the doorbell: each write creates exactly one bridge packet.
-The destination remains latched until software changes it.
+The destination remains latched until software changes it. With managed
+execution, QEMU then yields `NIC_TRANSMIT` through fd 41 so SST injects the
+packet at that exact instruction boundary.
 
 To receive, software waits for `STATUS.RX_VALID` and reads `RX_DATA`. That
 read consumes one payload. The guest helper in
@@ -101,5 +103,5 @@ patches.
 The patches register the source with QEMU's build system and instantiate one
 NIC at `0x10010000` on every RISC-V `virt` machine. Any change to the shared
 structure must stay synchronized with
-[`../../../bridge/include/mittens/bridge.h`](../../../bridge/include/mittens/bridge.h)
+[`../../../bridge/include/mittens/NICTileBridge.h`](../../../bridge/include/mittens/NICTileBridge.h)
 and requires the ABI/version considerations described in the bridge README.

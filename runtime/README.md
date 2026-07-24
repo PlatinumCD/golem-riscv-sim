@@ -1,11 +1,11 @@
 # Golem bare-metal runtime
 
 This directory builds the reusable, freestanding runtime library described in
-[`../docs/platform-v0.md`](../docs/platform-v0.md). The target artifact is
+[`../docs/platform-v0.1.md`](../docs/platform-v0.1.md). The target artifact is
 `libgolem-runtime.a`, statically linked into each tile ELF alongside that
 tile's generated registry, routes, tensor plan, and compiled MLIR task objects.
 
-The library currently implements the agreed Platform v0 foundations:
+The library currently implements the agreed Platform v0.1 foundations:
 
 - task and tensor ABI types;
 - immutable binary-search task registries;

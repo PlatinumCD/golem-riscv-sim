@@ -1,23 +1,63 @@
 # Mittens host bridge ABI
 
-[`include/mittens/bridge.h`](include/mittens/bridge.h) is the versioned
+Mittens uses three per-tile shared-memory bridges with one control plane:
+
+| QEMU descriptor | Header | Purpose |
+| ---: | --- | --- |
+| 41 | `SyncTileBridge.h` | Instruction grants, yields, stop reasons, and resume |
+| 42 | `NICTileBridge.h` | Mesh transmit and receive packet data |
+| 43 | `AnalogTileBridge.h` | Analog commands, operands, and results |
+
+Descriptors 42 and 43 never grant execution or resume a hart. Every device
+boundary is reported through fd 41.
+
+[`include/mittens/SyncTileBridge.h`](include/mittens/SyncTileBridge.h) is the
+fixed 128-byte control contract. SST publishes a grant epoch and instruction
+budget, QEMU runs under precise icount, and QEMU publishes a monotonic executed
+count plus a stop reason. Analog events also identify their array channel and
+slot sequence. Release/acquire atomics publish state transitions; shared futex
+wakeups implement the fd 41 grant/yield handshake without polling.
+`GUEST_EXIT` is a terminal event: QEMU publishes it before normal finisher
+shutdown, and SST schedules and reaps the child at that instruction boundary.
+
+[`include/mittens/NICTileBridge.h`](include/mittens/NICTileBridge.h) is the versioned
 shared-memory contract between one QEMU `mittens-nic` device and one SST
 `mittens.tile` component. It is C-compatible so the QEMU C device and SST C++
 element compile against the same declarations and inline queue operations.
 
 This ABI is internal to the host integration. It is distinct from the
 guest-visible MMIO contract in
-[`../docs/platform-v0.md`](../docs/platform-v0.md).
+[`../docs/platform-v0.1.md`](../docs/platform-v0.1.md).
+
+[`include/mittens/AnalogTileBridge.h`](include/mittens/AnalogTileBridge.h)
+defines the separate tile-local analog path. It fixes the operation and status
+values, the 24-byte command, the 8-byte response, the 32-byte/256-bit data
+beat, and a geometry-sized shared-memory layout. Every array owns an
+independent channel with four command slots. QEMU publishes slot data; SST
+accepts commands, meters their transfer and compute work, and publishes
+completion. Acceptance and completion waits are controlled through fd 41.
+
+Analog-enabled tiles duplicate this second `memfd` to descriptor 43 and pass
+`mittens-analog.bridge-fd=43` to QEMU. Its 64-byte header records tile ID,
+array count, common rows and columns, queue capacity, payload size, link
+width, and dynamic strides. Each array channel separates QEMU's write index
+from SST's accept index by cache lines. A slot contains metadata followed by
+enough 32-bit payload storage for one complete matrix. Release/acquire atomics
+publish data-state transitions. The fd 41 bridge, not the analog slot, resumes
+the QEMU hart after acceptance or completion.
 
 ## Creation and mapping
 
-For each network-attached tile, SST:
+For each managed tile, SST first creates the fd 41 synchronization bridge.
+It additionally creates fd 42 when a network is attached and fd 43 when analog
+arrays are configured. For the NIC data bridge, SST:
 
-1. creates an anonymous `memfd` named `mittens-tile-<tile_id>`;
+1. creates a close-on-exec anonymous `memfd` named
+   `mittens-tile-<tile_id>`;
 2. resizes it to `sizeof(MittensBridgeShared)`;
 3. maps it shared and read/write;
 4. zeroes the complete structure and writes the ABI header; and
-5. duplicates the descriptor to file descriptor 42 in the QEMU child.
+5. duplicates a staged copy to file descriptor 42 in the QEMU child.
 
 QEMU receives descriptor 42 through the `mittens-nic.bridge-fd` property. The
 device checks the file size, maps the structure, closes the descriptor, and
@@ -25,6 +65,8 @@ validates the magic, version, structure size, and queue capacity. SST retains
 its descriptor and mapping until tile cleanup.
 
 There is one bridge per tile. Bridges are never shared between QEMU tiles.
+Staging all active bridge descriptors above the fixed 41-43 range prevents
+one `dup2` operation from overwriting the source of a later mapping.
 
 ## ABI constants
 
@@ -74,7 +116,7 @@ typedef struct MittensBridgePacket {
 ```
 
 Receive entries contain only the 32-bit payload. SST knows the request source,
-but Platform v0 does not expose it to QEMU or guest software.
+but Platform v0.1 does not expose it to QEMU or guest software.
 
 ## Queue ownership
 
@@ -106,9 +148,11 @@ Each side reads its privately owned index with relaxed ordering. The ABI uses
 compiler atomic builtins so the C and C++ consumers share identical ordering
 semantics.
 
-The bridge does not contain locks, event notifications, timestamps, or CPU
-instruction counts. Mittens currently discovers queue changes by polling. See
-[`../docs/timing-model.md`](../docs/timing-model.md) for the consequences.
+The fd 42 data bridge does not contain locks, timestamps, or CPU instruction
+counts. A `TX_DATA` write publishes the packet there and then yields
+`NIC_TRANSMIT` through fd 41. SST services the data queue only after the
+reported instruction boundary reaches its scheduled CPU cycle. See
+[`../docs/timing-model.md`](../docs/timing-model.md).
 
 ## Protocol errors
 

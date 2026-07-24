@@ -1,122 +1,141 @@
-# Timing model and measurement limits
+# Timing model
 
-Platform v0 is functionally integrated but is not a cycle-synchronized CPU and
-network simulation. This distinction is essential when interpreting SST output
-or comparing runs.
+Platform v0.1 synchronizes every managed QEMU tile to the SST event schedule.
+SST is the time authority; QEMU is the functional RISC-V instruction executor.
 
-## The two current time domains
+## CPU synchronization
 
-QEMU and SST make progress independently:
-
-```text
-QEMU time domain                    SST time domain
-----------------                    ---------------
-executes guest instructions         processes discrete events
-scheduled by the host OS            advances simulated timestamps
-reaches MMIO at host-dependent time models Merlin links and routers
-```
-
-QEMU executes each RISC-V tile as quickly as the host permits. The current
-launch does not use instruction quanta, stop/resume handshakes, or an SST CPU
-timing model. Different QEMU processes may receive different amounts of host
-CPU time.
-
-`mittens.tile` registers an SST clock at `process_poll_frequency`, which
-defaults to `1MHz`. On those SST ticks it:
-
-- checks the shared bridge for guest transmissions;
-- delivers due SST packets into the receive bridge; and
-- checks whether the QEMU child has exited.
-
-The shared bridge contains queue state but no simulated timestamp or executed
-instruction count. Therefore, SST does not know how many guest instructions
-occurred before a packet appeared in the transmit queue.
-
-## What SST currently models
-
-Once `mittens.tile` observes and injects a packet, Merlin models the network
-portion in SST simulated time, including:
-
-- topology and selected router ports;
-- configured link latency and bandwidth;
-- input and output buffering;
-- crossbar and output-port contention; and
-- backpressure through `SST::Interfaces::SimpleNetwork`.
-
-The current shared 2D test topology configures 10 ns links, 1 GB/s link and
-crossbar bandwidth, 4-byte flits, and 64-byte input and output buffers. Router
-and link statistics are valid observations of that configured SST network
-model after packet injection.
-
-## What the reported completion time means
-
-An SST line such as:
+Every tile owns a control bridge on QEMU file descriptor 41. SST grants QEMU
+a bounded instruction quantum, QEMU executes under precise `-icount`, and QEMU
+returns an event containing the number of instructions completed in that
+grant. The initial CPU timing policy is:
 
 ```text
-Simulation is complete, simulated time: 14.8 ms
+one retired RISC-V instruction = one cpu_clock cycle
 ```
 
-is not the RISC-V application runtime. It includes SST clock ticks spent
-polling host QEMU processes. The number of ticks before a child reaches an MMIO
-operation or exits can depend on host scheduling and host performance.
+The default `cpu_clock` is 1 GHz and the default
+`sync_instruction_quantum` is 1,000 instructions. The quantum is a host
+execution optimization, not a simulated delay: SST schedules the next control
+event after the exact reported instruction count.
 
-The completion timestamp must not be interpreted as:
+```text
+SST                                      QEMU
+---                                      ----
+grant N instructions over fd 41  ----->  execute under precise icount
+                                         stop at quantum or device boundary
+receive reason + executed count  <-----  yield over fd 41
+advance exactly that many cycles
+process the boundary
+resume or issue the next grant    ----->  continue
+```
 
-- RISC-V CPU cycles;
-- execution latency of a tile routine;
-- end-to-end application performance;
-- a cycle-accurate overlap of computation and communication; or
-- a host-independent performance result.
+QEMU may yield before the end of a quantum for:
 
-A guest `rdcycle` observation, if provided by QEMU, would likewise not be
-synchronized with SST or represent a modeled Golem microarchitecture.
+- a mesh transmission;
+- an analog submission;
+- an analog queue/completion wait; or
+- normal guest completion through the SiFive test finisher; or
+- another explicitly modeled device boundary.
 
-## Measurements that are valid today
+Counts are monotonic within one grant even when QEMU internally rebases its
+icount counters. The fd 41 bridge accumulates those internal segments before
+reporting progress to SST. Two boundaries at the same retired-instruction
+count are scheduled at the same SST time; control handshakes never add a
+synthetic CPU cycle.
 
-The current implementation and tests can support claims about:
+A normal finisher write publishes `GUEST_EXIT` before QEMU shuts down. SST
+schedules the terminal event using its exact instruction count and reaps the
+child at that event, so host process-exit observation cannot change the
+simulated completion time.
 
-- correct RISC-V program execution;
-- correct MMIO and bridge behavior;
-- packet source and destination at the SST endpoint;
-- functional delivery and ordering for the tested traffic;
-- selected Manhattan route and hop count;
-- per-router packet and bit counts;
-- modeled network stalls and idle time; and
-- deterministic application results enforced by packet dependencies.
+## Bridge roles
 
-Network latency statistics describe the configured Merlin model between SST
-injection and SST delivery. They do not include a synchronized model of the
-guest computation before injection or after delivery.
+The three inherited descriptors have distinct responsibilities:
 
-## Consequences for current tests
+| Descriptor | Role |
+| ---: | --- |
+| 41 | Execution grants, yields, stop reasons, and resume handshakes |
+| 42 | Mesh NIC packet data |
+| 43 | Analog command, operand, and result data |
 
-The single-tile, communication, routed-mesh, and computation-pipeline proofs
-are correctness tests. Their pass or fail result is meaningful. Small changes
-in their final SST completion timestamp are not performance regressions.
+Descriptors 42 and 43 are data planes. They do not advance or resume QEMU.
+For example, an analog instruction first publishes its command and payload in
+fd 43, then yields once through fd 41 with `ANALOG_SUBMIT`. SST reads fd 43,
+models the operation, and resumes QEMU through fd 41. A blocking
+`StoreVector` remains held until its fd 43 result is complete.
 
-Busy-wait loops such as `mesh_nic::receive()` may execute an arbitrary number
-of times before SST places a payload in the receive bridge. Those iterations
-are functionally harmless but currently have no defined relationship to SST
-time.
+## Mesh timing
 
-## Required synchronization milestone
+A `TX_DATA` MMIO write publishes one 32-bit packet in fd 42 and yields with
+`NIC_TRANSMIT`. SST therefore injects that packet at a defined CPU instruction
+boundary. Merlin then models routing, link latency, bandwidth, buffering,
+contention, and backpressure in SST time.
 
-A synchronized design should make SST the time authority and introduce an
-explicit execution protocol:
+The current receive interface is polling MMIO. An empty status read is not
+itself a blocking fd 41 event because the same status register also reports
+transmit readiness. A receiving guest runs until its next synchronization
+boundary, at most one instruction quantum, and SST then moves any delivered
+packets into fd 42. Receive-observation timing is consequently deterministic
+but currently has up to `sync_instruction_quantum` instructions of polling
+granularity.
 
-1. SST grants a tile a bounded instruction or timing quantum.
-2. QEMU executes until the quantum ends, an MMIO boundary is reached, or the
-   tile blocks.
-3. QEMU reports progress and pauses.
-4. SST advances the tile's modeled CPU time and processes due network events.
-5. SST places any delivered payloads in the bridge.
-6. SST resumes the tile for its next quantum.
+## Analog timing
 
-QEMU supplies functional instruction execution, not a detailed pipeline or
-cache timing model. Even after synchronization, SST will need an explicit CPU
-timing policy—for example, an initial instructions-per-cycle model followed by
-a more detailed microarchitectural model.
+Every analog array owns an independent bidirectional 256-bit link and ordered
+four-entry queue. The common `analog_link_clock` advances those links, and
+`analog_compute_latency_cycles` sets compute latency in that clock domain.
 
-QEMU `-icount` may help make QEMU's internal virtual time deterministic, but it
-does not by itself synchronize packet injection, blocking, and delivery with
-the SST event schedule. The QEMU/SST handshake remains the required boundary.
+The command timing rules are:
+
+1. `SetMatrix` and `LoadVector` snapshot guest input, publish it in fd 43, and
+   yield through fd 41.
+2. `Compute` publishes and yields through fd 41.
+3. These asynchronous commands resume after their selected queue accepts
+   them.
+4. `StoreVector` yields through fd 41 and remains stopped until SST completes
+   the selected array's output transfer.
+5. SST writes the result to fd 43 and resumes QEMU through fd 41; QEMU then
+   copies the result into private guest RAM.
+
+One link beat carries eight 32-bit words. Transfer costs are:
+
+```text
+SetMatrix:  ceil((rows * columns) / 8) link cycles
+LoadVector: ceil(columns / 8) link cycles
+StoreVector: ceil(rows / 8) link cycles
+```
+
+Different arrays progress concurrently. CrossSim host execution time is not
+charged as simulated latency; CrossSim supplies numerical behavior while SST
+supplies the modeled transfer and compute schedule.
+
+## Valid measurements
+
+The current implementation supports deterministic measurements of:
+
+- retired instruction count under the one-instruction-per-cycle policy;
+- CPU cycles between synchronized device boundaries;
+- packet injection time and Merlin network timing;
+- analog transfer and configured compute cycles;
+- overlap between independent analog arrays; and
+- end-to-end Platform v0.1 simulated completion time.
+
+Native and CrossSim runs with identical architectural behavior should have the
+same simulated CPU timeline even if their host runtimes differ.
+
+## Limits
+
+This is a synchronized functional CPU model, not a cycle-accurate RISC-V
+microarchitecture. It does not yet model:
+
+- pipeline width, hazards, branch prediction, or instruction-dependent CPI;
+- cache, TLB, or DRAM stalls;
+- interrupts or a blocking NIC receive register;
+- detailed UART timing; or
+- operating-system scheduling.
+
+`rdcycle` remains QEMU's architectural counter and is not the public source of
+SST timestamps. Timing analyses should use SST time and the fd 41 instruction
+statistics. A future CPU model can replace the one-instruction-per-cycle rule
+without changing the bridge separation or device-boundary protocol.
