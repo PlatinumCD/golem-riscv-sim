@@ -119,6 +119,84 @@ build_runtime_library() {
         "${PROJECT_ROOT}/tests/runtime-library/main.cpp"
 }
 
+build_analog_instructions() {
+    build_tile \
+        "${BUILD_ROOT}/tests/analog-instructions" \
+        analog-instructions \
+        "${PROJECT_ROOT}/tests/analog-instructions/main.cpp"
+}
+
+build_analog_ops() {
+    build_tile \
+        "${BUILD_ROOT}/tests/analog-ops" \
+        analog-ops \
+        "${PROJECT_ROOT}/tests/analog-ops/main.cpp"
+}
+
+build_analog_mesh_2x2() {
+    local output_dir="${BUILD_ROOT}/tests/analog-mesh-2x2"
+    local tile_id
+
+    for tile_id in {0..3}; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/analog-mesh-2x2/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
+}
+
+build_analog_mesh_2x2_dual_array() {
+    local output_dir="${BUILD_ROOT}/tests/analog-mesh-2x2-dual-array"
+    local tile_id
+
+    for tile_id in {0..3}; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/analog-mesh-2x2-dual-array/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
+}
+
+build_analog_route_2x2_variant() {
+    local route="$1"
+    shift
+    local -a route_tiles=("$@")
+    local output_dir="${BUILD_ROOT}/tests/analog-route-2x2/${route}"
+    local position
+    local tile_id
+    local next_tile
+
+    if [[ "${#route_tiles[@]}" -ne 4 ]]; then
+        echo "analog route ${route} must contain four tiles" >&2
+        return 1
+    fi
+
+    for position in {0..3}; do
+        tile_id="${route_tiles[${position}]}"
+        if [[ "${position}" -lt 3 ]]; then
+            next_tile="${route_tiles[$((position + 1))]}"
+        else
+            next_tile=0
+        fi
+
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/analog-route-2x2/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}" \
+            "-DMITTENS_ROUTE_POSITION=${position}" \
+            "-DMITTENS_NEXT_TILE=${next_tile}" \
+            "-DMITTENS_ROUTE_LABEL=\"${route}\""
+    done
+}
+
+build_analog_route_2x2() {
+    build_analog_route_2x2_variant 0132 0 1 3 2
+    build_analog_route_2x2_variant 0312 0 3 1 2
+}
+
 build_mesh_pair() {
     local output_dir="${BUILD_ROOT}/tests/mesh-pair"
     build_tile \
@@ -234,6 +312,11 @@ case "${ACTION}" in
     all)
         build_hello
         build_runtime_library
+        build_analog_instructions
+        build_analog_ops
+        build_analog_mesh_2x2
+        build_analog_mesh_2x2_dual_array
+        build_analog_route_2x2
         build_mesh_pair
         build_mesh_3x3
         build_mesh_pipeline
@@ -241,13 +324,18 @@ case "${ACTION}" in
         ;;
     hello) build_hello ;;
     runtime-library) build_runtime_library ;;
+    analog-instructions) build_analog_instructions ;;
+    analog-ops) build_analog_ops ;;
+    analog-mesh-2x2) build_analog_mesh_2x2 ;;
+    analog-mesh-2x2-dual-array) build_analog_mesh_2x2_dual_array ;;
+    analog-route-2x2) build_analog_route_2x2 ;;
     mesh-pair) build_mesh_pair ;;
     mesh-3x3) build_mesh_3x3 ;;
     mesh-pipeline) build_mesh_pipeline ;;
     distributed-matvec) build_distributed_matvec ;;
     distributed-matvec-reverse) build_distributed_matvec_reverse ;;
     *)
-        echo "usage: $0 [all|hello|runtime-library|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
+        echo "usage: $0 [all|hello|runtime-library|analog-instructions|analog-ops|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
         exit 2
         ;;
 esac

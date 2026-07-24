@@ -51,20 +51,21 @@ def _connect_routers(name, first, first_port, second, second_port):
     )
 
 
-def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity):
+def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity,
+                 tile_params):
     tile = sst.Component(f"tile{node_id}", "mittens.tile")
-    tile.addParams(
-        {
-            "tile_id": node_id,
-            "network_size": network_size,
-            "qemu_path": qemu_path,
-            "elf": image,
-            "memory": "16M",
-            "launch_mode": "managed",
-            "process_poll_frequency": "1MHz",
-            "verbose": verbosity,
-        }
-    )
+    params = {
+        "tile_id": node_id,
+        "network_size": network_size,
+        "qemu_path": qemu_path,
+        "elf": image,
+        "memory": "16M",
+        "launch_mode": "managed",
+        "cpu_clock": "1GHz",
+        "verbose": verbosity,
+    }
+    params.update(tile_params)
+    tile.addParams(params)
 
     network = tile.setSubComponent("networkIF", "merlin.linkcontrol")
     network.addParams(
@@ -84,12 +85,14 @@ def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity):
 
 
 def build_mesh(*, width, height, qemu_path, images, statistics_path,
-               verbosity=2):
+               verbosity=2, tile_params=None):
     network_size = width * height
     if len(images) != network_size:
         raise ValueError(
             f"mesh requires {network_size} images, received {len(images)}"
         )
+    if tile_params is None:
+        tile_params = {}
 
     routers = {
         (x, y): _make_router(x, y, width, height)
@@ -127,6 +130,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 qemu_path,
                 network_size,
                 verbosity,
+                tile_params,
             )
 
     sst.setStatisticLoadLevel(1)

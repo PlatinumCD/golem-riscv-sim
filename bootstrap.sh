@@ -9,6 +9,8 @@ source "${ROOT}/build-scripts/common.sh"
 
 required_submodules=(
     third_party/llvm-project
+    third_party/torch-mlir
+    third_party/cross-sim
     third_party/qemu
     third_party/sst-core
     third_party/sst-elements
@@ -23,12 +25,14 @@ actions:
   build          initialize and build the complete environment
   check          verify host build dependencies
   llvm           initialize and build LLVM/Clang/LLD/MLIR
-  qemu           initialize and build QEMU with the Mittens NIC
+  torch-mlir     initialize and build LLVM/MLIR and Torch-MLIR
+  crosssim       initialize and install the minimal CrossSim Python stack
+  qemu           initialize and build QEMU with the Mittens NIC and analog ISA
   sst-core       initialize and build SST Core
   sst            initialize and build SST Core, Merlin, and Mittens
   runtime        build and install the bare-metal runtime archive
   platform       build all bare-metal test images
-  test           run all boot, communication, routing, and compute proofs
+  test           run element, analog ISA, boot, mesh, routing, and compute proofs
   test-runtime   run host and RISC-V QEMU runtime-library proofs
   test-elements  run the complete Mittens element test directory
 EOF
@@ -41,16 +45,25 @@ initialize_submodules() {
 
 build_environment() {
     "${ROOT}/build-scripts/build-llvm.sh"
+    "${ROOT}/build-scripts/build-torch-mlir.sh"
     "${ROOT}/build-scripts/build-qemu.sh"
     "${ROOT}/build-scripts/build-sst-core.sh"
+    "${ROOT}/build-scripts/build-cross-sim.sh"
     "${ROOT}/build-scripts/build-sst-elements.sh"
     "${ROOT}/build-scripts/build-platform.sh" all
 }
 
 run_system_tests() {
+    "${ROOT}/components/elements/mittens/tests/run-test.sh"
+    "${ROOT}/tests/torch-mlir/run-test.sh"
     "${ROOT}/runtime/tests/run-test.sh"
     "${ROOT}/tests/runtime-library/run-test.sh"
     "${ROOT}/tests/hello/run-test.sh"
+    "${ROOT}/tests/analog-instructions/run-test.sh"
+    "${ROOT}/tests/analog-ops/run-test.sh"
+    "${ROOT}/tests/analog-mesh-2x2/run-test.sh"
+    "${ROOT}/tests/analog-route-2x2/run-test.sh"
+    "${ROOT}/tests/analog-mesh-2x2-dual-array/run-test.sh"
     "${ROOT}/tests/mesh-pair/run-test.sh"
     "${ROOT}/tests/mesh-3x3/run-test.sh"
     "${ROOT}/tests/mesh-pipeline/run-test.sh"
@@ -76,6 +89,15 @@ case "${ACTION}" in
         initialize_submodules third_party/llvm-project
         "${ROOT}/build-scripts/build-llvm.sh"
         ;;
+    torch-mlir)
+        initialize_submodules third_party/llvm-project third_party/torch-mlir
+        "${ROOT}/build-scripts/build-llvm.sh"
+        "${ROOT}/build-scripts/build-torch-mlir.sh"
+        ;;
+    crosssim)
+        initialize_submodules third_party/cross-sim
+        "${ROOT}/build-scripts/build-cross-sim.sh"
+        ;;
     qemu)
         initialize_submodules third_party/qemu
         "${ROOT}/build-scripts/build-qemu.sh"
@@ -85,8 +107,10 @@ case "${ACTION}" in
         "${ROOT}/build-scripts/build-sst-core.sh"
         ;;
     sst)
-        initialize_submodules third_party/sst-core third_party/sst-elements
+        initialize_submodules third_party/sst-core third_party/sst-elements \
+            third_party/cross-sim
         "${ROOT}/build-scripts/build-sst-core.sh"
+        "${ROOT}/build-scripts/build-cross-sim.sh"
         "${ROOT}/build-scripts/build-sst-elements.sh"
         ;;
     runtime)
