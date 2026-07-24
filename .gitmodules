@@ -10,3 +10,11 @@
 [submodule "third_party/qemu"]
 	path = third_party/qemu
 	url = https://gitlab.com/qemu-project/qemu.git
+[submodule "third_party/torch-mlir"]
+	path = third_party/torch-mlir
+	url = https://github.com/PlatinumCD/torch-mlir.git
+	branch = analog-extension
+	shallow = true
+[submodule "third_party/cross-sim"]
+	path = third_party/cross-sim
+	url = https://github.com/sandialabs/cross-sim.git

@@ -22,6 +22,7 @@ required_commands=(
     ninja
     pkg-config
     python3
+    /usr/bin/python3
 )
 
 missing=0
@@ -32,7 +33,7 @@ for command in "${required_commands[@]}"; do
 done
 
 if [[ "$(uname -m)" != "aarch64" && "${ALLOW_UNSUPPORTED_HOST:-0}" != "1" ]]; then
-    echo "Platform v0 builds are validated on an aarch64 host; found $(uname -m)" >&2
+    echo "Platform v0.1 builds are validated on an aarch64 host; found $(uname -m)" >&2
     echo "set ALLOW_UNSUPPORTED_HOST=1 to override" >&2
     missing=1
 fi

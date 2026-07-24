@@ -1,0 +1,44 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5413da9..c1e10dd 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -129,7 +129,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR TORCH_MLIR_OUT_OF_TREE_
+   include(HandleLLVMOptions)
+-
+-  # Don't try to compile the python extensions at the moment. We need
+-  # to import lots of dependencies from AddMLIRPython to make this work.
+-  set(MLIR_ENABLE_BINDINGS_PYTHON ON)
+-
++
++  # Respect the setting exported by the installed MLIR package. Standalone
++  # builds cannot use MLIR's non-exported Python source targets when that
++  # LLVM/MLIR installation was built without Python bindings.
++  if(NOT DEFINED MLIR_ENABLE_BINDINGS_PYTHON)
++    set(MLIR_ENABLE_BINDINGS_PYTHON OFF)
++  endif()
++
+   set(TORCH-MLIR_BUILT_STANDALONE ON)
+@@ -198,6 +201,8 @@ add_subdirectory(include)
+ add_subdirectory(tools)
+-
+-add_custom_target(check-torch-mlir-all)
+-add_dependencies(check-torch-mlir-all check-torch-mlir)
+-
++
++if(LLVM_INCLUDE_TESTS)
++  add_custom_target(check-torch-mlir-all)
++  add_dependencies(check-torch-mlir-all check-torch-mlir)
++endif()
++
+ if(MLIR_ENABLE_BINDINGS_PYTHON)
+@@ -209,5 +214,7 @@ if(MLIR_ENABLE_BINDINGS_PYTHON)
+ endif()
+-
+-add_subdirectory(test)
+-
++
++if(LLVM_INCLUDE_TESTS)
++  add_subdirectory(test)
++endif()
++
+ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)

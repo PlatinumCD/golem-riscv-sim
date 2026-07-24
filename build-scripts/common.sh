@@ -9,6 +9,7 @@ readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly BUILD_ROOT="${GOLEM_BUILD_ROOT:-${PROJECT_ROOT}/build}"
 readonly INSTALL_ROOT="${GOLEM_INSTALL_ROOT:-${PROJECT_ROOT}/install}"
 readonly PREPARED_SOURCE_ROOT="${GOLEM_SOURCE_ROOT:-${BUILD_ROOT}/sources}"
+readonly CROSSSIM_SITE_PACKAGES="${INSTALL_ROOT}/cross-sim/python"
 
 if [[ -n "${JOBS:-}" ]]; then
     readonly BUILD_JOBS="${JOBS}"
