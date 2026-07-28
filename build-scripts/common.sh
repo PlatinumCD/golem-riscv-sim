@@ -10,6 +10,8 @@ readonly BUILD_ROOT="${GOLEM_BUILD_ROOT:-${PROJECT_ROOT}/build}"
 readonly INSTALL_ROOT="${GOLEM_INSTALL_ROOT:-${PROJECT_ROOT}/install}"
 readonly PREPARED_SOURCE_ROOT="${GOLEM_SOURCE_ROOT:-${BUILD_ROOT}/sources}"
 readonly CROSSSIM_SITE_PACKAGES="${INSTALL_ROOT}/cross-sim/python"
+readonly COMPILER_PYTHON_ENV="${INSTALL_ROOT}/compiler-python"
+readonly COMPILER_PYTHON="${COMPILER_PYTHON_ENV}/bin/python"
 
 if [[ -n "${JOBS:-}" ]]; then
     readonly BUILD_JOBS="${JOBS}"
