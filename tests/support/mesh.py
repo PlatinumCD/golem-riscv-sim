@@ -1,3 +1,6 @@
+from decimal import Decimal, InvalidOperation
+import re
+
 import sst
 
 
@@ -8,27 +11,83 @@ NORTH_PORT = 3
 LOCAL_PORT = 4
 ROUTER_PORTS = 5
 
-LINK_BANDWIDTH = "1GB/s"
 LINK_LATENCY = "10ns"
-BUFFER_SIZE = "64B"
+WORD_BYTES = 4
+WORD_BITS = WORD_BYTES * 8
+
+_FREQUENCY_PATTERN = re.compile(
+    r"^([0-9]+(?:\.[0-9]+)?)\s*(Hz|kHz|MHz|GHz)$",
+    re.IGNORECASE,
+)
+_FREQUENCY_SCALES = {
+    "hz": Decimal(1),
+    "khz": Decimal(1_000),
+    "mhz": Decimal(1_000_000),
+    "ghz": Decimal(1_000_000_000),
+}
 
 
 def tile_id(x, y, width):
     return y * width + x
 
 
-def _make_router(x, y, width, height):
+def _mesh_link_configuration(width_bits, clock, cell_words, buffer_cells):
+    if (isinstance(width_bits, bool) or
+            not isinstance(width_bits, int) or
+            width_bits <= 0 or
+            width_bits % WORD_BITS != 0):
+        raise ValueError(
+            "mesh link width must be a positive multiple of 32 bits"
+        )
+    if not isinstance(clock, str):
+        raise ValueError("mesh link clock must be an SST frequency string")
+
+    match = _FREQUENCY_PATTERN.fullmatch(clock.strip())
+    if match is None:
+        raise ValueError(
+            "mesh link clock must use Hz, kHz, MHz, or GHz"
+        )
+    try:
+        frequency_hz = (
+            Decimal(match.group(1)) *
+            _FREQUENCY_SCALES[match.group(2).lower()]
+        )
+    except InvalidOperation as error:
+        raise ValueError("invalid mesh link clock") from error
+    if frequency_hz <= 0:
+        raise ValueError("mesh link clock must be positive")
+
+    bytes_per_second = frequency_hz * Decimal(width_bits) / Decimal(8)
+    if bytes_per_second != bytes_per_second.to_integral_value():
+        raise ValueError(
+            "mesh width and clock must produce an integral byte rate"
+        )
+
+    link_bytes = width_bits // 8
+    useful_cell_bytes = cell_words * WORD_BYTES
+    flit_bytes = (
+        (useful_cell_bytes + link_bytes - 1) // link_bytes
+    ) * link_bytes
+    return (
+        f"{int(bytes_per_second)}B/s",
+        f"{flit_bytes}B",
+        f"{flit_bytes * buffer_cells}B",
+    )
+
+
+def _make_router(x, y, width, height, flit_size, buffer_size,
+                 link_bandwidth):
     router_id = tile_id(x, y, width)
     router = sst.Component(f"router_{x}_{y}", "merlin.hr_router")
     router.addParams(
         {
             "id": router_id,
             "num_ports": ROUTER_PORTS,
-            "flit_size": "4B",
-            "xbar_bw": LINK_BANDWIDTH,
-            "link_bw": LINK_BANDWIDTH,
-            "input_buf_size": BUFFER_SIZE,
-            "output_buf_size": BUFFER_SIZE,
+            "flit_size": flit_size,
+            "xbar_bw": link_bandwidth,
+            "link_bw": link_bandwidth,
+            "input_buf_size": buffer_size,
+            "output_buf_size": buffer_size,
         }
     )
 
@@ -52,7 +111,7 @@ def _connect_routers(name, first, first_port, second, second_port):
 
 
 def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity,
-                 tile_params):
+                 tile_params, buffer_size, link_bandwidth):
     tile = sst.Component(f"tile{node_id}", "mittens.tile")
     params = {
         "tile_id": node_id,
@@ -70,9 +129,9 @@ def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity,
     network = tile.setSubComponent("networkIF", "merlin.linkcontrol")
     network.addParams(
         {
-            "link_bw": LINK_BANDWIDTH,
-            "input_buf_size": BUFFER_SIZE,
-            "output_buf_size": BUFFER_SIZE,
+            "link_bw": link_bandwidth,
+            "input_buf_size": buffer_size,
+            "output_buf_size": buffer_size,
         }
     )
 
@@ -85,7 +144,15 @@ def _attach_tile(router, node_id, image, qemu_path, network_size, verbosity,
 
 
 def build_mesh(*, width, height, qemu_path, images, statistics_path,
-               verbosity=2, tile_params=None):
+               verbosity=2, tile_params=None, network_cell_words=1,
+               network_buffer_cells=16, mesh_link_width_bits=32,
+               mesh_link_clock="1GHz"):
+    """Build a mesh whose physical links carry fixed 32-bit words.
+
+    ``mesh_link_width_bits`` controls how many of those words a link can move
+    per ``mesh_link_clock`` cycle. Timing cells are padded to a complete
+    physical beat; neither setting changes the guest-visible NIC word size.
+    """
     network_size = width * height
     if len(images) != network_size:
         raise ValueError(
@@ -93,9 +160,27 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         )
     if tile_params is None:
         tile_params = {}
+    if network_cell_words <= 0 or network_buffer_cells <= 0:
+        raise ValueError(
+            "network cell and buffer counts must both be positive"
+        )
+    link_bandwidth, flit_size, buffer_size = _mesh_link_configuration(
+        mesh_link_width_bits,
+        mesh_link_clock,
+        network_cell_words,
+        network_buffer_cells,
+    )
 
     routers = {
-        (x, y): _make_router(x, y, width, height)
+        (x, y): _make_router(
+            x,
+            y,
+            width,
+            height,
+            flit_size,
+            buffer_size,
+            link_bandwidth,
+        )
         for y in range(height)
         for x in range(width)
     }
@@ -131,6 +216,8 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 network_size,
                 verbosity,
                 tile_params,
+                buffer_size,
+                link_bandwidth,
             )
 
     sst.setStatisticLoadLevel(1)

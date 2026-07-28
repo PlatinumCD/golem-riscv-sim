@@ -12,6 +12,8 @@ readonly HOST_CXX="${HOST_CXX:-c++}"
 readonly HOST_TEST_DIR="${BUILD_ROOT}/tests/mittens-element"
 readonly ANALOG_TEST="${HOST_TEST_DIR}/analog-device-test"
 readonly ANALOG_BRIDGE_TEST="${HOST_TEST_DIR}/analog-bridge-test"
+readonly NIC_BRIDGE_TEST="${HOST_TEST_DIR}/nic-bridge-test"
+readonly RECEIVE_DMA_ENGINE_TEST="${HOST_TEST_DIR}/receive-dma-engine-test"
 readonly SYNC_BRIDGE_TEST="${HOST_TEST_DIR}/sync-bridge-test"
 readonly CROSSSIM_TEST="${HOST_TEST_DIR}/crosssim-backend-test"
 readonly CROSSSIM_PYTHON="${CROSSSIM_PYTHON:-/usr/bin/python3}"
@@ -53,6 +55,29 @@ mkdir -p -- "${HOST_TEST_DIR}"
     "${TEST_DIR}/analog_bridge_test.cpp" \
     -o "${ANALOG_BRIDGE_TEST}"
 "${ANALOG_BRIDGE_TEST}"
+
+"${HOST_CXX}" \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Wpedantic \
+    -Werror \
+    -I"${PROJECT_ROOT}/bridge/include" \
+    "${TEST_DIR}/nic_bridge_test.cpp" \
+    -o "${NIC_BRIDGE_TEST}"
+"${NIC_BRIDGE_TEST}"
+
+"${HOST_CXX}" \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Wpedantic \
+    -Werror \
+    -I"${PROJECT_ROOT}/components/elements/mittens" \
+    "${PROJECT_ROOT}/components/elements/mittens/receiveDMAEngine.cc" \
+    "${TEST_DIR}/receive_dma_engine_test.cpp" \
+    -o "${RECEIVE_DMA_ENGINE_TEST}"
+"${RECEIVE_DMA_ENGINE_TEST}"
 
 "${HOST_CXX}" \
     -std=c++17 \

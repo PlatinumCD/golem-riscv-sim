@@ -18,6 +18,11 @@ struct QemuSyncEvent {
     std::uint32_t flags;
     std::uint32_t analogArrayId;
     std::uint64_t analogSequence;
+    std::uint32_t taskId;
+    std::uint64_t executionId;
+    std::uint32_t receiveDMASource;
+    std::uint32_t receiveDMARouteId;
+    std::uint32_t receiveDMAWordCount;
 };
 
 class SharedSyncMemoryBridge final

@@ -135,6 +135,11 @@ std::uint64_t SharedSyncMemoryBridge::grant(
     mapping_->event_flags = MITTENS_SYNC_EVENT_FLAG_NONE;
     mapping_->analog_array_id = UINT32_MAX;
     mapping_->analog_sequence = 0;
+    mapping_->task_id = UINT32_MAX;
+    mapping_->execution_id = 0;
+    mapping_->rx_dma_source = UINT32_MAX;
+    mapping_->rx_dma_route_id = UINT32_MAX;
+    mapping_->rx_dma_word_count = 0;
     mittens_sync_store_release(
         &mapping_->state, MITTENS_SYNC_STATE_GRANTED);
     wake(&mapping_->state);
@@ -162,6 +167,11 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             mapping_->event_flags,
             mapping_->analog_array_id,
             mapping_->analog_sequence,
+            mapping_->task_id,
+            mapping_->execution_id,
+            mapping_->rx_dma_source,
+            mapping_->rx_dma_route_id,
+            mapping_->rx_dma_word_count,
         };
     }
 
@@ -184,6 +194,11 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         mapping_->event_flags,
         mapping_->analog_array_id,
         mapping_->analog_sequence,
+        mapping_->task_id,
+        mapping_->execution_id,
+        mapping_->rx_dma_source,
+        mapping_->rx_dma_route_id,
+        mapping_->rx_dma_word_count,
     };
 }
 

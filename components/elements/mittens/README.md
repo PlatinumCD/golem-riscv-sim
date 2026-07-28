@@ -21,12 +21,25 @@ to host-side process polling.
 | --- | --- | --- |
 | `cpu_clock` | SST clock for synchronized instruction cycles | `1GHz` |
 | `sync_instruction_quantum` | Maximum instructions in one QEMU grant | `1000` |
+| `rx_dma_clock` | Clock for the tile-local NIC-to-memory receive DMA engine | `1GHz` |
+| `rx_dma_width_bits` | Receive DMA width; a positive multiple of 32 bits | `256` |
+| `rx_dma_setup_cycles` | Setup cycles charged once per receive descriptor | `8` |
+| `rx_dma_queue_depth` | Delivered receive bursts allowed to await DMA service | `4` |
+| `task_trace_directory` | Optional directory for collision-free per-tile task trace CSV files | Empty |
 
 When `networkIF` is attached, the component creates the fd 42 data bridge for
 the custom QEMU `mittens-nic` device. A transmit publishes data on fd 42 and
 yields through fd 41. See
 [`../../../docs/timing-model.md`](../../../docs/timing-model.md) for modeled
 timing and remaining CPU-model limits.
+
+Each tile owns one receive DMA channel. Same-tile payload bursts serialize;
+channels belonging to different tiles overlap. SST charges
+`rx_dma_setup_cycles` once per descriptor plus
+`ceil(words * 32 / rx_dma_width_bits)` cycles per burst. QEMU cannot consume
+a timed burst until the SST completion event authorizes it. The finite queue
+depth, which must be from one through four, applies endpoint backpressure when
+local writes fall behind the mesh.
 
 ## Analog device
 
@@ -59,8 +72,8 @@ transfer-cycle accounting, and concurrent progress on independent arrays.
 `tests/analog_bridge_test.cpp` verifies the shared-memory ABI from an
 independently mapped QEMU-side view.
 `tests/sync_bridge_test.cpp` verifies fd 41 grant, analog-yield, resume,
-quantum-end, and terminal-event state transitions from an independently
-mapped QEMU-side view.
+task-start, task-finish, quantum-end, and terminal-event state transitions
+from an independently mapped QEMU-side view.
 `tests/crosssim_backend_test.cpp` programs and computes through two independent
 CrossSim backend instances and verifies that their local array state remains
 separate.

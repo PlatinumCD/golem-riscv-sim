@@ -1,7 +1,10 @@
 #ifndef SST_MITTENS_TILE_H
 #define SST_MITTENS_TILE_H
 
+#include <array>
 #include <cstdint>
+#include <deque>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,6 +17,7 @@
 
 #include "analog/analogDevice.h"
 #include "qemuProcess.h"
+#include "receiveDMAEngine.h"
 #include "sharedAnalogMemoryBridge.h"
 #include "sharedMemoryBridge.h"
 #include "sharedSyncMemoryBridge.h"
@@ -41,6 +45,10 @@ class Tile : public SST::Component
         {"launch_mode", "QEMU launch mode: disabled or managed", "disabled"},
         {"cpu_clock", "Clock defining the synchronized one-instruction CPU cycle", "1GHz"},
         {"sync_instruction_quantum", "Maximum instructions SST grants QEMU at once", "1000"},
+        {"rx_dma_clock", "Clock for the tile-local NIC-to-scratchpad receive DMA engine", "1GHz"},
+        {"rx_dma_width_bits", "Receive DMA transfer width; positive multiple of 32 bits", "256"},
+        {"rx_dma_setup_cycles", "One-time setup cycles charged per receive descriptor", "8"},
+        {"rx_dma_queue_depth", "Finite incoming burst queue depth, from 1 through 4", "4"},
         {"analog_array_count", "Simulation-wide number of analog arrays instantiated on every tile; zero disables analog", "0"},
         {"analog_array_rows", "Simulation-wide row count shared by every analog array", "100"},
         {"analog_array_columns", "Simulation-wide column count shared by every analog array", "100"},
@@ -48,6 +56,7 @@ class Tile : public SST::Component
         {"crosssim_config", "Optional CrossSim JSON parameter file used by this tile's independent backend", ""},
         {"analog_link_clock", "Common clock for every array's independent bidirectional 256-bit link", "1GHz"},
         {"analog_compute_latency_cycles", "Analog compute latency in analog-link cycles", "100"},
+        {"task_trace_directory", "Optional directory for per-tile task trace CSV files", ""},
         {"verbose", "Mittens diagnostic verbosity", "0"})
 
     SST_ELI_DOCUMENT_PORTS()
@@ -75,6 +84,10 @@ class Tile : public SST::Component
         std::string launchMode;
         std::string cpuClock;
         std::uint64_t syncInstructionQuantum;
+        std::string receiveDMAClock;
+        std::uint32_t receiveDMAWidthBits;
+        std::uint64_t receiveDMASetupCycles;
+        std::uint32_t receiveDMAQueueDepth;
         std::uint32_t analogArrayCount;
         std::uint32_t analogArrayRows;
         std::uint32_t analogArrayColumns;
@@ -82,6 +95,7 @@ class Tile : public SST::Component
         std::string crossSimConfig;
         std::string analogLinkClock;
         std::uint64_t analogComputeLatencyCycles;
+        std::string taskTraceDirectory;
         int verbosity;
     };
 
@@ -94,10 +108,27 @@ class Tile : public SST::Component
         Finished,
     };
 
+    struct ReceiveDMADescriptor {
+        std::uint32_t routeId;
+        std::uint32_t remainingWords;
+        bool setupCharged;
+    };
+
+    struct ReceiveDMATransfer {
+        std::uint32_t burstIndex;
+        std::uint32_t source;
+        std::uint32_t routeId;
+        std::uint32_t wordCount;
+        std::uint64_t completionCycle;
+        std::uint64_t serviceCycles;
+        bool authorized;
+    };
+
     static Configuration readConfiguration(SST::Params& params);
     void validateConfiguration() const;
     bool managedLaunch() const;
     void handleCpuSyncEvent(SST::Event* event);
+    void handleReceiveDMAEvent(SST::Event* event);
     void grantAndCaptureQemu();
     void resumeAndCaptureQemu();
     void captureQemuEvent();
@@ -107,19 +138,33 @@ class Tile : public SST::Component
     void handleQemuExit(const QemuExitStatus& status);
     void scheduleCpuSyncEvent(std::uint64_t instructionCycles);
     bool clockAnalog(SST::Cycle_t cycle);
+    bool handleNetworkSend(int virtualNetwork);
+    bool handleNetworkReceive(int virtualNetwork);
     void ensureAnalogClockRegistered();
     void serviceBridge();
     void serviceAnalogBridge();
     void serviceAnalogCompletions();
     void serviceOutgoingPackets();
     void serviceIncomingPackets();
+    void registerReceiveDMA(const QemuSyncEvent& event);
+    void scheduleReceiveDMABursts();
+    void refreshReceiveDMATransfers();
+    bool receiveReadyForGuest() const noexcept;
+    bool receiveBurstScheduled(std::uint32_t burstIndex) const noexcept;
     void checkBridgeError() const;
     void checkAnalogBridgeError() const;
     bool outgoingPacketsIdle() const noexcept;
+    bool pendingReceiveWait() const noexcept;
+    void resumeReceiveWaitIfReady();
+    void signalExitedTileIfDrained();
+    void recordTaskTrace(const QemuSyncEvent& event);
+    void openTaskTrace();
+    void reportProfile() const;
 
     Configuration config_;
     SST::Output output_;
     SST::Interfaces::SimpleNetwork* network_;
+    ReceiveDMAEngine receiveDMAEngine_;
     QemuProcess qemu_;
     SharedSyncMemoryBridge syncBridge_;
     SharedMemoryBridge bridge_;
@@ -131,13 +176,35 @@ class Tile : public SST::Component
     SST::Clock::HandlerBase* analogClockHandler_ = nullptr;
     bool analogClockRegistered_ = false;
     SST::Link* cpuSyncLink_ = nullptr;
+    SST::TimeConverter receiveDMAClockTimeBase_;
+    SST::Link* receiveDMALink_ = nullptr;
     std::optional<QemuSyncEvent> pendingSyncEvent_;
     std::uint64_t currentGrantEpoch_ = 0;
     std::uint64_t lastGrantInstruction_ = 0;
     std::uint64_t synchronizedInstructions_ = 0;
     std::uint64_t synchronizationGrants_ = 0;
     std::uint64_t synchronizationEvents_ = 0;
+    std::array<std::uint64_t, MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT + 1>
+        synchronizationStopCounts_{};
+    std::array<std::uint64_t, MITTENS_ANALOG_OPERATION_MOVE_VECTOR + 1>
+        analogOperationCounts_{};
+    std::uint64_t analogInputWords_ = 0;
+    std::uint64_t analogOutputWords_ = 0;
+    std::uint64_t networkTransmitPackets_ = 0;
+    std::uint64_t networkTransmitWords_ = 0;
+    std::uint64_t networkReceivePackets_ = 0;
+    std::uint64_t networkReceiveWords_ = 0;
+    std::uint64_t receiveDMATransfers_ = 0;
+    std::uint64_t receiveDMAWords_ = 0;
+    std::uint64_t receiveDMAActiveCycles_ = 0;
+    std::unordered_map<std::uint32_t, ReceiveDMADescriptor>
+        receiveDMADescriptors_;
+    std::deque<ReceiveDMATransfer> receiveDMATransfersInFlight_;
     std::optional<MittensBridgePacket> pendingTransmit_;
+    std::optional<MittensBridgeTxBurst> pendingTransmitBurst_;
+    bool receiveWaitArmed_ = false;
+    bool primaryEndSignaled_ = false;
+    std::ofstream taskTraceStream_;
     LifecycleState state_;
 };
 

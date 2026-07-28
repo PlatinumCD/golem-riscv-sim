@@ -3,11 +3,18 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "mittens/NICTileBridge.h"
 
 namespace SST {
 namespace Mittens {
+
+struct ReceiveBurstInfo {
+    std::uint32_t absoluteIndex;
+    std::uint32_t source;
+    std::uint32_t wordCount;
+};
 
 class SharedMemoryBridge final
 {
@@ -28,8 +35,20 @@ class SharedMemoryBridge final
     std::uint32_t protocolError() const noexcept;
 
     std::optional<MittensBridgePacket> popTransmit();
+    std::optional<MittensBridgeTxBurst> popTransmitBurst();
+    bool receiveHasData() const noexcept;
+    bool receiveHasWordData() const noexcept;
     bool receiveHasSpace() const noexcept;
-    bool pushReceive(std::uint32_t payload);
+    bool pushReceive(std::uint32_t source, std::uint32_t payload);
+    bool receiveHasBurstSpace() const noexcept;
+    std::uint32_t receiveBurstCount() const noexcept;
+    std::uint32_t receiveBurstReadIndex() const noexcept;
+    std::optional<ReceiveBurstInfo> peekReceiveBurst(
+        std::uint32_t offset = 0) const noexcept;
+    bool pushReceiveBurst(std::uint32_t source,
+                          const std::vector<std::uint32_t>& payload);
+    bool receiveDMAAuthorizationAvailable() const noexcept;
+    bool authorizeReceiveDMA();
 
   private:
     int fileDescriptor_ = -1;

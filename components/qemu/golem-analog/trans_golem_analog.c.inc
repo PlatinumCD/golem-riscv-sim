@@ -21,8 +21,8 @@ static bool trans_golem_analog(
         status,
         tcg_env,
         tcg_constant_i32(operation),
-        cpu_gpr[a->rs1],
-        cpu_gpr[a->rs2]);
+        get_gpr(ctx, a->rs1, EXT_NONE),
+        get_gpr(ctx, a->rs2, EXT_NONE));
     gen_set_gpr(ctx, a->rd, status);
     return true;
 }

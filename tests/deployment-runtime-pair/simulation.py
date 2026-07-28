@@ -1,0 +1,51 @@
+import os
+import sys
+from pathlib import Path
+
+
+TEST_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(TEST_DIR.parent / "support"))
+
+from mesh import build_mesh
+
+
+def required_path(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} must be set")
+    return value
+
+
+build_mesh(
+    width=2,
+    height=1,
+    qemu_path=required_path("MITTENS_TEST_QEMU"),
+    images=[
+        required_path("MITTENS_DEPLOYMENT_TILE0_ELF"),
+        required_path("MITTENS_DEPLOYMENT_TILE1_ELF"),
+    ],
+    statistics_path=required_path("MITTENS_DEPLOYMENT_STATS"),
+    verbosity=3,
+    tile_params={
+        "rx_dma_clock": os.environ.get(
+            "MITTENS_DEPLOYMENT_RX_DMA_CLOCK", "1GHz"
+        ),
+        "rx_dma_width_bits": int(
+            os.environ.get("MITTENS_DEPLOYMENT_RX_DMA_WIDTH_BITS", "256")
+        ),
+        "rx_dma_setup_cycles": int(
+            os.environ.get("MITTENS_DEPLOYMENT_RX_DMA_SETUP_CYCLES", "8")
+        ),
+        "rx_dma_queue_depth": int(
+            os.environ.get("MITTENS_DEPLOYMENT_RX_DMA_QUEUE_DEPTH", "4")
+        ),
+    },
+    network_cell_words=4096,
+    network_buffer_cells=4,
+    mesh_link_width_bits=int(
+        os.environ.get("MITTENS_DEPLOYMENT_MESH_LINK_WIDTH_BITS", "32")
+    ),
+    mesh_link_clock=os.environ.get(
+        "MITTENS_DEPLOYMENT_MESH_LINK_CLOCK", "1GHz"
+    ),
+)

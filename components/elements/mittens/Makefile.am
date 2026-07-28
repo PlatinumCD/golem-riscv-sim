@@ -15,6 +15,8 @@ libmittens_la_SOURCES = \
 	sharedMemoryBridge.cc \
 	sharedSyncMemoryBridge.h \
 	sharedSyncMemoryBridge.cc \
+	receiveDMAEngine.h \
+	receiveDMAEngine.cc \
 	sharedAnalogMemoryBridge.h \
 	sharedAnalogMemoryBridge.cc \
 	include/mittens/NICTileBridge.h \
@@ -42,6 +44,8 @@ EXTRA_DIST = \
 	tests/two_tile_bridge.py \
 	tests/analog_device_test.cpp \
 	tests/analog_bridge_test.cpp \
+	tests/nic_bridge_test.cpp \
+	tests/receive_dma_engine_test.cpp \
 	tests/sync_bridge_test.cpp \
 	tests/crosssim_backend_test.cpp
 

@@ -32,6 +32,12 @@ const char* syncStopReasonName(std::uint32_t reason)
         return "analog-wait";
     case MITTENS_SYNC_STOP_GUEST_EXIT:
         return "guest-exit";
+    case MITTENS_SYNC_STOP_TASK_START:
+        return "task-start";
+    case MITTENS_SYNC_STOP_TASK_FINISH:
+        return "task-finish";
+    case MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT:
+        return "nic-rx-dma-submit";
     default:
         return "unknown";
     }
@@ -50,6 +56,10 @@ Tile::Configuration Tile::readConfiguration(SST::Params& params)
         params.find<std::string>("launch_mode", "disabled"),
         params.find<std::string>("cpu_clock", "1GHz"),
         params.find<std::uint64_t>("sync_instruction_quantum", 1000),
+        params.find<std::string>("rx_dma_clock", "1GHz"),
+        params.find<std::uint32_t>("rx_dma_width_bits", 256),
+        params.find<std::uint64_t>("rx_dma_setup_cycles", 8),
+        params.find<std::uint32_t>("rx_dma_queue_depth", 4),
         params.find<std::uint32_t>("analog_array_count", 0),
         params.find<std::uint32_t>("analog_array_rows", 100),
         params.find<std::uint32_t>("analog_array_columns", 100),
@@ -57,6 +67,7 @@ Tile::Configuration Tile::readConfiguration(SST::Params& params)
         params.find<std::string>("crosssim_config", ""),
         params.find<std::string>("analog_link_clock", "1GHz"),
         params.find<std::uint64_t>("analog_compute_latency_cycles", 100),
+        params.find<std::string>("task_trace_directory", ""),
         params.find<int>("verbose", 0),
     };
     return configuration;
@@ -67,6 +78,9 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
     config_(readConfiguration(params)),
     output_("mittens: ", config_.verbosity, 0, SST::Output::STDOUT),
     network_(nullptr),
+    receiveDMAEngine_(
+        config_.receiveDMAWidthBits,
+        config_.receiveDMASetupCycles),
     state_(LifecycleState::Constructed)
 {
     validateConfiguration();
@@ -83,6 +97,14 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         output_.fatal(CALL_INFO, -1,
                       "tile %u requires a nonzero network_size when networkIF is attached\n",
                       static_cast<unsigned>(config_.tileId));
+    }
+    if (network_ != nullptr) {
+        network_->setNotifyOnSend(
+            new SST::Interfaces::SimpleNetwork::Handler<
+                Tile, &Tile::handleNetworkSend>(this));
+        network_->setNotifyOnReceive(
+            new SST::Interfaces::SimpleNetwork::Handler<
+                Tile, &Tile::handleNetworkReceive>(this));
     }
     if (config_.networkSize != 0 && config_.tileId >= config_.networkSize) {
         output_.fatal(CALL_INFO, -1,
@@ -105,6 +127,22 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
                 -1,
                 "tile %u failed to configure its QEMU synchronization link\n",
                 static_cast<unsigned>(config_.tileId));
+        }
+        if (network_ != nullptr) {
+            receiveDMAClockTimeBase_ =
+                getTimeConverter(config_.receiveDMAClock);
+            receiveDMALink_ = configureSelfLink(
+                "rx-dma",
+                receiveDMAClockTimeBase_,
+                new SST::Event::Handler<
+                    Tile, &Tile::handleReceiveDMAEvent>(this));
+            if (receiveDMALink_ == nullptr) {
+                output_.fatal(
+                    CALL_INFO,
+                    -1,
+                    "tile %u failed to configure its receive DMA link\n",
+                    static_cast<unsigned>(config_.tileId));
+            }
         }
     }
 
@@ -149,7 +187,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         CALL_INFO,
         1,
         0,
-        "configured tile %u (qemu=%s, elf=%s, memory=%s, launch=%s, cpu_clock=%s, sync_quantum=%llu, network=%s, network_size=%u)\n",
+        "configured tile %u (qemu=%s, elf=%s, memory=%s, launch=%s, cpu_clock=%s, sync_quantum=%llu, network=%s, network_size=%u, rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
         static_cast<unsigned>(config_.tileId),
         config_.qemuPath.c_str(),
         config_.elfPath.empty() ? "<unset>" : config_.elfPath.c_str(),
@@ -159,7 +197,12 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         static_cast<unsigned long long>(
             config_.syncInstructionQuantum),
         network_ == nullptr ? "detached" : "attached",
-        static_cast<unsigned>(config_.networkSize));
+        static_cast<unsigned>(config_.networkSize),
+        config_.receiveDMAClock.c_str(),
+        static_cast<unsigned>(config_.receiveDMAWidthBits),
+        static_cast<unsigned long long>(
+            config_.receiveDMASetupCycles),
+        static_cast<unsigned>(config_.receiveDMAQueueDepth));
 
     if (analogDevice_ != nullptr) {
         output_.verbose(
@@ -215,6 +258,33 @@ void Tile::validateConfiguration() const
             -1,
             "tile %u requires sync_instruction_quantum to be nonzero\n",
             static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.receiveDMAClock.empty()) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u has an empty rx_dma_clock\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.receiveDMAWidthBits == 0 ||
+        config_.receiveDMAWidthBits % 32 != 0) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u requires rx_dma_width_bits to be a positive "
+            "multiple of 32\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.receiveDMAQueueDepth == 0 ||
+        config_.receiveDMAQueueDepth >
+            MITTENS_BRIDGE_BURST_QUEUE_CAPACITY) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u requires rx_dma_queue_depth in [1, %u]\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(
+                MITTENS_BRIDGE_BURST_QUEUE_CAPACITY));
     }
 
     if (config_.analogBackend != "native" &&
@@ -377,6 +447,66 @@ void Tile::handleCpuSyncEvent(SST::Event* event)
     grantAndCaptureQemu();
 }
 
+void Tile::handleReceiveDMAEvent(SST::Event* event)
+{
+    delete event;
+
+    if (!bridge_.open()) {
+        return;
+    }
+    refreshReceiveDMATransfers();
+
+    auto transfer = receiveDMATransfersInFlight_.end();
+    for (auto candidate = receiveDMATransfersInFlight_.begin();
+         candidate != receiveDMATransfersInFlight_.end();
+         ++candidate) {
+        if (!candidate->authorized) {
+            transfer = candidate;
+            break;
+        }
+    }
+    if (transfer == receiveDMATransfersInFlight_.end()) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u received an RX DMA timer without a transfer\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+
+    const std::uint64_t currentCycle =
+        getCurrentSimTime(receiveDMAClockTimeBase_);
+    if (currentCycle < transfer->completionCycle ||
+        !bridge_.authorizeReceiveDMA()) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u could not authorize RX DMA burst %u at cycle %llu\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(transfer->burstIndex),
+            static_cast<unsigned long long>(currentCycle));
+    }
+
+    transfer->authorized = true;
+    ++receiveDMATransfers_;
+    receiveDMAWords_ += transfer->wordCount;
+    receiveDMAActiveCycles_ += transfer->serviceCycles;
+
+    output_.verbose(
+        CALL_INFO,
+        2,
+        0,
+        "tile %u completed RX DMA burst %u from tile %u "
+        "(route=%u, words=%u, dma_cycle=%llu)\n",
+        static_cast<unsigned>(config_.tileId),
+        static_cast<unsigned>(transfer->burstIndex),
+        static_cast<unsigned>(transfer->source),
+        static_cast<unsigned>(transfer->routeId),
+        static_cast<unsigned>(transfer->wordCount),
+        static_cast<unsigned long long>(currentCycle));
+
+    resumeReceiveWaitIfReady();
+}
+
 void Tile::grantAndCaptureQemu()
 {
     if (state_ != LifecycleState::Running ||
@@ -421,6 +551,7 @@ void Tile::resumeAndCaptureQemu()
     }
 
     pendingSyncEvent_.reset();
+    receiveWaitArmed_ = false;
     captureQemuEvent();
 }
 
@@ -471,6 +602,9 @@ void Tile::captureQemuEvent()
         lastGrantInstruction_ = event->instructionsExecuted;
         synchronizedInstructions_ += instructionCycles;
         ++synchronizationEvents_;
+        if (event->stopReason < synchronizationStopCounts_.size()) {
+            ++synchronizationStopCounts_[event->stopReason];
+        }
         pendingSyncEvent_ = *event;
 
         output_.verbose(
@@ -515,6 +649,22 @@ bool Tile::processPendingSyncEvent()
         resumeAndCaptureQemu();
         return true;
 
+    case MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT:
+        serviceBridge();
+        if (receiveReadyForGuest()) {
+            resumeAndCaptureQemu();
+            return true;
+        }
+        receiveWaitArmed_ = true;
+        return false;
+
+    case MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT:
+        serviceBridge();
+        registerReceiveDMA(*pendingSyncEvent_);
+        scheduleReceiveDMABursts();
+        resumeAndCaptureQemu();
+        return true;
+
     case MITTENS_SYNC_STOP_ANALOG_SUBMIT:
     case MITTENS_SYNC_STOP_ANALOG_WAIT:
         serviceAnalogBridge();
@@ -523,6 +673,12 @@ bool Tile::processPendingSyncEvent()
             return true;
         }
         return false;
+
+    case MITTENS_SYNC_STOP_TASK_START:
+    case MITTENS_SYNC_STOP_TASK_FINISH:
+        recordTaskTrace(*pendingSyncEvent_);
+        resumeAndCaptureQemu();
+        return true;
 
     case MITTENS_SYNC_STOP_GUEST_EXIT: {
         QemuExitStatus status;
@@ -606,6 +762,7 @@ void Tile::handleQemuExit(const QemuExitStatus& status)
 {
     state_ = LifecycleState::Exited;
     pendingSyncEvent_.reset();
+    receiveWaitArmed_ = false;
     serviceBridge();
 
     output_.verbose(
@@ -632,7 +789,7 @@ void Tile::handleQemuExit(const QemuExitStatus& status)
             status.describe().c_str());
     }
 
-    primaryComponentOKToEndSim();
+    signalExitedTileIfDrained();
 }
 
 void Tile::scheduleCpuSyncEvent(
@@ -682,6 +839,28 @@ bool Tile::clockAnalog(SST::Cycle_t)
     return false;
 }
 
+bool Tile::handleNetworkSend(int)
+{
+    if (bridge_.open() && network_ != nullptr) {
+        serviceOutgoingPackets();
+        checkBridgeError();
+    }
+    signalExitedTileIfDrained();
+    return true;
+}
+
+bool Tile::handleNetworkReceive(int)
+{
+    if (bridge_.open() && network_ != nullptr) {
+        refreshReceiveDMATransfers();
+        serviceIncomingPackets();
+        scheduleReceiveDMABursts();
+        checkBridgeError();
+        resumeReceiveWaitIfReady();
+    }
+    return true;
+}
+
 void Tile::ensureAnalogClockRegistered()
 {
     if (analogDevice_ != nullptr && analogDevice_->requiresTick() &&
@@ -695,7 +874,9 @@ void Tile::serviceBridge()
 {
     if (bridge_.open() && network_ != nullptr) {
         checkBridgeError();
+        refreshReceiveDMATransfers();
         serviceIncomingPackets();
+        scheduleReceiveDMABursts();
         serviceOutgoingPackets();
         checkBridgeError();
     }
@@ -725,9 +906,17 @@ void Tile::serviceAnalogBridge()
                     continue;
                 }
 
+                const std::size_t inputWordCount =
+                    submission->inputWords.size();
                 const std::uint64_t ticket = analogDevice_->submit(
                     submission->command,
                     std::move(submission->inputWords));
+                if (submission->command.operation <
+                    analogOperationCounts_.size()) {
+                    ++analogOperationCounts_[
+                        submission->command.operation];
+                }
+                analogInputWords_ += inputWordCount;
                 const auto inserted = analogRequests_.emplace(
                     ticket, submission->token);
                 if (!inserted.second) {
@@ -778,6 +967,7 @@ void Tile::serviceAnalogCompletions()
             request->second,
             completion->response.status,
             completion->outputWords);
+        analogOutputWords_ += completion->outputWords.size();
         analogRequests_.erase(request);
     }
 }
@@ -788,10 +978,74 @@ void Tile::serviceOutgoingPackets()
     constexpr int kPacketBits = 32;
 
     while (true) {
+        if (!pendingTransmitBurst_.has_value()) {
+            pendingTransmitBurst_ = bridge_.popTransmitBurst();
+        }
+        if (pendingTransmitBurst_.has_value()) {
+            const MittensBridgeTxBurst& burst =
+                *pendingTransmitBurst_;
+            if (burst.destination >= config_.networkSize) {
+                output_.fatal(
+                    CALL_INFO,
+                    -1,
+                    "tile %u attempted to send a burst to invalid "
+                    "destination %u\n",
+                    static_cast<unsigned>(config_.tileId),
+                    static_cast<unsigned>(burst.destination));
+            }
+            if (burst.word_count == 0 ||
+                burst.word_count >
+                    MITTENS_BRIDGE_BURST_WORD_CAPACITY) {
+                output_.fatal(
+                    CALL_INFO,
+                    -1,
+                    "tile %u submitted invalid %u-word burst\n",
+                    static_cast<unsigned>(config_.tileId),
+                    static_cast<unsigned>(burst.word_count));
+            }
+
+            const int burstBits =
+                static_cast<int>(burst.word_count) * kPacketBits;
+            if (!network_->spaceToSend(
+                    kVirtualNetwork, burstBits)) {
+                return;
+            }
+
+            std::vector<std::uint32_t> payload(
+                burst.words,
+                burst.words + burst.word_count);
+            auto* request =
+                new SST::Interfaces::SimpleNetwork::Request(
+                    burst.destination,
+                    config_.tileId,
+                    burstBits,
+                    true,
+                    true,
+                    new PacketEvent(std::move(payload)));
+            if (!network_->send(request, kVirtualNetwork)) {
+                delete request;
+                return;
+            }
+            ++networkTransmitPackets_;
+            networkTransmitWords_ += burst.word_count;
+
+            output_.verbose(
+                CALL_INFO,
+                2,
+                0,
+                "tile %u sent %u-word burst to tile %u\n",
+                static_cast<unsigned>(config_.tileId),
+                static_cast<unsigned>(burst.word_count),
+                static_cast<unsigned>(burst.destination));
+            pendingTransmitBurst_.reset();
+            continue;
+        }
+
         if (!pendingTransmit_.has_value()) {
             pendingTransmit_ = bridge_.popTransmit();
         }
         if (!pendingTransmit_.has_value()) {
+            signalExitedTileIfDrained();
             return;
         }
 
@@ -818,6 +1072,8 @@ void Tile::serviceOutgoingPackets()
             delete request;
             return;
         }
+        ++networkTransmitPackets_;
+        ++networkTransmitWords_;
 
         output_.verbose(CALL_INFO, 2, 0,
                         "tile %u sent payload 0x%08x to tile %u\n",
@@ -832,7 +1088,9 @@ void Tile::serviceIncomingPackets()
 {
     constexpr int kVirtualNetwork = 0;
 
-    while (bridge_.receiveHasSpace() &&
+    while (bridge_.receiveHasBurstSpace() &&
+           bridge_.receiveBurstCount() <
+               config_.receiveDMAQueueDepth &&
            network_->requestToReceive(kVirtualNetwork)) {
         SST::Interfaces::SimpleNetwork::Request* request =
             network_->recv(kVirtualNetwork);
@@ -850,23 +1108,246 @@ void Tile::serviceIncomingPackets()
                           static_cast<unsigned>(config_.tileId));
         }
 
-        const std::uint32_t payload = packet->payload();
         const auto source = request->src;
+        std::vector<std::uint32_t> payload =
+            packet->payloads();
         delete packet;
         delete request;
 
-        if (!bridge_.pushReceive(payload)) {
+        if (payload.empty() ||
+            payload.size() >
+                MITTENS_BRIDGE_BURST_WORD_CAPACITY ||
+            !bridge_.pushReceiveBurst(
+                static_cast<std::uint32_t>(source),
+                payload)) {
             output_.fatal(CALL_INFO, -1,
-                          "tile %u bridge RX queue became full unexpectedly\n",
-                          static_cast<unsigned>(config_.tileId));
+                          "tile %u bridge burst RX queue rejected "
+                          "%zu words\n",
+                          static_cast<unsigned>(config_.tileId),
+                          payload.size());
+        }
+        ++networkReceivePackets_;
+        networkReceiveWords_ += payload.size();
+
+        output_.verbose(
+            CALL_INFO,
+            2,
+            0,
+            "tile %u received %zu-word burst from tile %lld\n",
+            static_cast<unsigned>(config_.tileId),
+            payload.size(),
+            static_cast<long long>(source));
+
+        scheduleReceiveDMABursts();
+    }
+}
+
+void Tile::registerReceiveDMA(const QemuSyncEvent& event)
+{
+    if (event.receiveDMASource >= config_.networkSize ||
+        event.receiveDMARouteId == UINT32_MAX ||
+        event.receiveDMAWordCount == 0) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u received invalid RX DMA descriptor "
+            "(source=%u, route=%u, words=%u)\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(event.receiveDMASource),
+            static_cast<unsigned>(event.receiveDMARouteId),
+            static_cast<unsigned>(event.receiveDMAWordCount));
+    }
+
+    const auto inserted = receiveDMADescriptors_.emplace(
+        event.receiveDMASource,
+        ReceiveDMADescriptor{
+            event.receiveDMARouteId,
+            event.receiveDMAWordCount,
+            false,
+        });
+    if (!inserted.second) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u received a duplicate RX DMA descriptor "
+            "for source %u\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(event.receiveDMASource));
+    }
+
+    output_.verbose(
+        CALL_INFO,
+        2,
+        0,
+        "tile %u registered RX DMA from tile %u "
+        "(route=%u, words=%u)\n",
+        static_cast<unsigned>(config_.tileId),
+        static_cast<unsigned>(event.receiveDMASource),
+        static_cast<unsigned>(event.receiveDMARouteId),
+        static_cast<unsigned>(event.receiveDMAWordCount));
+}
+
+bool Tile::receiveBurstScheduled(
+    std::uint32_t burstIndex) const noexcept
+{
+    for (const ReceiveDMATransfer& transfer :
+         receiveDMATransfersInFlight_) {
+        if (transfer.burstIndex == burstIndex) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Tile::refreshReceiveDMATransfers()
+{
+    if (!bridge_.open()) {
+        receiveDMATransfersInFlight_.clear();
+        return;
+    }
+
+    const std::uint32_t readIndex =
+        bridge_.receiveBurstReadIndex();
+    while (!receiveDMATransfersInFlight_.empty() &&
+           receiveDMATransfersInFlight_.front().burstIndex !=
+               readIndex) {
+        if (!receiveDMATransfersInFlight_.front().authorized) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u consumed RX DMA burst %u before authorization\n",
+                static_cast<unsigned>(config_.tileId),
+                static_cast<unsigned>(
+                    receiveDMATransfersInFlight_.front().burstIndex));
+        }
+        receiveDMATransfersInFlight_.pop_front();
+    }
+}
+
+void Tile::scheduleReceiveDMABursts()
+{
+    if (!bridge_.open() || receiveDMALink_ == nullptr) {
+        return;
+    }
+
+    refreshReceiveDMATransfers();
+    const std::uint32_t burstCount =
+        bridge_.receiveBurstCount();
+    for (std::uint32_t offset = 0;
+         offset < burstCount;
+         ++offset) {
+        const std::optional<ReceiveBurstInfo> burst =
+            bridge_.peekReceiveBurst(offset);
+        if (!burst.has_value()) {
+            return;
+        }
+        if (receiveBurstScheduled(burst->absoluteIndex)) {
+            continue;
         }
 
-        output_.verbose(CALL_INFO, 2, 0,
-                        "tile %u received payload 0x%08x from tile %lld\n",
-                        static_cast<unsigned>(config_.tileId),
-                        static_cast<unsigned>(payload),
-                        static_cast<long long>(source));
+        auto descriptor =
+            receiveDMADescriptors_.find(burst->source);
+        if (descriptor == receiveDMADescriptors_.end()) {
+            /*
+             * This is a software-visible frame header. Its descriptor
+             * does not exist until QEMU consumes and validates it.
+             */
+            return;
+        }
+        if (burst->wordCount >
+            descriptor->second.remainingWords) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u RX DMA burst from tile %u has %u words, "
+                "but route %u expects only %u more\n",
+                static_cast<unsigned>(config_.tileId),
+                static_cast<unsigned>(burst->source),
+                static_cast<unsigned>(burst->wordCount),
+                static_cast<unsigned>(descriptor->second.routeId),
+                static_cast<unsigned>(
+                    descriptor->second.remainingWords));
+        }
+
+        const std::uint64_t currentCycle =
+            getCurrentSimTime(receiveDMAClockTimeBase_);
+        ReceiveDMASchedule timing;
+        try {
+            timing = receiveDMAEngine_.schedule(
+                currentCycle,
+                burst->wordCount,
+                !descriptor->second.setupCharged);
+        } catch (const std::exception& error) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u cannot schedule RX DMA: %s\n",
+                static_cast<unsigned>(config_.tileId),
+                error.what());
+        }
+
+        descriptor->second.setupCharged = true;
+        descriptor->second.remainingWords -= burst->wordCount;
+        const std::uint32_t routeId =
+            descriptor->second.routeId;
+        receiveDMATransfersInFlight_.push_back(
+            ReceiveDMATransfer{
+                burst->absoluteIndex,
+                burst->source,
+                routeId,
+                burst->wordCount,
+                timing.completionCycle,
+                timing.serviceCycles,
+                false,
+            });
+        if (descriptor->second.remainingWords == 0) {
+            receiveDMADescriptors_.erase(descriptor);
+        }
+
+        receiveDMALink_->send(
+            static_cast<SST::SimTime_t>(
+                timing.completionCycle - currentCycle),
+            new SST::Event());
+
+        output_.verbose(
+            CALL_INFO,
+            3,
+            0,
+            "tile %u scheduled RX DMA burst %u from tile %u "
+            "(route=%u, words=%u, start=%llu, complete=%llu)\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(burst->absoluteIndex),
+            static_cast<unsigned>(burst->source),
+            static_cast<unsigned>(routeId),
+            static_cast<unsigned>(burst->wordCount),
+            static_cast<unsigned long long>(timing.startCycle),
+            static_cast<unsigned long long>(
+                timing.completionCycle));
     }
+}
+
+bool Tile::receiveReadyForGuest() const noexcept
+{
+    if (!bridge_.open()) {
+        return false;
+    }
+    if (bridge_.receiveHasWordData()) {
+        return true;
+    }
+
+    const std::optional<ReceiveBurstInfo> burst =
+        bridge_.peekReceiveBurst();
+    if (!burst.has_value()) {
+        return false;
+    }
+    if (receiveBurstScheduled(burst->absoluteIndex)) {
+        return bridge_.receiveDMAAuthorizationAvailable();
+    }
+    if (receiveDMADescriptors_.find(burst->source) !=
+        receiveDMADescriptors_.end()) {
+        return false;
+    }
+    return true;
 }
 
 void Tile::checkBridgeError() const
@@ -895,7 +1376,152 @@ void Tile::checkAnalogBridgeError() const
 
 bool Tile::outgoingPacketsIdle() const noexcept
 {
-    return !pendingTransmit_.has_value();
+    return !pendingTransmit_.has_value() &&
+           !pendingTransmitBurst_.has_value();
+}
+
+bool Tile::pendingReceiveWait() const noexcept
+{
+    return receiveWaitArmed_ &&
+           pendingSyncEvent_.has_value() &&
+           pendingSyncEvent_->stopReason ==
+               MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT;
+}
+
+void Tile::resumeReceiveWaitIfReady()
+{
+    if (pendingReceiveWait() && receiveReadyForGuest()) {
+        resumeAndCaptureQemu();
+    }
+}
+
+void Tile::signalExitedTileIfDrained()
+{
+    if (state_ == LifecycleState::Exited &&
+        !primaryEndSignaled_ &&
+        outgoingPacketsIdle()) {
+        primaryEndSignaled_ = true;
+        primaryComponentOKToEndSim();
+    }
+}
+
+void Tile::recordTaskTrace(const QemuSyncEvent& event)
+{
+    if (event.taskId == UINT32_MAX) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u received a task trace event without a task ID\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    const char* const eventName =
+        event.stopReason == MITTENS_SYNC_STOP_TASK_START
+            ? "start"
+            : "finish";
+    if (!config_.taskTraceDirectory.empty()) {
+        openTaskTrace();
+        taskTraceStream_
+            << getCurrentSimCycle() << ','
+            << eventName << ','
+            << config_.tileId << ','
+            << event.taskId << ','
+            << event.executionId << '\n';
+        taskTraceStream_.flush();
+        return;
+    }
+    output_.output(
+        "MITTENS_TASK_TRACE sim_time_ticks=%llu event=%s "
+        "tile=%u task=%u execution=%llu\n",
+        static_cast<unsigned long long>(getCurrentSimCycle()),
+        eventName,
+        static_cast<unsigned>(config_.tileId),
+        static_cast<unsigned>(event.taskId),
+        static_cast<unsigned long long>(event.executionId));
+}
+
+void Tile::openTaskTrace()
+{
+    if (taskTraceStream_.is_open()) {
+        return;
+    }
+    const std::string path =
+        config_.taskTraceDirectory + "/tile-" +
+        std::to_string(config_.tileId) + ".csv";
+    taskTraceStream_.open(path, std::ios::out | std::ios::trunc);
+    if (!taskTraceStream_.is_open()) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u could not open task trace file %s\n",
+            static_cast<unsigned>(config_.tileId),
+            path.c_str());
+    }
+    taskTraceStream_
+        << "sim_time_ticks,event,tile_id,task_id,execution_id\n";
+}
+
+void Tile::reportProfile() const
+{
+    output_.verbose(
+        CALL_INFO,
+        1,
+        0,
+        "MITTENS_PROFILE tile=%u instructions=%llu grants=%llu events=%llu "
+        "stop_quantum=%llu stop_nic_tx=%llu stop_nic_rx=%llu "
+        "stop_nic_rx_dma_submit=%llu "
+        "stop_analog_submit=%llu stop_analog_wait=%llu "
+        "stop_task_start=%llu stop_task_finish=%llu "
+        "network_tx_packets=%llu network_tx_words=%llu "
+        "network_rx_packets=%llu network_rx_words=%llu "
+        "rx_dma_transfers=%llu rx_dma_words=%llu "
+        "rx_dma_active_cycles=%llu "
+        "analog_active_cycles=%llu analog_set=%llu analog_load=%llu "
+        "analog_compute=%llu analog_store=%llu analog_move=%llu "
+        "analog_input_words=%llu analog_output_words=%llu\n",
+        static_cast<unsigned>(config_.tileId),
+        static_cast<unsigned long long>(synchronizedInstructions_),
+        static_cast<unsigned long long>(synchronizationGrants_),
+        static_cast<unsigned long long>(synchronizationEvents_),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_QUANTUM_END]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_NIC_TRANSMIT]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[
+                MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_ANALOG_SUBMIT]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_ANALOG_WAIT]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_TASK_START]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_TASK_FINISH]),
+        static_cast<unsigned long long>(networkTransmitPackets_),
+        static_cast<unsigned long long>(networkTransmitWords_),
+        static_cast<unsigned long long>(networkReceivePackets_),
+        static_cast<unsigned long long>(networkReceiveWords_),
+        static_cast<unsigned long long>(receiveDMATransfers_),
+        static_cast<unsigned long long>(receiveDMAWords_),
+        static_cast<unsigned long long>(receiveDMAActiveCycles_),
+        static_cast<unsigned long long>(
+            analogDevice_ == nullptr
+                ? 0
+                : analogDevice_->elapsedCycles()),
+        static_cast<unsigned long long>(
+            analogOperationCounts_[MITTENS_ANALOG_OPERATION_SET_MATRIX]),
+        static_cast<unsigned long long>(
+            analogOperationCounts_[MITTENS_ANALOG_OPERATION_LOAD_VECTOR]),
+        static_cast<unsigned long long>(
+            analogOperationCounts_[MITTENS_ANALOG_OPERATION_COMPUTE]),
+        static_cast<unsigned long long>(
+            analogOperationCounts_[MITTENS_ANALOG_OPERATION_STORE_VECTOR]),
+        static_cast<unsigned long long>(
+            analogOperationCounts_[MITTENS_ANALOG_OPERATION_MOVE_VECTOR]),
+        static_cast<unsigned long long>(analogInputWords_),
+        static_cast<unsigned long long>(analogOutputWords_));
 }
 
 void Tile::finish()
@@ -914,6 +1540,8 @@ void Tile::finish()
     if (network_ != nullptr) {
         network_->finish();
     }
+
+    reportProfile();
 
     bridge_.close();
     analogBridge_.close();

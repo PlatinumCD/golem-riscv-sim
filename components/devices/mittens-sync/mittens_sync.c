@@ -94,6 +94,11 @@ static void mittens_sync_publish_event(
     uint32_t flags,
     uint32_t array_id,
     uint64_t analog_sequence,
+    uint32_t task_id,
+    uint64_t execution_id,
+    uint32_t rx_dma_source,
+    uint32_t rx_dma_route_id,
+    uint32_t rx_dma_word_count,
     uint64_t instructions_executed,
     bool wait_for_resume)
 {
@@ -118,6 +123,11 @@ static void mittens_sync_publish_event(
     bridge->event_flags = flags;
     bridge->analog_array_id = array_id;
     bridge->analog_sequence = analog_sequence;
+    bridge->task_id = task_id;
+    bridge->execution_id = execution_id;
+    bridge->rx_dma_source = rx_dma_source;
+    bridge->rx_dma_route_id = rx_dma_route_id;
+    bridge->rx_dma_word_count = rx_dma_word_count;
     bridge->event_sequence += UINT64_C(1);
     mittens_sync_store_release(
         &bridge->state, MITTENS_SYNC_STATE_EVENT);
@@ -230,6 +240,11 @@ void mittens_sync_quantum_end(void)
         MITTENS_SYNC_EVENT_FLAG_NONE,
         UINT32_MAX,
         0,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
         mittens_sync_current_executed(),
         false);
 }
@@ -248,6 +263,11 @@ void mittens_sync_guest_exit(void)
         MITTENS_SYNC_EVENT_FLAG_NONE,
         UINT32_MAX,
         0,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
         mittens_sync_current_executed(),
         false);
     if (current_cpu != NULL) {
@@ -263,6 +283,55 @@ void mittens_sync_yield_nic(uint32_t reason)
     mittens_sync_publish_event(
         reason,
         MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
+        mittens_sync_current_executed(),
+        true);
+}
+
+void mittens_sync_yield_receive_dma(
+    uint32_t source,
+    uint32_t route_id,
+    uint32_t word_count)
+{
+    if (!mittens_sync_available()) {
+        return;
+    }
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT,
+        MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        0,
+        source,
+        route_id,
+        word_count,
+        mittens_sync_current_executed(),
+        true);
+}
+
+void mittens_sync_yield_task(
+    uint32_t reason,
+    uint32_t task_id,
+    uint64_t execution_id)
+{
+    if (!mittens_sync_available()) {
+        return;
+    }
+    mittens_sync_publish_event(
+        reason,
+        MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX,
+        0,
+        task_id,
+        execution_id,
+        UINT32_MAX,
         UINT32_MAX,
         0,
         mittens_sync_current_executed(),
@@ -287,6 +356,11 @@ void mittens_sync_yield_analog(
         flags,
         array_id,
         analog_sequence,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
         mittens_sync_current_executed(),
         true);
 }

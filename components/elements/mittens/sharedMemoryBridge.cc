@@ -68,6 +68,7 @@ void SharedMemoryBridge::create(std::uint32_t tileId)
     mapping_->structure_size = sizeof(MittensBridgeShared);
     mapping_->queue_capacity = MITTENS_BRIDGE_QUEUE_CAPACITY;
     mapping_->tile_id = tileId;
+    mapping_->rx_dma_timing_enabled = 1;
 }
 
 void SharedMemoryBridge::close() noexcept
@@ -104,17 +105,116 @@ std::optional<MittensBridgePacket> SharedMemoryBridge::popTransmit()
     return packet;
 }
 
+std::optional<MittensBridgeTxBurst> SharedMemoryBridge::popTransmitBurst()
+{
+    if (!open()) {
+        throw std::logic_error("cannot read a closed Mittens bridge");
+    }
+
+    MittensBridgeTxBurst burst{};
+    if (!mittens_bridge_tx_burst_pop(mapping_, &burst)) {
+        return std::nullopt;
+    }
+    return burst;
+}
+
+bool SharedMemoryBridge::receiveHasData() const noexcept
+{
+    return open() &&
+           (mittens_bridge_rx_valid(mapping_) ||
+            mittens_bridge_rx_burst_valid(mapping_));
+}
+
+bool SharedMemoryBridge::receiveHasWordData() const noexcept
+{
+    return open() && mittens_bridge_rx_valid(mapping_);
+}
+
 bool SharedMemoryBridge::receiveHasSpace() const noexcept
 {
     return open() && mittens_bridge_rx_space(mapping_);
 }
 
-bool SharedMemoryBridge::pushReceive(std::uint32_t payload)
+bool SharedMemoryBridge::pushReceive(std::uint32_t source,
+                                     std::uint32_t payload)
 {
     if (!open()) {
         throw std::logic_error("cannot write a closed Mittens bridge");
     }
-    return mittens_bridge_rx_push(mapping_, payload);
+    return mittens_bridge_rx_push(
+        mapping_, MittensBridgeRxPacket{source, payload});
+}
+
+bool SharedMemoryBridge::receiveHasBurstSpace() const noexcept
+{
+    return open() && mittens_bridge_rx_burst_space(mapping_);
+}
+
+std::uint32_t SharedMemoryBridge::receiveBurstCount() const noexcept
+{
+    if (!open()) {
+        return 0;
+    }
+    return mittens_bridge_rx_burst_count(mapping_);
+}
+
+std::uint32_t SharedMemoryBridge::receiveBurstReadIndex() const noexcept
+{
+    if (!open()) {
+        return 0;
+    }
+    return mittens_bridge_rx_burst_read_index(mapping_);
+}
+
+std::optional<ReceiveBurstInfo> SharedMemoryBridge::peekReceiveBurst(
+    std::uint32_t offset) const noexcept
+{
+    if (!open()) {
+        return std::nullopt;
+    }
+
+    std::uint32_t absoluteIndex = 0;
+    const MittensBridgeRxBurst* burst = nullptr;
+    if (!mittens_bridge_rx_burst_peek_at(
+            mapping_, offset, &absoluteIndex, &burst)) {
+        return std::nullopt;
+    }
+    return ReceiveBurstInfo{
+        absoluteIndex,
+        burst->source,
+        burst->word_count,
+    };
+}
+
+bool SharedMemoryBridge::pushReceiveBurst(
+    std::uint32_t source,
+    const std::vector<std::uint32_t>& payload)
+{
+    if (!open() ||
+        payload.empty() ||
+        payload.size() > MITTENS_BRIDGE_BURST_WORD_CAPACITY) {
+        return false;
+    }
+    return mittens_bridge_rx_burst_push(
+        mapping_,
+        source,
+        payload.data(),
+        static_cast<std::uint32_t>(payload.size()));
+}
+
+bool SharedMemoryBridge::receiveDMAAuthorizationAvailable() const noexcept
+{
+    return open() &&
+           mittens_bridge_rx_dma_authorization_available(mapping_);
+}
+
+bool SharedMemoryBridge::authorizeReceiveDMA()
+{
+    if (!open()) {
+        throw std::logic_error(
+            "cannot authorize RX DMA on a closed Mittens bridge");
+    }
+    return mittens_bridge_rx_dma_authorize(mapping_);
 }
 
 } // namespace Mittens
