@@ -23,6 +23,7 @@ mapfile -t runtime_sources < <(
     -Werror \
     "-I${PROJECT_ROOT}/runtime/include" \
     "${runtime_sources[@]}" \
+    "${PROJECT_ROOT}/platform/mlir-runtime.cpp" \
     "${TEST_DIR}/runtime_test.cpp" \
     -o "${BUILD_DIR}/runtime-test"
 

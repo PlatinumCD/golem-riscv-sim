@@ -41,7 +41,7 @@ constexpr uint32_t elementSizeBytes(ElementType element_type) {
 }
 
 constexpr bool validTensorRank(int64_t rank) {
-    return rank >= 0 && rank <= 2;
+    return rank >= 0;
 }
 
 constexpr bool validTensor(const Tensor& tensor) {
