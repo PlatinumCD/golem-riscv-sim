@@ -3,6 +3,27 @@
 This document describes how the compiler, bare-metal tile software, QEMU,
 Mittens, and SST Merlin form the current Platform v0.1 system.
 
+## End-to-end system
+
+The complete verified application path is:
+
+```text
+PyTorch model
+  → Torch-MLIR
+  → Sculptor task extraction, scheduling, fusion, and partitioning
+  → one bare-metal RISC-V ELF per tile
+  → tile runtime with boot and task registries
+  → custom Golem analog ISA
+  → QEMU execution
+  → SST timing and mesh simulation
+  → native or CrossSim analog backend
+  → 32-bit routed tensor transfers
+```
+
+This path connects model import and compilation to independently bootable tile
+programs, analog execution, and cycle-synchronized communication through the
+simulated mesh.
+
 ## Component boundary
 
 Each simulated tile is one independent QEMU system-emulation process with one
@@ -47,13 +68,34 @@ detail documented in [`../bridge/README.md`](../bridge/README.md).
 | QEMU | RISC-V instruction semantics, custom analog decode, private RAM, local devices, precise instruction counting | Mesh topology or authority over simulated time |
 | `mittens-nic` | Guest MMIO state and QEMU side of the shared queues | Destination routing |
 | `mittens-analog` | Guest-memory snapshots and QEMU side of the per-array queues | Numerical MVM or simulated latency |
-| `mittens-sync` | QEMU side of instruction grants and device-boundary yields | CPU timing policy |
-| `mittens.tile` | QEMU lifecycle, fd 41 control, NIC and analog bridges, SST endpoint conversion, CPU and analog timing | RISC-V instruction semantics |
+| `mittens-sync` | QEMU side of instruction grants, device-boundary yields, and task markers | CPU timing policy |
+| `mittens.tile` | QEMU lifecycle, fd 41 control, NIC and analog bridges, SST endpoint conversion, CPU and analog timing, optional task timestamps | RISC-V instruction semantics |
 | Merlin | Router topology, buffering, link bandwidth, latency, backpressure | Guest instruction timing |
 | SST Core | Discrete-event schedule, component lifecycle, and QEMU execution authority | RISC-V instruction semantics |
 
 Guest RAM is never shared between tiles. A tile can affect another tile only
 by sending a packet through its NIC and the SST network.
+
+## Compiler path
+
+The smallest verified application path is:
+
+```text
+Python torch.nn.Module
+        |
+        | torch.export + Torch-MLIR FX importer
+        v
+Torch dialect -> Linalg-on-tensors -> bufferized scalar loops
+        |
+        | MLIR LLVM dialect -> LLVM IR -> Golem Clang/LLD
+        v
+freestanding RISC-V ELF -> one QEMU hart
+```
+
+The single-core proof is implemented in `tests/pytorch-single-core`. PyTorch
+is a host-side compiler dependency only. The generated ELF contains the
+lowered model, a small memref ABI driver, and the existing bare-metal startup
+and UART code; it neither embeds Python nor requires an operating system.
 
 ## Build-time composition
 
@@ -99,8 +141,8 @@ sequence:
 6. Launch QEMU with precise icount and all enabled bridge properties.
 7. Grant instruction quanta and schedule returned instruction counts on
    `cpu_clock`.
-8. Process NIC and analog boundaries only after their fd 41 yield reaches its
-   scheduled SST cycle.
+8. Process NIC, analog, and optional task-marker boundaries only after their
+   fd 41 yield reaches its scheduled SST cycle.
 9. Advance active analog arrays on `analog_link_clock`.
 10. Schedule the guest's normal finisher write as an fd 41 `GUEST_EXIT`
     boundary, then reap QEMU at that simulated cycle.
@@ -132,19 +174,57 @@ A guest transmission follows this sequence:
 2. It writes the final endpoint ID to `TX_DESTINATION`.
 3. It writes a 32-bit payload to `TX_DATA`, which is the transmit doorbell.
 4. QEMU appends `{destination, payload}` to fd 42.
-5. QEMU yields `NIC_TRANSMIT` through fd 41 with the exact instruction count.
-6. SST advances to that CPU boundary and `mittens.tile` removes the packet.
-7. It creates a 32-bit SST network request whose source and destination are
-   endpoint IDs and whose `PacketEvent` contains the 32-bit payload.
+5. QEMU yields `NIC_TRANSMIT` through fd 41 when the 64-entry transmit ring
+   fills. A partial ring is serviced at the next fd-41 synchronization
+   boundary.
+6. SST advances to that CPU boundary and `mittens.tile` drains the ring.
+7. It creates one 32-bit SST network request for every bridge entry. Each
+   request carries endpoint IDs and a `PacketEvent` containing one 32-bit
+   payload.
 8. Merlin selects router ports, applies buffering and link timing, and delivers
    the request to the destination endpoint.
-9. The destination `mittens.tile` places the payload in its fd 42 receive ring
-   at the destination's next synchronization boundary.
-10. The destination QEMU exposes `STATUS.RX_VALID`; reading `RX_DATA` consumes
-   the oldest payload.
+9. The destination `mittens.tile` places `{source, payload}` in its fd 42
+   receive ring when Merlin delivers the request.
+10. If the destination hart is stopped on `RX_WAIT`, Mittens resumes it
+    through fd 41 at that delivery time. QEMU's wait operation rechecks the
+    receive rings, so a packet arriving between `RX_VALID` and `RX_WAIT`
+    cannot be lost.
+11. The destination QEMU exposes `STATUS.RX_VALID`; `RX_SOURCE` peeks the
+    oldest entry's sender and `RX_DATA` consumes its 32-bit payload.
 
-The SST request retains the source endpoint for diagnostics, but Platform v0.1
-does not expose that source ID to the receiving guest.
+Source identity lets the deployment runtime keep one frame decoder per source.
+Words from different source tiles may therefore interleave at a destination
+without combining two tensor transfers.
+
+Deployment frames take a bounded bulk path instead. The runtime submits the
+five-word frame header and tensor payload in chunks of at most 4096 words.
+QEMU snapshots each chunk into fd 42 and Mittens creates one multi-flit Merlin
+request. Merlin carries ordered 32-bit words at the physical width configured
+by the SST topology. At the destination, guest software consumes the
+five-word frame header through `RX_SOURCE`/`RX_DATA`, validates it, and
+registers the payload's local tensor address with the NIC. QEMU reports that
+descriptor through fd 41. Mittens schedules delivered fd-42 payload bursts on
+the tile's receive DMA channel and authorizes each burst only at its modeled
+completion cycle. QEMU then copies the authorized burst into the guest range
+and reports a source-and-route completion. The fallback transport still
+consumes each payload through `RX_DATA`.
+
+```text
+source tensor RAM
+       |
+       v
+QEMU TX snapshot --> fd 42 --> SST mesh --> fd 42 --> SST RX DMA timer
+                                                        |
+                                                 authorization at completion
+                                                        |
+                                                        v
+                                              QEMU functional RAM write
+```
+
+All 32-bit words cross the same SST links and incur the same routing,
+serialization, buffering, and contention. Receive DMA removes destination
+guest MMIO instructions; it does not remove network traffic. One local DMA
+channel serializes writes per tile, while different tiles' channels overlap.
 
 ## Analog accelerator path
 
@@ -328,10 +408,10 @@ unused words. `StoreVector` returns `rows` float32 values and therefore takes
 `ceil(rows / 8)` array-to-tile link cycles. Transfers for other arrays consume
 their own links and do not increase that latency.
 
-This 256-bit local path does not change the mesh contract. Communication
-between different tiles continues to carry exactly one 32-bit word per mesh
-link cycle. An explicit SST analog-link clock will define the local transfer
-cycle and is intended initially to match the modeled tile clock.
+This 256-bit local path does not change the mesh word contract. Communication
+between different tiles remains an ordered stream of 32-bit words. The SST
+mesh width controls how many of those words a physical link can carry per
+cycle, independently of each array's fixed 256-bit local link.
 
 CrossSim determines the numerical result, including configured analog
 nonidealities. Its host execution duration is not simulated hardware time.
@@ -378,14 +458,12 @@ The reusable test topology is implemented in
 
 ## Current architectural limits
 
-- Guest programs poll the NIC; Platform v0.1 does not use NIC interrupts.
-- NIC receive observation occurs at a synchronization quantum boundary; there
-  is not yet a distinct blocking receive doorbell.
-- Receive packets expose only a payload, not their source endpoint.
-- Each current QEMU NIC transaction carries only a destination endpoint and
-  one 32-bit payload. There is no multiword network transaction or runtime
-  header. The distributed matvec receiver uses its compiled task order and
-  fixed four-word input size.
+- Platform v0.1 uses an explicit `RX_WAIT` doorbell rather than NIC
+  interrupts. A waiting hart resumes when delivered data becomes visible.
+- The legacy NIC path carries one payload per transaction. The deployment path
+  supports bounded 4096-word host transactions represented by 16 KiB Merlin
+  timing cells. At the default 32-bit, 1 GHz mesh width, each cell is charged
+  4096 link cycles; wider SST configurations reduce that serialization time.
 - There is no operating system, dynamic loader, pthread runtime, or OpenMP
   runtime in a tile.
 - The CPU timing policy is one retired instruction per cycle. Pipeline, cache,

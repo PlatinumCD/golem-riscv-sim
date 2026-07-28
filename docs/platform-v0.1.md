@@ -306,9 +306,10 @@ analog-link clock tick. `SetMatrix`, `LoadVector`, `StoreVector`, and
 completion is delayed by `analog_compute_latency_cycles`. The native and
 CrossSim backends use the same transport and timing state machine.
 
-The analog path is local to a tile. It does not bypass or widen the mesh:
-tile-to-tile communication still transfers exactly one 32-bit word at a time
-through the mesh NIC and Merlin.
+The analog path is local to a tile. It does not bypass the mesh. Tile-to-tile
+data remains a sequence of 32-bit architectural words through the mesh NIC
+and Merlin; the SST topology separately configures how many such words a
+physical link can transfer per cycle.
 
 ### Mesh coordinates and routing
 
@@ -336,10 +337,12 @@ unconnected.
 
 ## SST mesh NIC
 
-The mesh NIC is a polling, programmed-I/O device. Each packet carries one
-32-bit destination tile ID and one 32-bit payload. The payload is normally the
-raw IEEE-754 representation of a 32-bit float; the NIC transports its bits
-without interpreting or converting them.
+The mesh NIC is a programmed-I/O device with an event-driven receive wait.
+Its legacy operation carries one 32-bit payload. Its deployment operation
+snapshots a bounded burst of up to 4096 words and presents it to Merlin as one
+16 KiB timing cell. Payloads are normally raw IEEE-754 representations of
+32-bit floats; the NIC transports their bits without interpreting or
+converting them.
 
 All NIC registers are little-endian, 32-bit registers and require aligned
 32-bit accesses. Register offsets are relative to the NIC base address
@@ -351,6 +354,26 @@ All NIC registers are little-endian, 32-bit registers and require aligned
 | `0x04` | `TX_DESTINATION` | WO | Destination tile ID |
 | `0x08` | `TX_DATA` | WO | Write one payload to transmit a packet |
 | `0x0c` | `RX_DATA` | RO | Read and consume one received payload |
+| `0x10` | `RX_SOURCE` | RO | Read the next payload's source without consuming it |
+| `0x14` | `TX_BURST_ADDRESS_LOW` | WO | Guest physical source address bits 31:0 |
+| `0x18` | `TX_BURST_ADDRESS_HIGH` | WO | Guest physical source address bits 63:32 |
+| `0x1c` | `TX_BURST_WORD_COUNT` | WO | Burst length from 1 through 4096 words |
+| `0x20` | `TX_BURST_SUBMIT` | WO | Snapshot and submit the described burst |
+| `0x24` | `RX_WAIT` | WO | Yield until a receive word or burst is available |
+| `0x28` | `TRACE_TASK_ID` | WO | Diagnostic global task ID |
+| `0x2c` | `TRACE_EXECUTION_ID_LOW` | WO | Diagnostic execution ID bits 31:0 |
+| `0x30` | `TRACE_EXECUTION_ID_HIGH` | WO | Diagnostic execution ID bits 63:32 |
+| `0x34` | `TRACE_EVENT` | WO | Emit task start (`1`) or task finish (`2`) |
+| `0x38` | `RX_DMA_SOURCE` | WO | Source tile for a receive-DMA descriptor |
+| `0x3c` | `RX_DMA_ROUTE_ID` | WO | Route identity returned on completion |
+| `0x40` | `RX_DMA_ADDRESS_LOW` | WO | Guest physical destination address bits 31:0 |
+| `0x44` | `RX_DMA_ADDRESS_HIGH` | WO | Guest physical destination address bits 63:32 |
+| `0x48` | `RX_DMA_WORD_COUNT` | WO | Exact number of 32-bit payload words |
+| `0x4c` | `RX_DMA_SUBMIT` | WO | Register the described receive operation |
+| `0x50` | `RX_DMA_STATUS` | RO | Receive-DMA submission and completion state |
+| `0x54` | `RX_DMA_COMPLETION_SOURCE` | RO | Source tile of the oldest completion |
+| `0x58` | `RX_DMA_COMPLETION_ROUTE_ID` | RO | Route ID of the oldest completion |
+| `0x5c` | `RX_DMA_COMPLETION_ACK` | WO | Consume the oldest completion |
 
 `STATUS` has the following bit assignments:
 
@@ -358,6 +381,15 @@ All NIC registers are little-endian, 32-bit registers and require aligned
 | ---: | --- | --- |
 | 0 | `TX_READY` | The NIC can accept a write to `TX_DATA` |
 | 1 | `RX_VALID` | `RX_DATA` contains a payload that can be consumed |
+| 2 | `TX_BURST_READY` | The NIC can accept a burst submission |
+| 3-31 | Reserved | Read as zero |
+
+`RX_DMA_STATUS` has the following bit assignments:
+
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 0 | `SUBMIT_READY` | The NIC can accept another receive descriptor |
+| 1 | `COMPLETION_VALID` | Completion source and route ID can be read |
 | 2-31 | Reserved | Read as zero |
 
 ### Transmit behavior
@@ -373,23 +405,135 @@ the transmit doorbell: it atomically forms and submits this packet:
 `TX_DESTINATION` remains latched until software changes it, allowing a tile
 with a fixed successor to write its destination once during initialization.
 
+For a bulk transfer, software waits for `TX_BURST_READY`, writes
+`TX_DESTINATION`, the 64-bit guest physical source address, and a word count,
+executes `fence rw, iorw`, and writes `TX_BURST_SUBMIT`. QEMU snapshots the
+specified words before the command completes. The snapshot cannot change if
+the guest subsequently reuses its source buffer.
+
 ### Receive behavior
 
-Software waits for `RX_VALID` and reads `RX_DATA`. The read returns the oldest
-waiting 32-bit payload and consumes that packet. If another packet is queued,
-it becomes visible through `RX_DATA` and `RX_VALID` remains set.
+Software checks `RX_VALID`. When it is clear, software executes an I/O fence
+and writes `RX_WAIT`. QEMU rechecks both receive queues in the same MMIO
+operation. If data is already available, the write returns immediately. If
+both queues remain empty under SST-managed execution, QEMU yields
+`NIC_RECEIVE_WAIT` over fd 41. SST holds that tile stopped until a delivered
+word or burst has been placed in its fd 42 receive bridge, then resumes QEMU
+at that delivery time.
 
-The sender is implicit in the SST endpoint that injected the packet and is not
-exposed to tile software. Current proof programs contain their computation
-code directly in each tile image.
+This check-and-yield sequence prevents a lost wakeup if a packet arrives
+between the guest's `RX_VALID` read and its `RX_WAIT` write. Direct,
+non-managed QEMU has no fd 41 authority, so `RX_WAIT` returns and the helper
+continues polling.
+
+Once `RX_VALID` is set, software reads `RX_SOURCE`, executes an I/O fence, and
+then reads `RX_DATA`. `RX_SOURCE` peeks without consuming; `RX_DATA` returns
+the oldest waiting 32-bit payload and consumes the `{source, payload}` entry.
+If another packet is queued, it becomes visible and `RX_VALID` remains set.
+
+### Receive-DMA behavior
+
+Deployment software still reads the five-word frame header through
+`RX_SOURCE` and `RX_DATA`. After validating the route, execution ID, and word
+count, it registers the source tile, route ID, local tensor address, and exact
+payload length through the receive-DMA registers. Bare-metal Platform v0.1
+uses an identity-mapped address space, so the tensor pointer is also its guest
+physical address.
+
+QEMU associates each descriptor with one source tile and reports its
+`{source, route_id, word_count}` to SST through an exact fd-41
+`NIC_RX_DMA_SUBMIT` boundary. As fd-42 bursts from that source reach the head
+of the receive bridge, `mittens.tile` schedules them on the tile-local receive
+DMA engine. The payload remains hidden from the guest until that engine
+completes. SST then authorizes the head burst, resumes a waiting hart, and
+QEMU copies its ordered 32-bit words into the registered guest range.
+
+A descriptor may span multiple 4096-word timing cells. Setup is charged only
+for its first burst. When exactly `RX_DMA_WORD_COUNT` words have been
+authorized and copied, QEMU places `{source, route_id}` in the completion
+queue. Software reads both completion fields and writes
+`RX_DMA_COMPLETION_ACK`; only then does the runtime mark the route and its
+local tensor resource ready.
+
+Up to 64 descriptors or unacknowledged completions may be outstanding in
+total. Only one descriptor may be active for a given source, while
+descriptors for different sources can progress independently. A descriptor
+must have a nonzero word count and a four-byte-aligned, non-overflowing guest
+address. A received burst larger than the descriptor's remaining size is a
+protocol error.
+
+Receive DMA does not bypass SST or widen the architectural channel:
+
+```text
+source RAM
+    -> transmit snapshot
+    -> fd 42
+    -> SST routers and links (every 32-bit word timed)
+    -> destination fd-42 receive burst
+    -> SST tile-local receive DMA (timed)
+    -> SST authorization
+    -> QEMU functional RAM write
+    -> destination tensor RAM
+```
+
+Every tile owns one receive DMA channel. Transfers on the same tile serialize;
+channels on different tiles advance independently. The default engine is
+256 bits wide at 1 GHz with eight setup cycles per descriptor:
+
+```text
+descriptor service cycles =
+    rx_dma_setup_cycles
+    + sum(ceil(burst_word_count * 32 / rx_dma_width_bits))
+```
+
+The engine parameters are `rx_dma_clock`, `rx_dma_width_bits`,
+`rx_dma_setup_cycles`, and `rx_dma_queue_depth`. The width must be a positive
+multiple of 32 bits. Queue depth is from one through four and limits delivered
+fd-42 bursts waiting for local service, so a full destination applies normal
+SST network backpressure.
+
+This models the NIC-to-local-memory write port, but it is not yet a complete
+cache or scratchpad hierarchy: CPU accesses do not contend for this port,
+capacity is still the QEMU private-RAM allocation, and the final host memory
+copy is functional after the modeled transfer completes. The legacy per-word
+receive interface remains available and is the runtime fallback when
+receive-DMA callbacks are absent.
+
+### Task trace behavior
+
+Task tracing is an optional diagnostic path and does not add fields to mesh
+packets. Software writes `TRACE_TASK_ID`, both halves of the 64-bit
+`TRACE_EXECUTION_ID`, executes an I/O fence, and writes `TRACE_EVENT`. Under
+SST-managed execution, QEMU emits an exact fd-41 `TASK_START` or
+`TASK_FINISH` marker and waits for SST to resume it. SST first charges the
+instructions retired before the marker, records its global simulated
+timestamp, and resumes the hart immediately.
+
+The deployment runtime can emit these markers immediately before and after
+each registered task call. The compiler's global task ID and the runtime's
+execution ID provide the trace identity. Trace markers are neither routed nor
+visible to another tile:
+
+```text
+runtime task boundary
+    -> NIC diagnostic MMIO
+    -> QEMU fd 41 marker
+    -> SST global timestamp
+    -> immediate resume
+```
+
+The synchronized bridge carries `task_id` and `execution_id` in reserved
+control-plane space. Platform v0.1 bridge version 2 adds these fields and the
+two task stop reasons without changing the 128-byte bridge size.
 
 ### Flow control and errors
 
 SST provides backpressure and does not drop packets. Packets from a given
 sender are delivered in order. Writing `TX_DATA` while `TX_READY` is clear,
 reading `RX_DATA` while `RX_VALID` is clear, or using an invalid destination is
-a platform protocol error. The simulator must stop with a diagnostic when it
-detects one of these errors.
+a platform protocol error. An unsupported `TRACE_EVENT` value is also an
+error. The simulator must stop with a diagnostic when it detects one of these
+errors.
 
 The following sequence is required for transmission:
 
@@ -403,16 +547,65 @@ write TX_DATA
 The following sequence is required for reception:
 
 ```text
-wait for RX_VALID
+read RX_VALID
+if clear:
+    fence rw, iorw
+    write RX_WAIT
+    retry
+read RX_SOURCE
+fence iorw, iorw
 read RX_DATA
 ```
 
 ## Bare-metal runtime
 
-The Platform v0.1 runtime design is specified below. Its foundational types,
-fixed bookkeeping structures, and transport-neutral 32-bit word interface are
-implemented in `runtime/` as the freestanding `libgolem-runtime.a`. The tile
-scheduler and tensor arena remain to be implemented.
+The Platform v0.1 runtime is implemented in `runtime/` as the freestanding
+`libgolem-runtime.a`. It consumes the compiler's resource, dimension,
+workspace, route, and task-binding tables and constructs the concrete memref
+descriptors required by generated task adapters.
+
+The first executable milestone also implements `BasicTileRuntime`. It consumes
+the C ABI tables emitted by `sculptor-emit-golem-tile-abi`, validates their
+core ownership and record layouts, runs every zero-input boot task once,
+dispatches a compiled task by its global ID, and moves one generated route's
+exact payload with blocking 32-bit NIC transfers. The two-linear proof uses
+execution 0 and application-supplied ranked-memref descriptors for its fixed
+`1x4`, `1x3`, and `1x2` tensors.
+
+`DeploymentRuntime` adds the compiler-sized workspace, task readiness
+scheduling, rank-generic contiguous descriptors, and source-aware framed
+routes. Its frame format is:
+
+```text
+32-bit magic
+32-bit route_id
+32-bit execution_id low
+32-bit execution_id high
+32-bit payload word count
+N x 32-bit payload words
+```
+
+Framed transmission is resumable. Each runtime step first consumes an
+available receive word, then advances at most one pending header or payload
+chunk. If the transmit path is full, the route ID, phase, and word offset
+remain live for the next step instead of blocking inside the send call. This
+is required for bounded networks: two tiles may exchange large tensors in
+opposite directions without deadlocking when both transmit and receive queues
+fill simultaneously.
+
+If no local task or transmission can advance and at least one incoming route
+is still outstanding, `DeploymentRuntime::step()` returns `WaitForReceive`.
+The tile entry point then writes the NIC's `RX_WAIT` doorbell. Transmit
+backpressure returns `Idle`, not `WaitForReceive`, because sleeping for an
+incoming packet while an outgoing queue is the actual blocker could deadlock.
+
+The initial implementation admits only execution ID 0. Multiple-execution
+admission and reclamation remain later work.
+
+The basic runtime is validated with both a two-layer 2x1 deployment and a
+four-layer 2x2 deployment. The latter uses four compiler-generated tile ELFs,
+one private analog array per tile, a boot-ready barrier, and three generated
+activation routes along the snake path `0 -> 1 -> 3 -> 2`.
 
 The runtime is a concurrent dataflow system. Multiple graph inputs move
 through the task graph simultaneously. The runtime must keep the tensors,
@@ -644,9 +837,26 @@ dynamically.
 
 ### Tensor transfer
 
-The tile-to-tile channel transfers exactly one 32-bit word at a time. One NIC
-write produces one 32-bit SST request and one 4-byte Merlin flit. There is no
-wider path and no multiword network transaction.
+Every tile-to-tile tensor is represented as ordered 32-bit words. The legacy
+NIC operation creates a one-word Merlin request. The deployment runtime groups
+up to 4096 contiguous words into one bounded request. The architectural word
+size is fixed, but the SST topology accepts a physical
+`mesh_link_width_bits` parameter that must be a positive multiple of 32.
+
+At `mesh_link_clock`, a width of `W` bits can transfer `W / 32` words per
+cycle:
+
+```text
+link bandwidth = W * mesh_link_clock
+timing-cell cycles = ceil((network_cell_words * 32) / W)
+```
+
+Timing cells are padded to a complete physical beat, and partial requests are
+conservatively padded to the configured cell size. The default remains a
+32-bit, 1 GHz, 4 GB/s link: a 4096-word cell costs 4096 cycles. A 64-bit link
+costs 2048 cycles for the same words. This changes only SST transport
+capacity; it does not change NIC registers, frame fields, tensor element
+representation, or QEMU/runtime ABIs.
 
 Platform v0.1 does not add a runtime header. No task ID, execution ID, input
 index, or payload length is transmitted before the data. The compiled tile ELF
@@ -665,8 +875,9 @@ word 3: vector[3] float32 bits
 
 The receiver stores the first word in input slot 0, the second in slot 1, and
 so on. After the fourth word arrives, that local input buffer becomes ready.
-The router treats every word independently and uses deterministic X-then-Y
-routing for its destination tile.
+Legacy transfers remain independent packets. Deployment bursts share one
+route and arbitration decision but consume one link beat per word using
+deterministic X-then-Y routing.
 
 This fixed stream deliberately supports one execution moving through the
 current demonstration. Multiplexing multiple executions or dynamically
@@ -813,6 +1024,6 @@ transmitted over the mesh.
 ## Stability
 
 The base addresses and region sizes in this table are locked for Platform v0.1.
-The four mesh NIC registers, their access behavior, and their status bits are
-also locked for Platform v0.1. The remainder of the NIC's 4 KiB region is
-reserved and reads as zero; writes to it are ignored.
+The mesh NIC registers through offset `0x5c`, their access behavior, and their
+status bits are locked for Platform v0.1. The remainder of the NIC's 4 KiB
+region is reserved and reads as zero; writes to it are ignored.

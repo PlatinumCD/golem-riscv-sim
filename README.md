@@ -2,9 +2,9 @@
 
 This repository reproduces an AArch64-hosted compiler and simulation stack for
 the bare-metal Golem RISC-V tile platform. It builds the custom LLVM/MLIR
-compiler, the pinned Torch-MLIR compiler passes and tools, QEMU with the
-Mittens fd 41 execution synchronizer, mesh NIC, and Golem analog instruction
-decoder, SST Core, and the
+compiler, a pinned PyTorch/Torch-MLIR import and lowering path, the
+Sculptor-MLIR layer compiler, QEMU with the Mittens fd 41 execution
+synchronizer, mesh NIC, and Golem analog instruction decoder, SST Core, and the
 Merlin and Mittens SST elements. Each
 simulated tile is an independent single-hart QEMU process with private memory.
 Mittens contains a complete functional analog accelerator path:
@@ -45,8 +45,15 @@ pass:
 ```bash
 ./components/elements/mittens/tests/run-test.sh
 ./tests/torch-mlir/run-test.sh
+./tests/pytorch-single-core/run-test.sh
+./tests/torch-mlir-sculptor/run-test.sh
+./tests/sculptor-core-elf/run-test.sh
+./tests/sculptor-four-layer-mesh/run-test.sh
+./tests/sculptor-eight-layer-mesh/run-test.sh
+./tests/sculptor-eight-layer-mesh-4x2/run-test.sh
 ./runtime/tests/run-test.sh
 ./tests/runtime-library/run-test.sh
+./tests/deployment-runtime-pair/run-test.sh
 ./tests/hello/run-test.sh
 ./tests/analog-instructions/run-test.sh
 ./tests/analog-ops/run-test.sh
@@ -90,6 +97,10 @@ small integration patches there.
   map, NIC registers, and mesh-routing contract.
 - [`docs/analog-isa.md`](docs/analog-isa.md) records the LLVM-defined Golem
   analog instruction encodings and the QEMU implementation contract.
+- [`docs/compiler-workflow.md`](docs/compiler-workflow.md) walks a concrete
+  two-layer PyTorch model through Torch-MLIR, Sculptor task-graph construction,
+  two-core scheduling, same-core task fusion, Golem shim/task-graph ABI
+  lowering, runtime resource finalization, and LLVM-dialect task code.
 - [`docs/timing-model.md`](docs/timing-model.md) defines which timing and
   performance claims are valid in the current QEMU/SST integration.
 - [`docs/building.md`](docs/building.md) documents host requirements and build
@@ -100,6 +111,8 @@ small integration patches there.
 
 - PlatinumCD LLVM `golem-analog` at `d5685386e`;
 - PlatinumCD Torch-MLIR `analog-extension` at `c36979b32`;
+- PlatinumCD Sculptor-MLIR `master` at `3ed3bdb38`;
+- PyTorch CPU `2.10.0+cpu`;
 - Sandia CrossSim `v3.2.1`;
 - QEMU `v8.2.2`;
 - SST Core `v16.0.0_Final`; and

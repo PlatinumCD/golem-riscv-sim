@@ -7,7 +7,7 @@ development libraries include:
 
 ```bash
 sudo apt install build-essential cmake ninja-build git autoconf automake \
-  libtool pkg-config python3 python3-dev python3-pip bison flex gawk \
+  libtool pkg-config python3 python3-dev python3-pip python3-venv bison flex gawk \
   libglib2.0-dev libpixman-1-dev libopenmpi-dev
 ```
 
@@ -35,8 +35,10 @@ system emulators are disabled because Platform v0.1 does not use them.
 Useful partial builds are:
 
 ```bash
+./bootstrap.sh compiler-python
 ./bootstrap.sh llvm
 ./bootstrap.sh torch-mlir
+./bootstrap.sh sculptor-mlir
 ./bootstrap.sh crosssim
 ./bootstrap.sh qemu
 ./bootstrap.sh sst-core
@@ -44,6 +46,12 @@ Useful partial builds are:
 ./bootstrap.sh runtime
 ./bootstrap.sh platform
 ```
+
+`./bootstrap.sh compiler-python` creates `install/compiler-python` and installs
+the pinned CPU-only PyTorch package and the Python build dependencies required
+by the MLIR bindings. It does not install CUDA, torchvision, or a training
+environment. The LLVM and Torch-MLIR builds use this interpreter explicitly,
+so a user-local Python environment cannot change their extension ABI.
 
 `./bootstrap.sh runtime` compiles the freestanding runtime with the pinned
 Golem Clang and installs:
@@ -60,11 +68,19 @@ test builds cannot accidentally use stale runtime objects.
 `./bootstrap.sh torch-mlir` builds the pinned `analog-extension` source as a
 standalone MLIR project against `install/llvm`. It does not initialize or use
 Torch-MLIR's nested `externals/llvm-project`; the Golem LLVM and MLIR packages
-are passed explicitly through `LLVM_DIR` and `MLIR_DIR`. StableHLO and Python
-bindings are disabled for this compiler-tool build, so neither nested
-Torch-MLIR submodule is required. The preparation step applies one project
-patch in `build/sources/torch-mlir` that makes standalone Torch-MLIR respect
-the installed MLIR package's disabled Python-binding setting.
+are passed explicitly through `LLVM_DIR` and `MLIR_DIR`. The build enables the
+MLIR and Torch-MLIR Python bindings needed by the pure-Python
+`torch.export`/FX importer. StableHLO, Torch's deprecated JIT importer, native
+PyTorch extensions, and both nested Torch-MLIR submodules remain disabled.
+The preparation step applies one project patch in
+`build/sources/torch-mlir` so the standalone build respects the installed
+MLIR package's binding and test settings.
+
+`./bootstrap.sh sculptor-mlir` builds the pinned out-of-tree Sculptor compiler
+against the same installed Golem LLVM/MLIR packages. Sculptor is a host tool,
+so its C++ sources use the native AArch64 compiler while its dialects and
+passes link against the project LLVM/MLIR installation. The resulting driver
+is `install/sculptor-mlir/bin/sculptor-mlir-opt`.
 
 `./bootstrap.sh crosssim` installs the pinned CPU-only CrossSim 3.2.1 stack
 under `install/cross-sim/python`. It installs only CrossSim, NumPy, and SciPy
