@@ -10,6 +10,7 @@ source "${ROOT}/build-scripts/common.sh"
 required_submodules=(
     third_party/llvm-project
     third_party/torch-mlir
+    third_party/sculptor-mlir
     third_party/cross-sim
     third_party/qemu
     third_party/sst-core
@@ -24,16 +25,18 @@ actions:
   all            initialize, build, and run all system tests (default)
   build          initialize and build the complete environment
   check          verify host build dependencies
+  compiler-python install the pinned local PyTorch compiler environment
   llvm           initialize and build LLVM/Clang/LLD/MLIR
   torch-mlir     initialize and build LLVM/MLIR and Torch-MLIR
+  sculptor-mlir  initialize and build LLVM/MLIR and Sculptor-MLIR
   crosssim       initialize and install the minimal CrossSim Python stack
   qemu           initialize and build QEMU with the Mittens NIC and analog ISA
   sst-core       initialize and build SST Core
   sst            initialize and build SST Core, Merlin, and Mittens
   runtime        build and install the bare-metal runtime archive
   platform       build all bare-metal test images
-  test           run element, analog ISA, boot, mesh, routing, and compute proofs
-  test-runtime   run host and RISC-V QEMU runtime-library proofs
+  test           run compiler, element, boot, mesh, routing, and compute proofs
+  test-runtime   run host, QEMU, and QEMU/SST runtime proofs
   test-elements  run the complete Mittens element test directory
 EOF
 }
@@ -46,6 +49,7 @@ initialize_submodules() {
 build_environment() {
     "${ROOT}/build-scripts/build-llvm.sh"
     "${ROOT}/build-scripts/build-torch-mlir.sh"
+    "${ROOT}/build-scripts/build-sculptor-mlir.sh"
     "${ROOT}/build-scripts/build-qemu.sh"
     "${ROOT}/build-scripts/build-sst-core.sh"
     "${ROOT}/build-scripts/build-cross-sim.sh"
@@ -56,8 +60,15 @@ build_environment() {
 run_system_tests() {
     "${ROOT}/components/elements/mittens/tests/run-test.sh"
     "${ROOT}/tests/torch-mlir/run-test.sh"
+    "${ROOT}/tests/pytorch-single-core/run-test.sh"
+    "${ROOT}/tests/torch-mlir-sculptor/run-test.sh"
+    "${ROOT}/tests/sculptor-core-elf/run-test.sh"
+    "${ROOT}/tests/sculptor-four-layer-mesh/run-test.sh"
+    "${ROOT}/tests/sculptor-eight-layer-mesh/run-test.sh"
+    "${ROOT}/tests/sculptor-eight-layer-mesh-4x2/run-test.sh"
     "${ROOT}/runtime/tests/run-test.sh"
     "${ROOT}/tests/runtime-library/run-test.sh"
+    "${ROOT}/tests/deployment-runtime-pair/run-test.sh"
     "${ROOT}/tests/hello/run-test.sh"
     "${ROOT}/tests/analog-instructions/run-test.sh"
     "${ROOT}/tests/analog-ops/run-test.sh"
@@ -85,6 +96,9 @@ case "${ACTION}" in
     check)
         "${ROOT}/build-scripts/check-dependencies.sh"
         ;;
+    compiler-python)
+        "${ROOT}/build-scripts/build-compiler-python.sh"
+        ;;
     llvm)
         initialize_submodules third_party/llvm-project
         "${ROOT}/build-scripts/build-llvm.sh"
@@ -93,6 +107,12 @@ case "${ACTION}" in
         initialize_submodules third_party/llvm-project third_party/torch-mlir
         "${ROOT}/build-scripts/build-llvm.sh"
         "${ROOT}/build-scripts/build-torch-mlir.sh"
+        ;;
+    sculptor-mlir)
+        initialize_submodules third_party/llvm-project \
+            third_party/sculptor-mlir
+        "${ROOT}/build-scripts/build-llvm.sh"
+        "${ROOT}/build-scripts/build-sculptor-mlir.sh"
         ;;
     crosssim)
         initialize_submodules third_party/cross-sim
@@ -128,6 +148,7 @@ case "${ACTION}" in
     test-runtime)
         "${ROOT}/runtime/tests/run-test.sh"
         "${ROOT}/tests/runtime-library/run-test.sh"
+        "${ROOT}/tests/deployment-runtime-pair/run-test.sh"
         ;;
     -h|--help|help)
         usage
