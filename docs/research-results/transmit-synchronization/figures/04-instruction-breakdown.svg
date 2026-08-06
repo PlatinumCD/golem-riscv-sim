@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="650" viewBox="0 0 1100 650" role="img" aria-label="GPT-2 retired instruction breakdown">
+<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif;fill:#0f172a}.title{font-size:22px;font-weight:700}.subtitle{font-size:13px;fill:#475569}.axis{font-size:11px;fill:#475569}.label{font-size:12px;font-weight:600}.value{font-size:11px;font-weight:600}</style>
+<rect width="100%" height="100%" fill="white"/>
+<text x="40.00" y="35.00" class="title" text-anchor="start">More than half of retired instructions are outside task bodies</text>
+<text x="40.00" y="57.00" class="subtitle" text-anchor="start">Doorbell design, GPT-2 4 tokens; task intervals measured at fd-41 markers</text>
+<text x="90.00" y="105.00" class="label" text-anchor="start">All 60 active tiles</text>
+<rect x="90.00" y="120.00" width="429.69" height="52.00" rx="3" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="519.69" y="120.00" width="470.31" height="52.00" rx="3" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="304.85" y="151.00" class="value" text-anchor="middle" fill="white">Tasks 29.86M</text>
+<text x="754.85" y="151.00" class="value" text-anchor="middle" fill="white">Runtime / boot / communication 32.68M</text>
+<text x="990.00" y="195.00" class="label" text-anchor="end">62.54M retired instructions total</text>
+<line x1="90.00" y1="545.00" x2="990.00" y2="545.00" stroke="#e2e8f0" stroke-width="1"/>
+<text x="80.00" y="549.00" class="axis" text-anchor="end">0.0M</text>
+<line x1="90.00" y1="460.52" x2="990.00" y2="460.52" stroke="#e2e8f0" stroke-width="1"/>
+<text x="80.00" y="464.52" class="axis" text-anchor="end">0.5M</text>
+<line x1="90.00" y1="376.03" x2="990.00" y2="376.03" stroke="#e2e8f0" stroke-width="1"/>
+<text x="80.00" y="380.03" class="axis" text-anchor="end">1.0M</text>
+<line x1="90.00" y1="291.55" x2="990.00" y2="291.55" stroke="#e2e8f0" stroke-width="1"/>
+<text x="80.00" y="295.55" class="axis" text-anchor="end">1.5M</text>
+<rect x="104.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="104.25" y="245.00" width="46.50" height="90.84" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="127.50" y="564.00" class="axis" text-anchor="middle">T28</text>
+<rect x="179.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="179.25" y="245.00" width="46.50" height="90.84" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="202.50" y="564.00" class="axis" text-anchor="middle">T45</text>
+<rect x="254.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="254.25" y="245.00" width="46.50" height="90.84" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="277.50" y="564.00" class="axis" text-anchor="middle">T62</text>
+<rect x="329.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="329.25" y="245.00" width="46.50" height="90.84" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="352.50" y="564.00" class="axis" text-anchor="middle">T11</text>
+<rect x="404.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="404.25" y="245.06" width="46.50" height="90.79" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="427.50" y="564.00" class="axis" text-anchor="middle">T40</text>
+<rect x="479.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="479.25" y="245.06" width="46.50" height="90.79" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="502.50" y="564.00" class="axis" text-anchor="middle">T37</text>
+<rect x="554.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="554.25" y="245.06" width="46.50" height="90.79" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="577.50" y="564.00" class="axis" text-anchor="middle">T17</text>
+<rect x="629.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="629.25" y="245.06" width="46.50" height="90.79" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="652.50" y="564.00" class="axis" text-anchor="middle">T52</text>
+<rect x="704.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="704.25" y="245.06" width="46.50" height="90.79" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="727.50" y="564.00" class="axis" text-anchor="middle">T22</text>
+<rect x="779.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="779.25" y="245.07" width="46.50" height="90.78" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="802.50" y="564.00" class="axis" text-anchor="middle">T7</text>
+<rect x="854.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="854.25" y="245.07" width="46.50" height="90.78" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="877.50" y="564.00" class="axis" text-anchor="middle">T2</text>
+<rect x="929.25" y="335.84" width="46.50" height="209.16" rx="1" fill="#2563eb" stroke="none" stroke-width="0"/>
+<rect x="929.25" y="245.08" width="46.50" height="90.77" rx="1" fill="#ea580c" stroke="none" stroke-width="0"/>
+<text x="952.50" y="564.00" class="axis" text-anchor="middle">T32</text>
+<text x="540.00" y="600.00" class="label" text-anchor="middle">Twelve tiles with the most retired instructions</text>
+</svg>

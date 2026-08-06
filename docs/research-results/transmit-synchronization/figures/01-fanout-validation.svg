@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620" role="img" aria-label="Fanout synchronization validation">
+<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif;fill:#0f172a}.title{font-size:22px;font-weight:700}.subtitle{font-size:13px;fill:#475569}.axis{font-size:11px;fill:#475569}.label{font-size:12px;font-weight:600}.value{font-size:11px;font-weight:600}</style>
+<rect width="100%" height="100%" fill="white"/>
+<text x="40.00" y="35.00" class="title" text-anchor="start">Fanout exposes synchronization-amplified polling</text>
+<text x="40.00" y="57.00" class="subtitle" text-anchor="start">Two tiles, 512 payload words per route, 32-bit 1 GHz mesh link</text>
+<line x1="90.00" y1="515.00" x2="930.00" y2="515.00" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="519.00" class="axis" text-anchor="end">10.0 μs</text>
+<line x1="90.00" y1="439.82" x2="930.00" y2="439.82" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="443.82" class="axis" text-anchor="end">30.0 μs</text>
+<line x1="90.00" y1="357.43" x2="930.00" y2="357.43" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="361.43" class="axis" text-anchor="end">100.0 μs</text>
+<line x1="90.00" y1="282.25" x2="930.00" y2="282.25" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="286.25" class="axis" text-anchor="end">300.0 μs</text>
+<line x1="90.00" y1="199.87" x2="930.00" y2="199.87" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="203.87" class="axis" text-anchor="end">1.00 ms</text>
+<line x1="90.00" y1="124.69" x2="930.00" y2="124.69" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="128.69" class="axis" text-anchor="end">3.00 ms</text>
+<line x1="90.00" y1="105.00" x2="90.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="90.00" y="537.00" class="axis" text-anchor="middle">1</text>
+<line x1="258.00" y1="105.00" x2="258.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="258.00" y="537.00" class="axis" text-anchor="middle">2</text>
+<line x1="426.00" y1="105.00" x2="426.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="426.00" y="537.00" class="axis" text-anchor="middle">4</text>
+<line x1="594.00" y1="105.00" x2="594.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="594.00" y="537.00" class="axis" text-anchor="middle">8</text>
+<line x1="762.00" y1="105.00" x2="762.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="762.00" y="537.00" class="axis" text-anchor="middle">16</text>
+<line x1="930.00" y1="105.00" x2="930.00" y2="515.00" stroke="#f1f5f9" stroke-width="1"/>
+<text x="930.00" y="537.00" class="axis" text-anchor="middle">24</text>
+<text x="510.00" y="562.00" class="label" text-anchor="middle">Outgoing routes</text>
+<text x="20.00" y="310.00" class="label" text-anchor="middle" transform="rotate(-90 20.00 310.00)">Simulated completion time</text>
+<line x1="580.00" y1="78.00" x2="604.00" y2="78.00" stroke="#dc2626" stroke-width="3"/>
+<text x="611.00" y="82.00" class="axis" text-anchor="start">Polling, Q=1M</text>
+<line x1="580.00" y1="97.00" x2="604.00" y2="97.00" stroke="#ea580c" stroke-width="3"/>
+<text x="611.00" y="101.00" class="axis" text-anchor="start">Polling, Q=100K</text>
+<line x1="580.00" y1="116.00" x2="604.00" y2="116.00" stroke="#7c3aed" stroke-width="3"/>
+<text x="611.00" y="120.00" class="axis" text-anchor="start">Polling, Q=10K</text>
+<line x1="580.00" y1="135.00" x2="604.00" y2="135.00" stroke="#2563eb" stroke-width="3"/>
+<text x="611.00" y="139.00" class="axis" text-anchor="start">Timestamped doorbell</text>
+<polyline points="90.00,451.00 258.00,431.90 426.00,404.72 594.00,241.30 762.00,170.44 930.00,136.39" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="90.00" cy="451.00" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<circle cx="258.00" cy="431.90" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<circle cx="426.00" cy="404.72" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<circle cx="594.00" cy="241.30" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<circle cx="762.00" cy="170.44" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<circle cx="930.00" cy="136.39" r="4" fill="#dc2626" stroke="white" stroke-width="1.5"/>
+<text x="922.00" y="126.39" class="value" text-anchor="end" fill="#dc2626">2.53 ms</text>
+<polyline points="90.00,451.00 258.00,431.90 426.00,404.72 594.00,360.78 762.00,315.16 930.00,287.02" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="90.00" cy="451.00" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<circle cx="258.00" cy="431.90" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<circle cx="426.00" cy="404.72" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<circle cx="594.00" cy="360.78" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<circle cx="762.00" cy="315.16" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<circle cx="930.00" cy="287.02" r="4" fill="#ea580c" stroke="white" stroke-width="1.5"/>
+<polyline points="90.00,451.00 258.00,431.90 426.00,404.72 594.00,370.24 762.00,330.33 930.00,305.29" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="90.00" cy="451.00" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<circle cx="258.00" cy="431.90" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<circle cx="426.00" cy="404.72" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<circle cx="594.00" cy="370.24" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<circle cx="762.00" cy="330.33" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<circle cx="930.00" cy="305.29" r="4" fill="#7c3aed" stroke="white" stroke-width="1.5"/>
+<polyline points="90.00,450.95 258.00,431.85 426.00,404.70 594.00,370.23 762.00,330.33 930.00,305.29" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="90.00" cy="450.95" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<circle cx="258.00" cy="431.85" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<circle cx="426.00" cy="404.70" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<circle cx="594.00" cy="370.23" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<circle cx="762.00" cy="330.33" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<circle cx="930.00" cy="305.29" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+<text x="922.00" y="323.29" class="value" text-anchor="end" fill="#2563eb">214.3 μs</text>
+<polyline points="90.00,717.71 258.00,670.28 426.00,622.85 594.00,575.41 762.00,527.98 930.00,500.24" fill="none" stroke="#64748b" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="922.00" y="492.24" class="axis" text-anchor="end" fill="#64748b">link serialization lower bound</text>
+</svg>

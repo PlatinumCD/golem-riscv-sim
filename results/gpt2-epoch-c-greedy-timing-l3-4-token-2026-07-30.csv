@@ -1,0 +1,3 @@
+tokens,compute_mode,configuration,schedule,lookahead,beam_width,cpu_issue_width,cpu_clock,memory_backend,active_cores,task_count,dependency_count,logical_arrays,route_count,inter_core_transfer_bytes,graph_score,simulated_time_ns,output_elements,finite_elements,first_bits,checksum_bits,total_instructions,total_vector_instructions,total_cpu_cycles,total_network_tx_words,total_analog_active_cycles,status
+4,analog,greedy-timing-l3,greedy-timing,3,1,2,1GHz,native,61,2521,4187,240,1227,3362816,6754304,19243900,3072,3072,3218958858,3133551616,53509616,8698096,26757022,846839,15920536,PASS
+4,digital,greedy-timing-l3,greedy-timing,3,1,2,1GHz,native,64,2521,4187,240,1306,3608576,5234688,120132000,3072,3072,3218958796,1002602496,329597322,161100458,173220981,908674,0,PASS

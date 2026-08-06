@@ -1,0 +1,4 @@
+tile_id,event_sequence,reason,start_tick,finish_tick,duration_ticks
+0,1,analog-submit,10000000,10000000,0
+0,2,nic-transmit,130000000,150000000,20000000
+63,1,nic-receive-wait,500000000,600000000,100000000

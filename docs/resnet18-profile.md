@@ -4,6 +4,12 @@ This profile explains the first complete ResNet-18 deployment on Platform
 v0.1. It is a diagnosis of the current simulator and runtime, not a prediction
 of physical accelerator performance.
 
+> Historical timing note: these measurements predate the tile-wide shared
+> analog-link model. They were collected when every array had an independent
+> 256-bit link. They also use the superseded 4,096-word network timing cell,
+> which overcharges partial packets and multi-hop transport. They must not be
+> treated as current Platform v0.1 timing.
+
 ## Configuration
 
 - 8x8 mesh with 64 QEMU tiles and 19 compiler-scheduled active tiles.
@@ -38,12 +44,16 @@ result; the final timed receive-DMA run took 58.52 seconds.
 
 ## What the result means
 
-The 1.278562198 seconds are real under the current Platform v0.1 model. They
-are not yet hardware-meaningful because the CPU side uses one retired RISC-V
-instruction per simulated cycle and has no cache or complete memory hierarchy.
+The 1.278562198 seconds are real under the single-issue Platform v0.1
+configuration used for this profile. They are not yet hardware-meaningful
+because the CPU side uses a coarse issue-throughput model and has no cache,
+complete memory hierarchy, pipeline-dependency model, or operation-specific
+vector latency.
 
-The one-million-instruction quantum remains a host-throughput optimization,
-but an empty receiver no longer retires that many polling instructions.
+The one-million-instruction quantum used here is a coarse temporal-lookahead
+and host-throughput setting, not a pure host-only optimization. An empty
+receiver no longer retires that many polling instructions once it has
+published `RX_WAIT`.
 `RX_WAIT` yields at its exact instruction boundary, and SST resumes the hart
 when a Merlin delivery or receive-DMA completion becomes visible. The
 destination CPU still parses each five-word frame header, but QEMU moves
