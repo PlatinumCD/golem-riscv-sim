@@ -2,7 +2,7 @@
 
 This document records the instruction contract that the Mittens QEMU model
 must implement. The encoding source of truth is the pinned LLVM
-`golem-analog` branch at commit `d5685386e28289e0090ac8b87f04e95b3d5fb2c5`.
+`golem-analog` branch at commit `f3e6ed545913a8d930e107def5333c425de716af`.
 
 The definitions inspected for this contract are:
 

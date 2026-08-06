@@ -151,7 +151,7 @@ small integration patches there.
 
 ## Pinned upstreams
 
-- PlatinumCD LLVM `golem-analog` at `d5685386e`;
+- PlatinumCD LLVM `golem-analog` at `f3e6ed545`;
 - PlatinumCD Torch-MLIR `analog-extension` at `c36979b32`;
 - PlatinumCD Sculptor-MLIR `master` at `cdfcc7a58`;
 - PyTorch CPU `2.10.0+cpu`;
