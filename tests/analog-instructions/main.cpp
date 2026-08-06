@@ -110,8 +110,8 @@ extern "C" int tile_main() {
 
     /*
      * Issue work to both independent array queues before either blocking
-     * store. SST can therefore advance both 256-bit links and both computes
-     * concurrently.
+     * store. Their transfers share one 256-bit tile link, while their
+     * compute phases can still overlap.
      */
     if (!statusOk(setMatrix(matrix0, kArray0), "mvm.set array 0") ||
         !statusOk(setMatrix(matrix1, kArray1), "mvm.set array 1") ||

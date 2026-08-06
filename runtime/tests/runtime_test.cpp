@@ -1,9 +1,30 @@
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 
 #include "golem/runtime/runtime.h"
+
+namespace {
+
+constexpr size_t kMemRefCopyCallCapacity = 32;
+size_t memref_copy_call_count = 0;
+std::array<size_t, kMemRefCopyCallCapacity> memref_copy_byte_counts{};
+
+void resetMemRefCopyCalls() {
+    memref_copy_call_count = 0;
+    memref_copy_byte_counts.fill(0);
+}
+
+}  // namespace
+
+extern "C" void mittensMemrefCopyTestHook(size_t byte_count) {
+    if (memref_copy_call_count < memref_copy_byte_counts.size()) {
+        memref_copy_byte_counts[memref_copy_call_count] = byte_count;
+    }
+    ++memref_copy_call_count;
+}
 
 namespace {
 
@@ -177,6 +198,46 @@ void testTensor() {
     CHECK(!validTensor(tensor));
 }
 
+void testScratchpadABI() {
+    ScratchpadDMADescriptor descriptor{
+        0,
+        ScratchpadDMADirection::BackingToScratchpad,
+        3,
+        UINT32_MAX,
+        64,
+        128,
+        7,
+        ScratchpadDMATrigger::Boot,
+        UINT32_MAX,
+        ScratchpadDMAAsynchronous,
+        ScratchpadStorage::Backing,
+        ScratchpadStorage::Scratchpad,
+        0,
+    };
+    CHECK(sizeof(descriptor) == 64);
+    CHECK(descriptor.valid(256));
+    CHECK(!descriptor.valid(128));
+
+    const ScratchpadABI abi{
+        ScratchpadDMAFeature,
+        256,
+        &descriptor,
+        1,
+    };
+    CHECK(abi.valid(256));
+    CHECK(!abi.valid(255));
+
+    descriptor.flags = ScratchpadDMAAsynchronous |
+                       ScratchpadDMABlocking;
+    CHECK(!descriptor.valid(256));
+    descriptor.flags = ScratchpadDMAAsynchronous;
+    descriptor.destination_storage = ScratchpadStorage::Backing;
+    CHECK(!descriptor.valid(256));
+
+    const ScratchpadABI legacy{0, 0, nullptr, 0};
+    CHECK(legacy.valid(0));
+}
+
 void testMemRefCopy() {
     struct RankedMemRef2D {
         float* allocated;
@@ -191,6 +252,13 @@ void testMemRefCopy() {
         int64_t offset;
         int64_t sizes[4];
         int64_t strides[4];
+    };
+    struct RankedMemRef3D {
+        float* allocated;
+        float* aligned;
+        int64_t offset;
+        int64_t sizes[3];
+        int64_t strides[3];
     };
 
     float source_data[] = {
@@ -214,6 +282,7 @@ void testMemRefCopy() {
     };
     UnrankedMemRef source_unranked{2, &source};
     UnrankedMemRef destination_unranked{2, &destination};
+    resetMemRefCopyCalls();
     memrefCopy(
         sizeof(float),
         &source_unranked,
@@ -222,6 +291,8 @@ void testMemRefCopy() {
     for (uint32_t index = 0; index < 6; ++index) {
         CHECK(destination_data[index] == source_data[index]);
     }
+    CHECK(memref_copy_call_count == 1);
+    CHECK(memref_copy_byte_counts[0] == 6 * sizeof(float));
 
     alignas(64) float rank4_source_data[24];
     alignas(64) float rank4_destination_data[24]{};
@@ -247,6 +318,7 @@ void testMemRefCopy() {
         4,
         &rank4_destination,
     };
+    resetMemRefCopyCalls();
     memrefCopy(
         sizeof(float),
         &rank4_source_unranked,
@@ -258,6 +330,8 @@ void testMemRefCopy() {
             rank4_source_data[index]
         );
     }
+    CHECK(memref_copy_call_count == 1);
+    CHECK(memref_copy_byte_counts[0] == 24 * sizeof(float));
 
     float strided_source_data[] = {
         1.0F, 2.0F, 3.0F, -1.0F,
@@ -283,6 +357,7 @@ void testMemRefCopy() {
         2,
         &strided_destination,
     };
+    resetMemRefCopyCalls();
     memrefCopy(
         sizeof(float),
         &strided_source_unranked,
@@ -296,6 +371,137 @@ void testMemRefCopy() {
     }
     CHECK(strided_destination_data[3] == 0.0F);
     CHECK(strided_destination_data[7] == 0.0F);
+    CHECK(memref_copy_call_count == 2);
+    CHECK(memref_copy_byte_counts[0] == 3 * sizeof(float));
+    CHECK(memref_copy_byte_counts[1] == 3 * sizeof(float));
+
+    std::array<float, 4 * 2304> qkv_source_data{};
+    std::array<float, 4 * 768> qkv_destination_data{};
+    for (size_t row = 0; row < 4; ++row) {
+        for (size_t column = 0; column < 2304; ++column) {
+            qkv_source_data[row * 2304 + column] =
+                static_cast<float>(row * 2304 + column + 1);
+        }
+    }
+    RankedMemRef3D qkv_source{
+        qkv_source_data.data(),
+        qkv_source_data.data(),
+        0,
+        {1, 4, 768},
+        {9216, 2304, 1},
+    };
+    RankedMemRef3D qkv_destination{
+        qkv_destination_data.data(),
+        qkv_destination_data.data(),
+        0,
+        {1, 4, 768},
+        {3072, 768, 1},
+    };
+    UnrankedMemRef qkv_source_unranked{3, &qkv_source};
+    UnrankedMemRef qkv_destination_unranked{3, &qkv_destination};
+    resetMemRefCopyCalls();
+    memrefCopy(
+        sizeof(float),
+        &qkv_source_unranked,
+        &qkv_destination_unranked
+    );
+    for (size_t row = 0; row < 4; ++row) {
+        for (size_t column = 0; column < 768; ++column) {
+            CHECK(
+                qkv_destination_data[row * 768 + column] ==
+                qkv_source_data[row * 2304 + column]
+            );
+        }
+    }
+    CHECK(memref_copy_call_count == 4);
+    for (size_t call = 0; call < 4; ++call) {
+        CHECK(memref_copy_byte_counts[call] == 768 * sizeof(float));
+    }
+
+    float size_one_source_data[8]{};
+    float size_one_destination_data[8]{};
+    for (size_t outer = 0; outer < 2; ++outer) {
+        for (size_t inner = 0; inner < 3; ++inner) {
+            size_one_source_data[outer * 5 + inner] =
+                static_cast<float>(outer * 10 + inner + 1);
+        }
+    }
+    RankedMemRef3D size_one_source{
+        size_one_source_data,
+        size_one_source_data,
+        0,
+        {2, 1, 3},
+        {5, 97, 1},
+    };
+    RankedMemRef3D size_one_destination{
+        size_one_destination_data,
+        size_one_destination_data,
+        0,
+        {2, 1, 3},
+        {4, 53, 1},
+    };
+    UnrankedMemRef size_one_source_unranked{3, &size_one_source};
+    UnrankedMemRef size_one_destination_unranked{
+        3,
+        &size_one_destination,
+    };
+    resetMemRefCopyCalls();
+    memrefCopy(
+        sizeof(float),
+        &size_one_source_unranked,
+        &size_one_destination_unranked
+    );
+    for (size_t outer = 0; outer < 2; ++outer) {
+        for (size_t inner = 0; inner < 3; ++inner) {
+            CHECK(
+                size_one_destination_data[outer * 4 + inner] ==
+                size_one_source_data[outer * 5 + inner]
+            );
+        }
+    }
+    CHECK(memref_copy_call_count == 2);
+    CHECK(memref_copy_byte_counts[0] == 3 * sizeof(float));
+    CHECK(memref_copy_byte_counts[1] == 3 * sizeof(float));
+
+    float irregular_source_data[8]{};
+    float irregular_destination_data[8]{};
+    irregular_source_data[0] = 1.0F;
+    irregular_source_data[2] = 2.0F;
+    irregular_source_data[5] = 3.0F;
+    irregular_source_data[7] = 4.0F;
+    RankedMemRef2D irregular_source{
+        irregular_source_data,
+        irregular_source_data,
+        0,
+        {2, 2},
+        {5, 2},
+    };
+    RankedMemRef2D irregular_destination{
+        irregular_destination_data,
+        irregular_destination_data,
+        0,
+        {2, 2},
+        {4, 3},
+    };
+    UnrankedMemRef irregular_source_unranked{2, &irregular_source};
+    UnrankedMemRef irregular_destination_unranked{
+        2,
+        &irregular_destination,
+    };
+    resetMemRefCopyCalls();
+    memrefCopy(
+        sizeof(float),
+        &irregular_source_unranked,
+        &irregular_destination_unranked
+    );
+    CHECK(irregular_destination_data[0] == 1.0F);
+    CHECK(irregular_destination_data[3] == 2.0F);
+    CHECK(irregular_destination_data[4] == 3.0F);
+    CHECK(irregular_destination_data[7] == 4.0F);
+    CHECK(memref_copy_call_count == 4);
+    for (size_t call = 0; call < 4; ++call) {
+        CHECK(memref_copy_byte_counts[call] == sizeof(float));
+    }
 }
 
 void testTaskRegistry() {
@@ -831,7 +1037,7 @@ void testDeploymentRuntime() {
     CHECK(source_runtime.bindModelInput(0, &source_input));
     CHECK(source_runtime.step() == DeploymentStep::Progress);
     source_stream.send_blocked = true;
-    CHECK(source_runtime.step() == DeploymentStep::Idle);
+    CHECK(source_runtime.step() == DeploymentStep::WaitForTransmit);
     source_stream.send_blocked = false;
     CHECK(source_runtime.step() == DeploymentStep::Progress);
     CHECK(source_runtime.step() == DeploymentStep::Progress);
@@ -957,6 +1163,32 @@ void testDeploymentRuntime() {
     CHECK(destination_runtime.step() == DeploymentStep::Complete);
     CHECK(destination_runtime.complete());
     CHECK(destination_output == 7.0F);
+
+    RoutedStreamTransport invalid_stream{};
+    invalid_stream.received_words = {
+        RoutedWord{4, UINT32_C(0xdeadbeef)},
+    };
+    invalid_stream.available_receive_count = 1;
+    const RoutedWordTransport invalid_transport{
+        &invalid_stream,
+        routedStreamSend,
+        routedStreamReceive,
+    };
+    DeploymentRuntime invalid_runtime{
+        destination_abi,
+        invalid_transport,
+    };
+    float invalid_output = 0.0F;
+    CHECK(invalid_runtime.initialize());
+    CHECK(invalid_runtime.bindModelOutput(0, &invalid_output));
+    CHECK(invalid_runtime.step() == DeploymentStep::Failed);
+    CHECK(invalid_runtime.error() == DeploymentError::InvalidFrame);
+    const InvalidFrameDiagnostic& diagnostic =
+        invalid_runtime.invalidFrameDiagnostic();
+    CHECK(diagnostic.reason == InvalidFrameReason::InvalidMagic);
+    CHECK(diagnostic.source_tile == 4);
+    CHECK(diagnostic.expected == UINT32_C(0x474f4c4d));
+    CHECK(diagnostic.actual == UINT32_C(0xdeadbeef));
 }
 
 struct ReceiveDMATransport {
@@ -1362,6 +1594,7 @@ void testReciprocalDeploymentProgress() {
 
 int main() {
     testTensor();
+    testScratchpadABI();
     testMemRefCopy();
     testTaskRegistry();
     testTaskInstancePool();

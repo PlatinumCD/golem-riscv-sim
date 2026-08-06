@@ -127,6 +127,20 @@ no wider transfer. Core 1 evaluates task 3 and checks the complete model result:
 [2,4,6] -- task 3 --> [12,4]
 ```
 
+The same test can replace only the scheduled MVM implementations with digital
+RISC-V matmuls while preserving placement, routing, tensor shapes, and inputs:
+
+```bash
+SCULPTOR_CORE_MVM_EXECUTION=digital \
+./tests/sculptor-core-elf/run-test.sh
+```
+
+The analog and digital variants both produce `[12,4]`. Under the current
+single-issue 1 GHz CPU model, the analog variant completes in 5.502 us and the
+digital variant in 5.915 us. This small 8x8 comparison validates functional
+equivalence and the compiler/runtime path; it is not representative of
+large-matrix accelerator speedup.
+
 This initial runtime deliberately supports one fixed execution and
 application-supplied ranked-memref descriptors. It does not yet infer tensor
 shapes from the generated tables, multiplex packet streams, or schedule
@@ -173,16 +187,31 @@ Three READY words and one DONE word bring total delivered traffic to sixteen
 for the three direct-neighbor activation routes and five for the boot/completion
 control traffic.
 
-The expected final output is checked on core 2. With the documented 1 GHz CPU
-and analog-link clocks, eight-cycle analog compute latency, and native analog
-backend, the synchronized SST completion time is:
+The expected final output is checked on core 2. The historical run at 1 GHz
+with eight-cycle analog compute latency and the native analog backend had the
+following synchronized SST completion time:
 
 ```text
-10.292 us
+7.286 us
 ```
 
 This proof uses the same `BasicTileRuntime` as the two-layer example; it does
 not introduce a model-specific runtime or handwritten compute task.
+
+The same generated model can be run with one independent private L1 attached
+to every tile:
+
+```bash
+MITTENS_MEMORY_BACKEND=memhierarchy \
+    ./tests/sculptor-four-layer-mesh/run-test.sh
+```
+
+This is the first complete model-level memory-backend regression. It keeps
+QEMU as the owner of each tile's functional RAM while sending every guest
+data load/store through that tile's own 32 KiB, four-way, 64-byte-line SST
+cache. The reference run preserves the exact model output, observes 4,923
+timed L1 accesses across the four tiles (4,773 hits and 150 misses, a 96.95%
+hit rate), and completes in `18.559 us`.
 
 ## Eight-layer generated 2x2 dual-array mesh
 
@@ -225,9 +254,9 @@ The final result on core 2 is:
 [56,42,42,60]
 ```
 
-This exactly matches eager PyTorch. Under the same 1 GHz clocks, eight-cycle
-analog compute latency, and native backend used by the four-layer proof, the
-synchronized SST completion time is:
+This exactly matches eager PyTorch. Under the historical 1 GHz,
+eight-cycle-latency configuration used by the recorded four-layer proof, the
+synchronized SST completion time was:
 
 ```text
 13.916 us
@@ -336,6 +365,19 @@ tiles with top-1 class 620 and completes in 0.431314372388 simulated seconds,
 a 2.964339x speedup. All network, receive-DMA, and analog-operation counts
 remain unchanged.
 
+The scalar issue width is also independently configurable:
+
+```bash
+MITTENS_RESNET18_CPU_ISSUE_WIDTH=2 \
+./tests/sculptor-resnet18-8x8/run-deployment.sh
+```
+
+On the vectorized ResNet-18 artifacts, the 1 GHz dual-issue run passes all
+19 active tiles with top-1 class 620 and completes in 0.515424 seconds,
+compared with 1.02133 seconds for the matching single-issue vector run. That
+is a 1.9815x modeled speedup. Vector instructions retain a separate
+one-per-cycle issue limit.
+
 Task tracing is opt-in and records globally synchronized SST timestamps
 without modifying mesh packets:
 
@@ -349,6 +391,93 @@ produces `task-trace.csv`, `task-trace-summary.csv`, and
 `task-trace-gaps.csv` in the deployment build directory. Raw events are
 written to one file per tile so concurrent QEMU UART output cannot corrupt
 the trace.
+
+For a joined system profile with task, route, network, receive-DMA, analog,
+memory, and wait attribution, use:
+
+```bash
+MITTENS_RESNET18_PROFILE_MODE=trace \
+./tests/sculptor-resnet18-8x8/run-deployment.sh
+```
+
+The runner writes raw per-tile data below
+`performance-profile-raw/` and the joined report below
+`performance-profile/` in the selected deployment directory. Use
+`MITTENS_RESNET18_PROFILE_MODE=summary` when only unperturbed finish counters
+are required.
+
+## GPT-2 scheduling and execution sweep
+
+```bash
+./tests/sculptor-gpt2-scheduling-sweep/list-configurations.sh
+./tests/sculptor-gpt2-scheduling-sweep/build-test.sh
+./tests/sculptor-gpt2-scheduling-sweep/run-test.sh
+```
+
+This controlled experiment compiles the GPT-2-small-shaped fixture at static
+token lengths 4, 8, 16, and 32. Each graph is placed with fourteen scheduling
+configurations and lowered once to native analog MVM execution and once to
+digital RISC-V matmuls, producing 112 deployments.
+
+The placement matrix contains fixed-seed random and snake baselines; Greedy
+and timing-aware Greedy with single-path lookahead 2 and 3; beam-width-8
+Greedy and timing-aware Greedy; and controlled beam-8 variants with directed
+link-pressure scoring, width-2 balanced reductions, or both. Beam-width-8
+rows are not labeled with a lookahead depth because Sculptor uses beam search
+instead of recursive lookahead when the beam width exceeds one.
+
+Every run uses the same 8x8 mesh, four 1024x512 arrays per tile, 1 GHz clock,
+dual-issue scalar model, 32-bit mesh links, native QEMU memory, and random
+seed zero. Simulations run in the foreground and are resumable. Each
+deployment has isolated compiler objects, ELFs, logs, and pass/failure marker.
+The build and simulation runners print a resume-aware `[current/total]`
+counter plus completed, failed, remaining, and elapsed totals before every
+selected deployment.
+The consolidated `results.csv` records all 112 expected rows, including
+not-yet-run states, Sculptor graph metrics, SST simulated time, output
+signature, active cores, retired instruction and modeled cycle totals,
+transmitted 32-bit words, and analog-active cycles.
+
+The exact manifest, artifact layout, subset controls, and compiler pass order
+are documented in
+[`../tests/sculptor-gpt2-scheduling-sweep/README.md`](../tests/sculptor-gpt2-scheduling-sweep/README.md).
+
+One compiled GPT-2 deployment can be profiled with:
+
+```bash
+MITTENS_GPT2_PROFILE_MODE=trace \
+./tests/sculptor-gpt2-8x8/run-deployment.sh
+```
+
+The corresponding low-overhead counter mode is
+`MITTENS_GPT2_PROFILE_MODE=summary`.
+
+## Animated mesh activity
+
+```bash
+MITTENS_VISUALIZATION_EXPORT=1 \
+./tests/sculptor-gpt2-8x8/run-deployment.sh
+```
+
+The visualization flag is disabled by default. When enabled, it selects trace
+profiling, joins the per-tile activity, and emits one compact event for every
+task interval, logical tensor route, receive-DMA transfer, analog operation,
+and nonzero wait. It intentionally does not emit individual 32-bit transfers
+or per-cycle router events.
+
+The output is `<deployment>/visualization/trace.json`. Serve the repository
+and open the synchronized 8x8 mesh/timeline viewer with:
+
+```bash
+./visualizer/serve.sh 8000 \
+  "$PWD/build/tests/sculptor-gpt2-8x8/deployment/visualization/trace.json"
+```
+
+The same flag works with the ResNet-18 deployment runner. Exact route endpoints
+and SST timestamps are preserved; intermediate packet positions are
+reconstructed along deterministic XY paths for an understandable flow view.
+Because task markers are guest-visible MMIO, visualization runs are
+diagnostic and must not replace untraced performance measurements.
 
 ## Runtime library
 
@@ -388,6 +517,49 @@ All three proofs are available together as `./bootstrap.sh test-runtime`.
 
 This builds one bare-metal ELF, boots it directly with the repository QEMU,
 prints `Golem Platform v0.1: single tile booted`, and exits successfully.
+
+## RISC-V Vector execution
+
+```bash
+./tests/riscv-vector/run-test.sh
+```
+
+This builds one bare-metal ELF with explicit
+`-march=rv64gcv_xgolemanalog`, then launches it as an SST-managed QEMU tile
+with RVV 1.0, `VLEN=256`, and `ELEN=64`. The guest reads `vlenb`, configures
+eight active float32 elements with `vsetvli`, loads two complete vector
+registers, executes `vfadd.vv`, stores the result, and checks all eight
+values. It requires:
+
+```text
+RISCV_VECTOR_PASS: RVV 1.0 VLEN=256 floating-point vector add
+```
+
+The test deliberately uses explicit RVV assembly. It proves QEMU vector
+decode, vector register state, vector floating-point execution, bare-metal
+`mstatus.VS` initialization, and SST-to-QEMU CPU configuration without
+depending on LLVM's auto-vectorization profitability decisions.
+
+## CPU throughput timing
+
+```bash
+./tests/cpu-timing-validation/run-test.sh
+```
+
+This gate executes fixed marker-to-marker regions containing an empty
+baseline, exactly 1,024 scalar `addi` instructions, and exactly 1,027 RVV
+instructions. It runs issue widths 1, 2, and 4 at QEMU synchronization quanta
+37 and 1,000. All 18 comparisons must satisfy:
+
+```text
+cycles = max(ceil(retired instructions / issue width),
+             retired vector instructions)
+```
+
+The exact reference results are 1,030/515/258 cycles for the scalar region
+and 1,035/1,027/1,027 cycles for the RVV region at widths 1/2/4. Every
+measurement must be identical across both host quanta. Machine-readable
+results are written to `build/tests/cpu-timing-validation/results.csv`.
 
 ## Analog custom instructions
 
@@ -544,6 +716,77 @@ The runner checks Merlin's per-port packet statistics for both four-hop paths
 and fails if any expected directional link was not used. Generated statistics
 are written to `build/tests/mesh-3x3/router-statistics.csv`.
 
+## Isolated network timing
+
+```bash
+./tests/network-timing-validation/run-test.sh
+```
+
+This removes QEMU, the runtime, receive DMA, and application instructions from
+the measurement interval. SST-only endpoints inject at one exact cycle and
+record both Merlin head arrival and full-packet completion.
+
+The 13 trials cover 1, 8, 64, and 512-word serialization, 1/2/4-hop paths,
+and 1/2/4 simultaneous sources contending for one destination, yielding 21
+packet observations. With 32-bit, 1 GHz links and 10 ns link latency, every
+observation must exactly match:
+
+```text
+head = 35 + 12 * (hops - 1)
+completion = head + words - 1
+```
+
+For one-hop incast, each earlier equal-size contender adds exactly `words`
+cycles. The test also verifies that all contenders injected simultaneously
+and retains raw receipts, router statistics, logs, and the joined
+predicted-versus-measured CSV under
+`build/tests/network-timing-validation/`.
+
+## End-to-end analog timing
+
+```bash
+./tests/analog-timing-validation/run-test.sh
+```
+
+This gate sends `set`, `load`, `execute`, and `store` instructions from a
+bare-metal RISC-V guest through QEMU's fd 43 analog bridge and fd 41
+synchronization boundary into SST. A single-array case checks exact service
+cycles, and a dual-array case additionally checks shared 256-bit-link
+serialization and independent compute-engine overlap. The expected timeline
+is generated by an independent reference scheduler from the observed command
+arrival cycles, so guest instruction time is excluded from the comparison.
+
+See [`tests/analog-timing-validation/README.md`](../tests/analog-timing-validation/README.md)
+for the acceptance contract and generated artifacts.
+
+## Producer–MVM–recombine placement distance
+
+```bash
+./tests/producer-mvm-recombine-distance/run-test.sh
+```
+
+This end-to-end microbenchmark isolates the two communication boundaries
+around a two-array analog operation. It places a 512-word activation producer,
+two 256x512 MVM arrays, and a two-partial recombination task on a fixed 9x9
+mesh. Both arrays are programmed and warmed before the producer is released,
+so task timing excludes cold-start matrix installation.
+
+The quick test covers colocated execution, an eight-hop activation route, an
+eight-hop partial-result route, and the combined eight-plus-eight-hop case.
+The full 35-point `{0,1,2,4,8}` by `{0,1,2,4,8}` placement surface is:
+
+```bash
+./tests/producer-mvm-recombine-distance/run-sweep.sh
+```
+
+Every trial retains task markers, packet traces, receive-DMA traces, analog
+phase traces, router statistics, and a joined `results.csv` under
+`build/tests/producer-mvm-recombine-distance/`. The experiment contract and
+artifact layout are documented in
+[`tests/producer-mvm-recombine-distance/README.md`](../tests/producer-mvm-recombine-distance/README.md).
+The initial result is summarized in
+[`results/producer-mvm-recombine-distance-2026-07-30.md`](../results/producer-mvm-recombine-distance-2026-07-30.md).
+
 ## 3x3 computation pipeline
 
 ```bash
@@ -613,6 +856,46 @@ counts. Those completion times combine fd 41 synchronized RISC-V instruction
 cycles with modeled Merlin network time. Directional word-hop counts remain
 the topology-independent measure of mesh work.
 
+## Optional private-L1 memory backend
+
+```bash
+./tests/memory-hierarchy-l1/run-test.sh
+```
+
+The runner builds one bare-metal ELF and executes it three times. Native mode
+must complete with zero StandardMem requests. Detailed memHierarchy mode
+attaches one private 32 KiB, four-way L1 to the same tile and requires every
+timed QEMU RAM data access to receive an SST response before the hart resumes.
+The third run enables initialization batching and verifies exactly one
+`MEMORY_INIT_COMPLETE` handshake, nonzero aggregate byte and cycle counts, and
+the return to detailed L1 timing after the guest marker.
+
+The reference detailed run produces 102 timed data accesses: 81 reads and 21
+writes. The batched run aggregates its first 55 accesses (144 read bytes and
+104 write bytes) into one ten-cycle initialization event, then sends the
+remaining 47 accesses through StandardMem. The exact 378-instruction count
+remains identical in all three modes because the memory backend changes timing
+rather than functional execution. The four-layer test above then validates
+the same optional backend with four compiler-generated tile ELFs, four private
+L1s, analog computation, and inter-tile tensor routing.
+
+### Controlled private-L1 timing
+
+```bash
+./tests/memory-timing-validation/run-test.sh
+```
+
+Two purpose-built guests validate the exact 32 KiB, four-way, 64-byte-line L1
+contract. A conflict/LRU case maps five lines into one set and checks read and
+write hits plus the exact replacement victim. A capacity case fills all 512
+lines, refreshes one line, inserts line 513, and checks the resulting eviction.
+
+At the fixed 1 GHz configuration, each hit must take five cycles and each miss
+61 cycles. The conflict case observes four hits and six misses for 386 cycles;
+the capacity case observes one hit and 514 misses for 31,359 cycles. The
+analyzer checks every address, direction, request/response timestamp, cache
+statistic, and total wait cycle.
+
 ## Mittens element tests
 
 ```bash
@@ -621,12 +904,13 @@ the topology-independent measure of mesh work.
 
 The element-local runner first builds and executes the host-side analog device
 test. That test verifies five-operation command handling, native C++ float32 MVM,
-array-to-array movement, invalid-array status, an eleven-cycle 81-word matrix
-ingress, a two-cycle nine-word vector ingress, and configured compute latency.
-It also proves that two arrays transfer and compute concurrently, that
-`StoreVector` output takes `ceil(rows / 8)` cycles, that opposite directions
-overlap on different links, and that one array remains ordered and
-half-duplex. The bridge test validates independent per-array shared-memory
+array-to-array movement, invalid-array status, two eleven-beat 81-word matrix
+ingresses, two two-beat nine-word vector ingresses, and configured compute
+latency. It also proves that one shared 256-bit link grants at most one beat
+per cycle with round-robin arbitration, that independent array computes
+overlap, that opposite transfer directions serialize, that `MoveVector`
+crosses the link twice, and that every array stream remains ordered. The
+bridge test validates independent per-array shared-memory
 channels, acceptance, completion, and output payloads.
 The CrossSim backend test then creates two independently owned CrossSim
 backends, programs different matrices at the same local array ID, and verifies
@@ -635,6 +919,8 @@ three independent CrossSim `AnalogCore` objects each, using the same fixed
 `100 x 64` geometry.
 
 The same runner also exercises component registration, managed single-tile
-boot, four independently managed tiles, and the two-tile NIC bridge.
+boot, four independently managed tiles, the two-tile NIC bridge, and a live
+two-tile performance profile whose report must recover both transferred
+32-bit words and both directional word-hops.
 
 All runners remain in the foreground and return a nonzero status on failure.

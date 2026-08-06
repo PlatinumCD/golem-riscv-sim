@@ -35,11 +35,14 @@ install -D -m 0644 "${ANALOG_BRIDGE_HEADER}" \
 install -D -m 0644 "${SYNC_BRIDGE_HEADER}" \
     "${DESTINATION}/include/mittens/SyncTileBridge.h"
 
-# Platform v0.1 needs only the Merlin network and the Mittens tile element.
+# Platform v0.1 needs the Merlin network, Mittens tile, and optional
+# memHierarchy memory timing element.
 while IFS= read -r -d '' directory; do
     element_name="$(basename -- "${directory}")"
     case "${element_name}" in
-        merlin|mittens) ;;
+        memHierarchy|merlin|mittens)
+            rm -f -- "${directory}/.ignore"
+            ;;
         *) touch "${directory}/.ignore" ;;
     esac
 done < <(find "${SOURCE}/src/sst/elements" -mindepth 1 -maxdepth 1 \

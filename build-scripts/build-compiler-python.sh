@@ -31,7 +31,19 @@ fi
     "Jinja2==${COMPILER_JINJA2_VERSION}" \
     "fsspec==${COMPILER_FSSPEC_VERSION}" \
     "mpmath==${COMPILER_MPMATH_VERSION}" \
-    "MarkupSafe==${COMPILER_MARKUPSAFE_VERSION}"
+    "MarkupSafe==${COMPILER_MARKUPSAFE_VERSION}" \
+    "transformers==${COMPILER_TRANSFORMERS_VERSION}" \
+    "safetensors==${COMPILER_SAFETENSORS_VERSION}" \
+    "huggingface-hub==${COMPILER_HUGGINGFACE_HUB_VERSION}" \
+    "tokenizers==${COMPILER_TOKENIZERS_VERSION}" \
+    "regex==${COMPILER_REGEX_VERSION}" \
+    "tqdm==${COMPILER_TQDM_VERSION}" \
+    "requests==${COMPILER_REQUESTS_VERSION}" \
+    "certifi==${COMPILER_CERTIFI_VERSION}" \
+    "charset-normalizer==${COMPILER_CHARSET_NORMALIZER_VERSION}" \
+    "hf-xet==${COMPILER_HF_XET_VERSION}" \
+    "idna==${COMPILER_IDNA_VERSION}" \
+    "urllib3==${COMPILER_URLLIB3_VERSION}"
 
 "${COMPILER_PYTHON}" -m pip install \
     --disable-pip-version-check \

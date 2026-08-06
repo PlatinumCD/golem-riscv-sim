@@ -15,6 +15,27 @@ using namespace golem::runtime;
 constexpr uint32_t kElementCount = 300;
 constexpr uint64_t kTensorBytes =
     static_cast<uint64_t>(kElementCount) * sizeof(float);
+constexpr uint32_t kProbeStride = 1024;
+alignas(64) volatile uint64_t cacheProbe[4 * kProbeStride + 1] = {};
+
+__attribute__((noinline)) uint64_t memoryAttributionSharedSite(
+    volatile uint64_t* address
+) {
+    return *address;
+}
+
+__attribute__((noinline)) uint64_t memoryAttributionSiteA() {
+    uint64_t value = memoryAttributionSharedSite(&cacheProbe[0]);
+    asm volatile("" : "+r"(value));
+    return value;
+}
+
+__attribute__((noinline)) uint64_t memoryAttributionSiteB() {
+    uint64_t value =
+        memoryAttributionSharedSite(&cacheProbe[kProbeStride]);
+    asm volatile("" : "+r"(value));
+    return value;
+}
 
 struct VectorMemRefDescriptor {
     void* allocated;
@@ -24,18 +45,33 @@ struct VectorMemRefDescriptor {
     int64_t strides[1];
 };
 
+void exerciseMemoryHierarchy() {
+    volatile uint64_t sink = 0;
+    sink ^= cacheProbe[0 * kProbeStride];
+    sink ^= cacheProbe[1 * kProbeStride];
+    sink ^= cacheProbe[2 * kProbeStride];
+    sink ^= cacheProbe[3 * kProbeStride];
+    sink ^= cacheProbe[0 * kProbeStride];
+    sink ^= cacheProbe[4 * kProbeStride];
+    sink ^= cacheProbe[1 * kProbeStride];
+    (void)sink;
+}
+
 TaskStatus addOne(
     const Tensor* inputs,
     uint32_t input_count,
     Tensor* outputs,
     uint32_t output_count
 ) {
+    const uint64_t attributedA = memoryAttributionSiteA();
+    const uint64_t attributedB = memoryAttributionSiteB();
+    exerciseMemoryHierarchy();
     if (inputs == nullptr ||
         outputs == nullptr ||
         input_count != 1 ||
         output_count != 1 ||
         inputs[0].rank != 1 ||
-        outputs[0].rank != 1) {
+        outputs[0].rank != 1 || attributedA != 0 || attributedB != 0) {
         return TaskStatus::Failure;
     }
     const auto* input =
@@ -117,6 +153,18 @@ const RoutedWordTransport transport{
     tryReceiveWordsCompletion,
 };
 
+void emitTaskTrace(
+    void*,
+    TaskTraceEvent event,
+    uint32_t task_id,
+    ExecutionId execution_id
+) {
+    mesh_nic::trace_task(
+        static_cast<uint32_t>(event), task_id, execution_id);
+}
+
+DeploymentTrace taskTrace{nullptr, emitTaskTrace};
+
 [[maybe_unused]] int runSource() {
     const Task tasks[] = {{11, addOne, 1, 1}};
     const Route outgoing[] = {
@@ -182,14 +230,18 @@ const RoutedWordTransport transport{
     for (uint32_t index = 0; index < kElementCount; ++index) {
         input[index] = static_cast<float>(index);
     }
-    DeploymentRuntime runtime{abi, transport};
+    mesh_nic::complete_memory_initialization();
+    DeploymentRuntime runtime{abi, transport, nullptr, &taskTrace};
     if (!runtime.bindModelInput(0, &input)) {
         uart_puts("DEPLOYMENT_RUNTIME_TILE_0_FAIL\n");
         return 1;
     }
     while (!runtime.complete() && !runtime.failed()) {
-        if (runtime.step() == DeploymentStep::WaitForReceive) {
+        const DeploymentStep step = runtime.step();
+        if (step == DeploymentStep::WaitForReceive) {
             mesh_nic::wait_for_receive();
+        } else if (step == DeploymentStep::WaitForTransmit) {
+            mesh_nic::wait_for_transmit();
         }
     }
     if (runtime.failed()) {
@@ -262,14 +314,18 @@ const RoutedWordTransport transport{
     };
 
     alignas(64) float output[kElementCount] = {};
-    DeploymentRuntime runtime{abi, transport};
+    mesh_nic::complete_memory_initialization();
+    DeploymentRuntime runtime{abi, transport, nullptr, &taskTrace};
     if (!runtime.bindModelOutput(0, &output)) {
         uart_puts("DEPLOYMENT_RUNTIME_TILE_1_FAIL\n");
         return 1;
     }
     while (!runtime.complete() && !runtime.failed()) {
-        if (runtime.step() == DeploymentStep::WaitForReceive) {
+        const DeploymentStep step = runtime.step();
+        if (step == DeploymentStep::WaitForReceive) {
             mesh_nic::wait_for_receive();
+        } else if (step == DeploymentStep::WaitForTransmit) {
+            mesh_nic::wait_for_transmit();
         }
     }
     if (runtime.failed()) {

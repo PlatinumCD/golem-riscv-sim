@@ -36,6 +36,10 @@ class SharedMemoryBridge final
 
     std::optional<MittensBridgePacket> popTransmit();
     std::optional<MittensBridgeTxBurst> popTransmitBurst();
+    std::uint32_t transmitCount() const noexcept;
+    std::uint32_t transmitBurstCount() const noexcept;
+    bool transmitHasSpace() const noexcept;
+    bool transmitBurstHasSpace() const noexcept;
     bool receiveHasData() const noexcept;
     bool receiveHasWordData() const noexcept;
     bool receiveHasSpace() const noexcept;

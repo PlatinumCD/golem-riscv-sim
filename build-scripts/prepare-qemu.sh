@@ -81,6 +81,18 @@ apply_qemu_patch_once \
 apply_qemu_patch_once \
     "${PATCH_DIR}/0006-synchronize-guest-exit.patch" \
     "mittens_sync_guest_exit();"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0007-count-riscv-vector-instructions.patch" \
+    "is_mittens_vector_instruction"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0008-time-riscv-data-memory.patch" \
+    "The memHierarchy backend is timing-only"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0009-count-riscv-vset-instructions.patch" \
+    "Mittens counts vset before its mandatory TB exit"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0010-attribute-memory-accesses-to-guest-pc.patch" \
+    "mittens_sync_guest_pc"
 
 git -C "${SOURCE}" diff --check
 echo "prepared QEMU source: ${SOURCE}"

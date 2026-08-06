@@ -1,0 +1,34 @@
+diff --git a/target/riscv/translate.c b/target/riscv/translate.c
+--- a/target/riscv/translate.c
++++ b/target/riscv/translate.c
+@@ -1231,7 +1231,8 @@ static bool is_mittens_vector_instruction(
+ 
+     primary_opcode = extract32(opcode, 0, 7);
+     if (primary_opcode == 0x57) {
+-        return true;
++        /* vset* exits its TB before the generic post-decode hook. */
++        return extract32(opcode, 12, 3) != 7;
+     }
+ 
+     width = extract32(opcode, 12, 3);
+diff --git a/target/riscv/insn_trans/trans_rvv.c.inc b/target/riscv/insn_trans/trans_rvv.c.inc
+--- a/target/riscv/insn_trans/trans_rvv.c.inc
++++ b/target/riscv/insn_trans/trans_rvv.c.inc
+@@ -166,6 +166,8 @@ static bool do_vsetvl(DisasContext *s, int rd, int rs1, TCGv s2)
+     gen_set_gpr(s, rd, dst);
+     mark_vs_dirty(s);
+ 
++    /* Mittens counts vset before its mandatory TB exit. */
++    gen_helper_mittens_sync_vector_instruction();
+     gen_update_pc(s, s->cur_insn_len);
+     lookup_and_goto_ptr(s);
+     s->base.is_jmp = DISAS_NORETURN;
+@@ -187,6 +189,8 @@ static bool do_vsetivli(DisasContext *s, int rd, TCGv s1, TCGv s2)
+     gen_helper_vsetvl(dst, tcg_env, s1, s2);
+     gen_set_gpr(s, rd, dst);
+     mark_vs_dirty(s);
++    /* Mittens counts vset before its mandatory TB exit. */
++    gen_helper_mittens_sync_vector_instruction();
+     gen_update_pc(s, s->cur_insn_len);
+     lookup_and_goto_ptr(s);
+     s->base.is_jmp = DISAS_NORETURN;

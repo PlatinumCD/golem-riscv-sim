@@ -21,6 +21,7 @@ mapfile -t runtime_sources < <(
     -Wextra \
     -Wpedantic \
     -Werror \
+    -DMITTENS_MEMREF_COPY_TEST_HOOK=1 \
     "-I${PROJECT_ROOT}/runtime/include" \
     "${runtime_sources[@]}" \
     "${PROJECT_ROOT}/platform/mlir-runtime.cpp" \

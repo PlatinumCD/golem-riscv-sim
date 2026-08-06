@@ -1,0 +1,415 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1540"
+     viewBox="0 0 1900 1540" role="img"
+     aria-labelledby="title description">
+  <title id="title">Golem tile mesh topology diagram</title>
+  <desc id="description">
+    A representative three-by-three Golem mesh showing private QEMU tile
+    endpoints, local Merlin link controls, five-port routers, north-east-south-
+    west links, SST scheduling, and a highlighted Manhattan route from tile
+    zero to tile eight.
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5"
+                    flood-color="#0f172a" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrow-route" viewBox="0 0 10 10" refX="9" refY="5"
+            markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14"
+            orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "DejaVu Sans", Arial, sans-serif;
+               fill: #0f172a; }
+      .subtitle { font: 400 17px "DejaVu Sans", Arial, sans-serif;
+                  fill: #475569; }
+      .scheduler { fill: #eff6ff; stroke: #2563eb; stroke-width: 2.5;
+                   rx: 16; filter: url(#shadow); }
+      .node { fill: #ffffff; stroke: #64748b; stroke-width: 2;
+              rx: 16; filter: url(#shadow); }
+      .node-active { stroke: #dc2626; stroke-width: 3; }
+      .header { fill: #f1f5f9; }
+      .header-active { fill: #fef2f2; }
+      .qemu { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.6; rx: 9; }
+      .analog { fill: #fdf2f8; stroke: #db2777; stroke-width: 1.6; rx: 9; }
+      .mittens { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.6; rx: 9; }
+      .router { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 9; }
+      .title-node { font: 700 17px "DejaVu Sans", Arial, sans-serif;
+                    fill: #0f172a; }
+      .stereotype { font: 600 12px "DejaVu Sans", Arial, sans-serif;
+                    fill: #64748b; letter-spacing: 0.4px; }
+      .body { font: 400 12px "DejaVu Sans", Arial, sans-serif;
+              fill: #334155; }
+      .body-strong { font: 700 12px "DejaVu Sans", Arial, sans-serif;
+                     fill: #0f172a; }
+      .small { font: 400 11px "DejaVu Sans", Arial, sans-serif;
+               fill: #475569; }
+      .mesh-link { fill: none; stroke: #059669; stroke-width: 7;
+                   stroke-linecap: round; opacity: 0.72; }
+      .route-link { fill: none; stroke: #dc2626; stroke-width: 10;
+                    stroke-linecap: round; }
+      .route-arrow { fill: none; stroke: #dc2626; stroke-width: 6;
+                     stroke-linecap: round; marker-end: url(#arrow-route); }
+      .local-link { fill: none; stroke: #2563eb; stroke-width: 2.2; }
+      .control { fill: none; stroke: #64748b; stroke-width: 2;
+                 stroke-dasharray: 8 6; marker-end: url(#arrow-control); }
+      .label { font: 600 12px "DejaVu Sans", Arial, sans-serif;
+               fill: #334155; }
+      .route-label { font: 700 13px "DejaVu Sans", Arial, sans-serif;
+                     fill: #b91c1c; }
+      .legend { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 12; }
+    </style>
+  </defs>
+
+  <rect width="1900" height="1540" fill="#f8fafc"/>
+  <text x="55" y="58" class="title">
+    Golem mesh — private tiles connected by Merlin routers
+  </text>
+  <text x="55" y="88" class="subtitle">
+    Representative 3×3 expansion of the generic W×H builder · current ResNet deployment uses 8×8
+  </text>
+
+  <!-- Global scheduler -->
+  <rect x="245" y="115" width="1410" height="92" class="scheduler"/>
+  <text x="280" y="145" class="stereotype">&lt;&lt;global time authority&gt;&gt;</text>
+  <text x="280" y="174" class="title-node">SST Core discrete-event scheduler</text>
+  <text x="610" y="153" class="body">
+    advances every QEMU grant, receive-DMA channel, analog link, router, and physical mesh link
+  </text>
+  <text x="610" y="178" class="body">
+    functional guest execution remains isolated inside one QEMU process per tile
+  </text>
+
+  <!-- Control fanout -->
+  <path d="M 950 207 L 950 232 L 305 232 L 305 258" class="control"/>
+  <path d="M 950 207 L 950 258" class="control"/>
+  <path d="M 950 232 L 1595 232 L 1595 258" class="control"/>
+  <text x="735" y="226" class="label">scheduled callbacks and clock domains</text>
+
+  <!-- Mesh physical links behind nodes: horizontal -->
+  <path d="M 439 453 L 962 453" class="mesh-link"/>
+  <path d="M 1084 453 L 1607 453" class="mesh-link"/>
+  <path d="M 439 838 L 962 838" class="mesh-link"/>
+  <path d="M 1084 838 L 1607 838" class="mesh-link"/>
+  <path d="M 439 1223 L 962 1223" class="mesh-link"/>
+  <path d="M 1084 1223 L 1607 1223" class="mesh-link"/>
+
+  <!-- Mesh physical links behind nodes: vertical -->
+  <path d="M 378 488 L 378 803" class="mesh-link"/>
+  <path d="M 1023 488 L 1023 803" class="mesh-link"/>
+  <path d="M 1668 488 L 1668 803" class="mesh-link"/>
+  <path d="M 378 873 L 378 1188" class="mesh-link"/>
+  <path d="M 1023 873 L 1023 1188" class="mesh-link"/>
+  <path d="M 1668 873 L 1668 1188" class="mesh-link"/>
+
+  <!-- Highlighted XY/Manhattan route 0 -> 1 -> 2 -> 5 -> 8 -->
+  <path d="M 439 453 L 962 453" class="route-link"/>
+  <path d="M 1084 453 L 1607 453" class="route-link"/>
+  <path d="M 1668 488 L 1668 803" class="route-link"/>
+  <path d="M 1668 873 L 1668 1188" class="route-link"/>
+  <text x="520" y="439" class="route-label">hop 1</text>
+  <text x="1165" y="439" class="route-label">hop 2</text>
+  <text x="1685" y="688" class="route-label">hop 3</text>
+  <text x="1685" y="1073" class="route-label">hop 4</text>
+
+  <!-- Node 0 -->
+  <g transform="translate(70 258)">
+    <rect width="385" height="305" class="node node-active"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header-active"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 0 · (x=0, y=0)</text>
+    <text x="295" y="45" class="body-strong">id=y·W+x</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-0.elf · runtime · tensors</text>
+    <text x="28" y="130" class="small">fd 41 / 42 / 43 bridges</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">QEMU lifecycle + local timing</text>
+    <text x="28" y="220" class="small">SimpleNetwork endpoint 0</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R0</text>
+    <text x="259" y="203" class="body">merlin.hr_router</text>
+    <text x="269" y="220" class="small">local port 4</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#fef2f2" stroke="#fecaca"/>
+    <text x="28" y="263" class="body-strong">Route source</text>
+    <text x="28" y="280" class="small">destination=8 · 32-bit word stream</text>
+  </g>
+
+  <!-- Node 1 -->
+  <g transform="translate(715 258)">
+    <rect width="385" height="305" class="node node-active"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header-active"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 1 · (x=1, y=0)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-1.elf · runtime · tensors</text>
+    <text x="28" y="130" class="small">independent address space</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">endpoint conversion only</text>
+    <text x="28" y="220" class="small">transit bypasses the hart</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R1</text>
+    <text x="259" y="203" class="body">forwards transit</text>
+    <text x="269" y="220" class="small">local port 4</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#fef2f2" stroke="#fecaca"/>
+    <text x="28" y="263" class="body-strong">Transit router</text>
+    <text x="28" y="280" class="small">R1 forwards east; Tile 1 software is not interrupted</text>
+  </g>
+
+  <!-- Node 2 -->
+  <g transform="translate(1360 258)">
+    <rect width="385" height="305" class="node node-active"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header-active"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 2 · (x=2, y=0)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-2.elf · runtime · tensors</text>
+    <text x="28" y="130" class="small">independent address space</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">endpoint conversion only</text>
+    <text x="28" y="220" class="small">transit bypasses the hart</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R2</text>
+    <text x="259" y="203" class="body">turns south</text>
+    <text x="269" y="220" class="small">local port 4</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#fef2f2" stroke="#fecaca"/>
+    <text x="28" y="263" class="body-strong">Transit router</text>
+    <text x="28" y="280" class="small">R2 completes X routing, then turns south</text>
+  </g>
+
+  <!-- Node 3 -->
+  <g transform="translate(70 643)">
+    <rect width="385" height="305" class="node"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 3 · (x=0, y=1)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-3.elf · local runtime</text>
+    <text x="28" y="130" class="small">no route data enters this tile</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">SimpleNetwork endpoint 3</text>
+    <text x="28" y="220" class="small">only local packets cross port 4</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R3</text>
+    <text x="259" y="203" class="body">five-port switch</text>
+    <text x="269" y="220" class="small">N/E/S/W/L</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="28" y="271" class="small">Idle with respect to the highlighted packet</text>
+  </g>
+
+  <!-- Node 4 -->
+  <g transform="translate(715 643)">
+    <rect width="385" height="305" class="node"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 4 · (x=1, y=1)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-4.elf · local runtime</text>
+    <text x="28" y="130" class="small">no route data enters this tile</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">SimpleNetwork endpoint 4</text>
+    <text x="28" y="220" class="small">only local packets cross port 4</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R4</text>
+    <text x="259" y="203" class="body">five-port switch</text>
+    <text x="269" y="220" class="small">N/E/S/W/L</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="28" y="271" class="small">Idle with respect to the highlighted packet</text>
+  </g>
+
+  <!-- Node 5 -->
+  <g transform="translate(1360 643)">
+    <rect width="385" height="305" class="node node-active"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header-active"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 5 · (x=2, y=1)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-5.elf · runtime · tensors</text>
+    <text x="28" y="130" class="small">transit stays inside the router</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">endpoint conversion only</text>
+    <text x="28" y="220" class="small">not involved in transit routing</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R5</text>
+    <text x="259" y="203" class="body">forwards south</text>
+    <text x="269" y="220" class="small">local port 4</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#fef2f2" stroke="#fecaca"/>
+    <text x="28" y="263" class="body-strong">Transit router</text>
+    <text x="28" y="280" class="small">R5 forwards south; tile software remains idle</text>
+  </g>
+
+  <!-- Node 6 -->
+  <g transform="translate(70 1028)">
+    <rect width="385" height="305" class="node"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 6 · (x=0, y=2)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-6.elf · local runtime</text>
+    <text x="28" y="130" class="small">no route data enters this tile</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">SimpleNetwork endpoint 6</text>
+    <text x="28" y="220" class="small">only local packets cross port 4</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R6</text>
+    <text x="259" y="203" class="body">edge router</text>
+    <text x="269" y="220" class="small">N/E/L</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="28" y="271" class="small">Idle with respect to the highlighted packet</text>
+  </g>
+
+  <!-- Node 7 -->
+  <g transform="translate(715 1028)">
+    <rect width="385" height="305" class="node"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 7 · (x=1, y=2)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-7.elf · local runtime</text>
+    <text x="28" y="130" class="small">no route data enters this tile</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">SimpleNetwork endpoint 7</text>
+    <text x="28" y="220" class="small">only local packets cross port 4</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R7</text>
+    <text x="259" y="203" class="body">edge router</text>
+    <text x="269" y="220" class="small">N/E/W/L</text>
+    <path d="M 231 195 L 247 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="28" y="271" class="small">Idle with respect to the highlighted packet</text>
+  </g>
+
+  <!-- Node 8 -->
+  <g transform="translate(1360 1028)">
+    <rect width="385" height="305" class="node node-active"/>
+    <path d="M 0 16 Q 0 0 16 0 H 369 Q 385 0 385 16 V 54 H 0 Z"
+          class="header-active"/>
+    <text x="18" y="24" class="stereotype">&lt;&lt;tile endpoint&gt;&gt;</text>
+    <text x="18" y="46" class="title-node">Tile 8 · (x=2, y=2)</text>
+    <rect x="16" y="68" width="215" height="77" class="qemu"/>
+    <text x="28" y="90" class="body-strong">QEMU hart + private RAM</text>
+    <text x="28" y="110" class="body">core-8.elf · runtime · tensors</text>
+    <text x="28" y="130" class="small">receives from fd 42</text>
+    <rect x="247" y="68" width="122" height="77" class="analog"/>
+    <text x="259" y="90" class="body-strong">AnalogDevice</text>
+    <text x="259" y="110" class="body">A local arrays</text>
+    <text x="259" y="130" class="small">private backend</text>
+    <rect x="16" y="160" width="215" height="70" class="mittens"/>
+    <text x="28" y="183" class="body-strong">mittens.tile + linkcontrol</text>
+    <text x="28" y="203" class="body">packet enters local port 4</text>
+    <text x="28" y="220" class="small">RX DMA → guest RAM</text>
+    <rect x="247" y="160" width="122" height="70" class="router"/>
+    <text x="268" y="183" class="body-strong">Router R8</text>
+    <text x="259" y="203" class="body">ejects local</text>
+    <text x="269" y="220" class="small">local port 4</text>
+    <path d="M 247 195 L 231 195" class="local-link"/>
+    <rect x="16" y="245" width="353" height="42" rx="8"
+          fill="#fef2f2" stroke="#fecaca"/>
+    <text x="28" y="263" class="body-strong">Route destination</text>
+    <text x="28" y="280" class="small">runtime validates source/route and readies the task</text>
+  </g>
+
+  <!-- Direction markers are drawn only in the open space between nodes. -->
+  <path d="M 570 453 L 690 453" class="route-arrow"/>
+  <path d="M 1215 453 L 1335 453" class="route-arrow"/>
+  <path d="M 1668 565 L 1668 625" class="route-arrow"/>
+  <path d="M 1668 950 L 1668 1010" class="route-arrow"/>
+
+  <!-- Link labels -->
+  <text x="520" y="477" class="label">E0 ↔ W1</text>
+  <text x="1165" y="477" class="label">E0 ↔ W1</text>
+  <text x="500" y="862" class="label">32-bit physical flits</text>
+  <text x="1145" y="862" class="label">1 GHz default</text>
+  <text x="500" y="1247" class="label">bidirectional links</text>
+  <text x="1145" y="1247" class="label">buffered + backpressured</text>
+
+  <!-- Legend / contract -->
+  <rect x="70" y="1390" width="1775" height="118" class="legend"/>
+  <text x="92" y="1417" class="title-node">Mesh contract</text>
+  <line x1="92" y1="1443" x2="165" y2="1443" class="mesh-link"/>
+  <text x="182" y="1448" class="body">ordinary bidirectional Merlin link</text>
+  <line x1="455" y1="1443" x2="528" y2="1443" class="route-arrow"/>
+  <text x="545" y="1448" class="body">example XY/Manhattan route: 0 → 1 → 2 → 5 → 8</text>
+  <text x="92" y="1482" class="body-strong">Router ports:</text>
+  <text x="182" y="1482" class="body">E=0 · W=1 · S=2 · N=3 · LOCAL=4</text>
+  <text x="455" y="1482" class="body-strong">Isolation:</text>
+  <text x="525" y="1482" class="body">no shared RAM; transit flits stay inside routers and never execute on intermediate harts</text>
+  <text x="1240" y="1448" class="body-strong">Scaling:</text>
+  <text x="1305" y="1448" class="body">same builder creates W×H meshes</text>
+  <text x="1240" y="1482" class="body-strong">Current large proof:</text>
+  <text x="1370" y="1482" class="body">8×8 · 64 endpoints · 19 active ResNet ELFs</text>
+</svg>

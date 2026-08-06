@@ -53,8 +53,18 @@ When no task or transmit chunk can advance and an incoming route remains
 outstanding, `step()` returns `DeploymentStep::WaitForReceive`. A platform
 entry point should respond by invoking its blocking receive primitive; the
 Mittens implementation writes `RX_WAIT` and yields over fd 41 until SST
-delivers data. A transmit-backpressured step remains `DeploymentStep::Idle`,
-so a sender never sleeps on the wrong event.
+delivers data. A transmit-backpressured step returns
+`DeploymentStep::WaitForTransmit`; the Mittens implementation writes
+`TX_WAIT` and SST resumes the guest only after the appropriate shared-memory
+transmit ring has space.
+
+The default transmit policy drains a completed task's outgoing routes before
+executing another local task. The optional
+`DeploymentTransmitPolicy::OverlapReadyTasks` policy keeps a bounded FIFO of
+completed source tasks and may execute another ready task while transmission
+is blocked. Before doing so, it proves that the new task's output buffers do
+not overlap any unsent route buffer, preserving the compiler's workspace
+liveness contract.
 
 `DeploymentRuntime::executeReadyTask()` invokes the optional trace callback
 immediately before and after `Task::execute`. The runtime remains independent
@@ -85,7 +95,7 @@ network cell per tile. Both endpoints send simultaneously, drain incoming
 frames while their own sends are backpressured, and complete their downstream
 tasks with exact outputs. It also verifies that a destination returns
 `WaitForReceive` while each framed word is unavailable and that transmit
-backpressure returns `Idle`. A separate receive-DMA regression interleaves
+backpressure returns `WaitForTransmit`. A separate receive-DMA regression interleaves
 headers from two source tiles, verifies only the ten header words pass through
 the CPU word callback, copies both payloads through DMA callbacks, checks both
 completions, and executes the dependent task.

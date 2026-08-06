@@ -6,9 +6,24 @@ readonly COMMON_SCRIPT="$(cd -- "${TEST_DIR}/../.." && pwd)/build-scripts/common
 # shellcheck source=../../build-scripts/common.sh
 source "${COMMON_SCRIPT}"
 
+readonly MVM_EXECUTION="${SCULPTOR_CORE_MVM_EXECUTION:-analog}"
 readonly SOURCE_PIPELINE_TEST="${PROJECT_ROOT}/tests/torch-mlir-sculptor/run-test.sh"
-readonly SOURCE_MLIR="${BUILD_ROOT}/tests/torch-mlir-sculptor/two-linear-llvm-shims.mlir"
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/sculptor-core-elf"
+readonly ANALOG_SOURCE_MLIR="${BUILD_ROOT}/tests/torch-mlir-sculptor/two-linear-llvm-shims.mlir"
+readonly SCHEDULED_MLIR="${BUILD_ROOT}/tests/torch-mlir-sculptor/two-linear-scheduled.mlir"
+case "${MVM_EXECUTION}" in
+    analog)
+        readonly OUTPUT_DIR="${BUILD_ROOT}/tests/sculptor-core-elf"
+        readonly SOURCE_MLIR="${ANALOG_SOURCE_MLIR}"
+        ;;
+    digital)
+        readonly OUTPUT_DIR="${BUILD_ROOT}/tests/sculptor-core-elf-digital"
+        readonly SOURCE_MLIR="${OUTPUT_DIR}/two-linear-digital-llvm-shims.mlir"
+        ;;
+    *)
+        echo "SCULPTOR_CORE_MVM_EXECUTION must be analog or digital" >&2
+        exit 1
+        ;;
+esac
 readonly LLVM="${INSTALL_ROOT}/llvm"
 readonly SCULPTOR_OPT="${INSTALL_ROOT}/sculptor-mlir/bin/sculptor-mlir-opt"
 readonly RUNTIME_INCLUDE="${INSTALL_ROOT}/runtime/include"
@@ -33,9 +48,25 @@ done
 
 "${SOURCE_PIPELINE_TEST}"
 "${PROJECT_ROOT}/build-scripts/build-runtime.sh"
-require_file "${SOURCE_MLIR}"
 require_file "${RUNTIME_LIBRARY}"
 mkdir -p -- "${OUTPUT_DIR}"
+
+if [[ "${MVM_EXECUTION}" == digital ]]; then
+    require_file "${SCHEDULED_MLIR}"
+    "${SCULPTOR_OPT}" "${SCHEDULED_MLIR}" \
+        --sculptor-lower-scheduled-mvm-to-digital \
+        --sculptor-fuse-task-graph \
+        --sculptor-lower-golem-to-llvm-shims \
+        -o "${SOURCE_MLIR}"
+
+    if [[ "$(grep -c 'linalg.matmul_transpose_b' "${SOURCE_MLIR}")" -ne 2 ]] ||
+       grep -Eq 'sculptor\.array\.|golem_analog_mvm_(set|load|compute|store)' \
+        "${SOURCE_MLIR}"; then
+        echo "digital MVM lowering did not produce two pure digital matmuls" >&2
+        exit 1
+    fi
+fi
+require_file "${SOURCE_MLIR}"
 
 common_flags=(
     "--target=${GOLEM_TARGET}"
@@ -163,9 +194,14 @@ build_core() {
         return 1
     fi
 
-    if [[ "$("${LLVM}/bin/llvm-objdump" -d "${elf}" |
-        grep -c '<unknown>')" -lt 4 ]]; then
-        echo "core-${core_id} ELF lacks the four Golem analog opcodes" >&2
+    if [[ "${MVM_EXECUTION}" == analog ]]; then
+        if [[ "$("${LLVM}/bin/llvm-objdump" -d "${elf}" |
+            grep -c '<unknown>')" -lt 4 ]]; then
+            echo "core-${core_id} ELF lacks the four Golem analog opcodes" >&2
+            return 1
+        fi
+    elif "${LLVM}/bin/llvm-objdump" -d "${elf}" | grep -q '<unknown>'; then
+        echo "core-${core_id} digital ELF unexpectedly contains a custom opcode" >&2
         return 1
     fi
 
@@ -241,4 +277,4 @@ if ! awk -F, '
     exit 1
 fi
 
-echo "PyTorch -> two generated core ELFs -> basic runtime -> [12,4]: PASS"
+echo "PyTorch -> ${MVM_EXECUTION} MVM -> two generated core ELFs -> basic runtime -> [12,4]: PASS"

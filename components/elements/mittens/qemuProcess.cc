@@ -2,12 +2,14 @@
 
 #include "qemuProcess.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <mutex>
 #include <spawn.h>
 #include <stdexcept>
 #include <system_error>
@@ -31,6 +33,9 @@ constexpr int kChildBridgeFileDescriptor = 42;
 constexpr int kChildAnalogBridgeFileDescriptor = 43;
 constexpr int kFirstStagingFileDescriptor = 64;
 
+std::mutex processRegistryMutex;
+std::vector<QemuProcess*> processRegistry;
+
 struct BridgeFileDescriptorMapping {
     int source;
     int target;
@@ -39,10 +44,22 @@ struct BridgeFileDescriptorMapping {
 
 std::vector<std::string> buildArguments(const QemuConfiguration& config)
 {
+    std::string cpu = "rv64,v=";
+    if (config.riscvVectorEnabled) {
+        cpu += "true,vext_spec=v1.0,vlen=" +
+               std::to_string(config.riscvVectorLengthBits) +
+               ",elen=" +
+               std::to_string(config.riscvVectorElementBits);
+    } else {
+        cpu += "false";
+    }
+
     std::vector<std::string> arguments = {
         config.executable,
         "-machine",
         "virt",
+        "-cpu",
+        cpu,
         "-smp",
         "1",
         "-m",
@@ -67,6 +84,26 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
         arguments.push_back(
             "mittens-sync.bridge-fd=" +
             std::to_string(kChildSyncBridgeFileDescriptor));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-timing=") +
+            (config.memoryTimingEnabled ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-init-batching=") +
+            (config.memoryInitializationBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.scratchpad-enabled=") +
+            (config.scratchpadEnabled ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.scratchpad-base=" +
+            std::to_string(config.scratchpadBase));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.scratchpad-size=" +
+            std::to_string(config.scratchpadBytes));
     }
     if (config.bridgeFileDescriptor >= 0) {
         arguments.push_back("-global");
@@ -112,9 +149,22 @@ std::string QemuExitStatus::describe() const
            std::string(::strsignal(signalNumber)) + ")";
 }
 
+QemuProcess::QemuProcess()
+{
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+    processRegistry.push_back(this);
+}
+
 QemuProcess::~QemuProcess()
 {
     terminate();
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+    processRegistry.erase(
+        std::remove(
+            processRegistry.begin(),
+            processRegistry.end(),
+            this),
+        processRegistry.end());
 }
 
 void QemuProcess::start(const QemuConfiguration& config)
@@ -327,6 +377,60 @@ void QemuProcess::terminate() noexcept
             (void)waitForExit();
         } catch (...) {
             pid_ = -1;
+        }
+    }
+}
+
+void QemuProcess::terminateAll() noexcept
+{
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+
+    for (QemuProcess* process : processRegistry) {
+        if (process != nullptr && process->running()) {
+            const pid_t child = process->pid();
+            if (::kill(child, SIGTERM) < 0 && errno != ESRCH) {
+                // terminate() below remains authoritative.
+            }
+        }
+    }
+
+    const auto deadline =
+        std::chrono::steady_clock::now() + kTerminateGracePeriod;
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool anyRunning = false;
+        for (QemuProcess* process : processRegistry) {
+            if (process == nullptr || !process->running()) {
+                continue;
+            }
+            anyRunning = true;
+            try {
+                (void)process->pollExit();
+            } catch (...) {
+                // The final SIGKILL and wait pass remains authoritative.
+            }
+        }
+        if (!anyRunning) {
+            return;
+        }
+        std::this_thread::sleep_for(kTerminatePollInterval);
+    }
+
+    for (QemuProcess* process : processRegistry) {
+        if (process != nullptr && process->running()) {
+            const pid_t child = process->pid();
+            if (::kill(child, SIGKILL) < 0 && errno != ESRCH) {
+                // waitForExit() below remains authoritative.
+            }
+        }
+    }
+    for (QemuProcess* process : processRegistry) {
+        if (process == nullptr || !process->running()) {
+            continue;
+        }
+        try {
+            (void)process->waitForExit();
+        } catch (...) {
+            process->pid_ = -1;
         }
     }
 }

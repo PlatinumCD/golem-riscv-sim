@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(3)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(10)
 
 enum MittensSyncBridgeState {
     MITTENS_SYNC_STATE_IDLE = 0,
@@ -29,11 +29,23 @@ enum MittensSyncStopReason {
     MITTENS_SYNC_STOP_TASK_START = 7,
     MITTENS_SYNC_STOP_TASK_FINISH = 8,
     MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT = 9,
+    MITTENS_SYNC_STOP_MEMORY_ACCESS = 10,
+    MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE = 11,
+    MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT = 12,
+    MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT = 13,
+    MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT = 14,
 };
 
 enum MittensSyncEventFlags {
     MITTENS_SYNC_EVENT_FLAG_NONE = 0,
     MITTENS_SYNC_EVENT_FLAG_WAIT_FOR_COMPLETION = 1U << 0,
+    MITTENS_SYNC_EVENT_FLAG_NIC_BURST = 1U << 1,
+};
+
+enum MittensSyncMemoryFlags {
+    MITTENS_SYNC_MEMORY_FLAG_NONE = 0,
+    MITTENS_SYNC_MEMORY_FLAG_WRITE = 1U << 0,
+    MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD = 1U << 1,
 };
 
 enum MittensSyncBridgeError {
@@ -62,12 +74,27 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t analog_array_id;
     uint32_t rx_dma_source;
 
-    uint64_t analog_sequence;
+    union {
+        uint64_t analog_sequence;
+        uint64_t memory_init_accesses;
+        uint64_t memory_program_counter;
+    };
     uint32_t task_id;
     uint32_t rx_dma_route_id;
-    uint64_t execution_id;
+    union {
+        uint64_t execution_id;
+        uint64_t memory_init_write_bytes;
+        uint64_t memory_return_address;
+    };
     uint32_t rx_dma_word_count;
-    uint8_t reserved1[28];
+    uint32_t reserved0;
+    uint64_t vector_instructions_executed;
+    union {
+        uint64_t memory_address;
+        uint64_t memory_init_read_bytes;
+    };
+    uint32_t memory_size;
+    uint32_t memory_flags;
 } MittensSyncBridge;
 
 static inline uint32_t mittens_sync_load_acquire(

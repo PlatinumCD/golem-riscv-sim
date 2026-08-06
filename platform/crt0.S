@@ -14,8 +14,11 @@ _start:
     la sp, __stack_top
     andi sp, sp, -16
 
-    /* Enable floating-point state for the lp64d Golem target. */
-    li t0, (3 << 13)
+    /*
+     * Enable floating-point and vector state for the lp64d+V Golem target.
+     * FS occupies mstatus[14:13] and VS occupies mstatus[10:9].
+     */
+    li t0, ((3 << 13) | (3 << 9))
     csrs mstatus, t0
     csrwi fcsr, 0
 

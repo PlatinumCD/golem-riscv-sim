@@ -22,6 +22,29 @@ struct AnalogCompletion {
     std::vector<std::uint32_t> outputWords;
 };
 
+enum class AnalogTracePhase : std::uint32_t {
+    Submitted = 0,
+    InputTransferStart = 1,
+    InputTransferFinish = 2,
+    ComputeStart = 3,
+    ComputeFinish = 4,
+    OutputTransferStart = 5,
+    OutputTransferFinish = 6,
+    MoveOutputStart = 7,
+    MoveOutputFinish = 8,
+    MoveInputStart = 9,
+    MoveInputFinish = 10,
+    Complete = 11,
+};
+
+struct AnalogTraceEvent {
+    std::uint64_t ticket;
+    std::uint32_t operation;
+    std::uint32_t arrayId;
+    AnalogTracePhase phase;
+    std::uint64_t deviceCycle;
+};
+
 class AnalogDevice final
 {
   public:
@@ -52,6 +75,9 @@ class AnalogDevice final
         std::uint32_t arrayId);
     std::optional<AnalogCompletion> takeCompletionForTicket(
         std::uint64_t ticket);
+    void setTraceEnabled(bool enabled) noexcept;
+    bool traceEnabled() const noexcept { return traceEnabled_; }
+    std::optional<AnalogTraceEvent> takeTraceEvent();
 
     std::uint32_t tileId() const noexcept { return tileId_; }
     std::size_t arrayCount() const noexcept;
@@ -61,6 +87,7 @@ class AnalogDevice final
         return computeLatencyCycles_;
     }
     std::uint64_t elapsedCycles() const noexcept { return elapsedCycles_; }
+    std::uint64_t linkBeats() const noexcept { return linkBeats_; }
 
     static std::uint64_t linkCyclesForWords(
         std::size_t wordCount) noexcept;
@@ -77,6 +104,7 @@ class AnalogDevice final
         Computing,
         TransferringOutput,
         MovingOutput,
+        MovingInput,
         Complete,
     };
 
@@ -109,6 +137,9 @@ class AnalogDevice final
     void startReadyRequests();
     void startRequest(const std::shared_ptr<Request>& request);
     void advanceRequest(const std::shared_ptr<Request>& request);
+    bool usesLink(const std::shared_ptr<Request>& request) const noexcept;
+    std::uint32_t linkArray(
+        const std::shared_ptr<Request>& request) const noexcept;
     void finishInputTransfer(const std::shared_ptr<Request>& request);
     void finishMoveTransfer(const std::shared_ptr<Request>& request);
     void finishRequest(const std::shared_ptr<Request>& request,
@@ -118,6 +149,12 @@ class AnalogDevice final
                              std::uint64_t ticket,
                              std::uint32_t arrayId,
                              std::uint64_t status);
+    void recordTrace(const std::shared_ptr<Request>& request,
+                     AnalogTracePhase phase);
+    void recordTrace(std::uint64_t ticket,
+                     std::uint32_t operation,
+                     std::uint32_t arrayId,
+                     AnalogTracePhase phase);
 
     std::vector<float> decodeFloatWords(
         const std::vector<std::uint32_t>& words) const;
@@ -132,6 +169,10 @@ class AnalogDevice final
     std::deque<AnalogCompletion> completions_;
     std::uint64_t nextTicket_ = 1;
     std::uint64_t elapsedCycles_ = 0;
+    std::uint64_t linkBeats_ = 0;
+    std::uint32_t nextLinkArray_ = 0;
+    bool traceEnabled_ = false;
+    std::deque<AnalogTraceEvent> traceEvents_;
 };
 
 } // namespace Mittens

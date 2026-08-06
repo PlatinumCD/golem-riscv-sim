@@ -41,6 +41,6 @@ build_mesh(
             "MITTENS_ANALOG_BACKEND", "native"
         ),
         "analog_link_clock": "1GHz",
-        "analog_compute_latency_cycles": 8,
+        "analog_compute_latency_cycles": 100,
     },
 )

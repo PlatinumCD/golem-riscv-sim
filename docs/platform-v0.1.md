@@ -37,7 +37,10 @@ icount grants on the per-tile fd 41 control bridge.
 Each QEMU tile has:
 
 - one RISC-V hart;
+- standard RVV 1.0 execution enabled by default, with configurable `VLEN` and
+  `ELEN`;
 - 16 MiB of private RAM;
+- an optional private SST memHierarchy data L1;
 - one bare-metal ELF image loaded at `0x80000000`;
 - the UART and simulation-exit devices listed in the address map; and
 - one mesh NIC at `0x10010000`; and
@@ -61,10 +64,12 @@ The initial implementation launches QEMU approximately as follows:
 ```text
 qemu-system-riscv64 \
   -machine virt -smp 1 -m 16M \
+  -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64 \
   -bios none -kernel <tile.elf> \
   -display none -monitor none -serial stdio -no-reboot \
   -icount shift=0,sleep=off \
   -global mittens-sync.bridge-fd=41 \
+  -global mittens-sync.memory-timing=<on|off> \
   -global mittens-nic.bridge-fd=42 \
   -global mittens-analog.bridge-fd=43
 ```
@@ -74,6 +79,17 @@ Descriptor 42 is the tile's anonymous shared-memory NIC data bridge.
 Descriptor 43 is the independently created analog command/data bridge. fd 41
 is present for every managed tile; a tile receives fd 42 and fd 43 only for
 interfaces enabled in its SST configuration.
+
+The conforming vector geometry is `VLEN=256` and `ELEN=64`. The corresponding
+Mittens parameters are `riscv_vector_enabled`,
+`riscv_vector_length_bits`, and `riscv_vector_element_bits`. QEMU supplies
+RVV instruction semantics, while `platform/crt0.S` enables vector state in
+`mstatus.VS`. Compiler vector-code generation is a separate target-feature
+choice; the focused RVV test uses
+`-march=rv64gcv_xgolemanalog` explicitly. Other accepted vector parameter
+values describe experimental, non-v0.1 processor configurations. The
+normative vector contract is defined in
+[`vector-architecture.md`](vector-architecture.md).
 
 The SST component has a linear `tile_id` used to identify its endpoint in the
 mesh. Platform v0.1 does not yet define how software reads its own tile ID; a
@@ -113,18 +129,65 @@ every tile adds its tile ID and forwards the result to a physical neighbor.
 ### Timing model
 
 SST grants QEMU bounded precise-icount quanta through fd 41. QEMU reports the
-number of instructions executed at the quantum end or an earlier device
-boundary, and SST schedules that event after the same number of `cpu_clock`
-cycles. Platform v0.1 initially defines one retired instruction as one CPU
-cycle. `cpu_clock` defaults to 1 GHz and `sync_instruction_quantum` defaults
-to 1,000 instructions.
+total and vector instruction counts at the quantum end or an earlier device
+boundary. SST schedules that event after:
 
-Mesh transmissions and every analog submission yield through fd 41. fd 42 and
-fd 43 carry only their device data. A normal SiFive finisher write yields
-`GUEST_EXIT` through fd 41 before QEMU terminates, making the last retired
-instruction boundary part of the SST schedule. See
+```text
+max(ceil(total instructions / cpu_issue_width), vector instructions)
+```
+
+`cpu_issue_width` accepts 1, 2, or 4 and defaults to 1, preserving the
+original one-retired-instruction-per-cycle behavior by default.
+`cpu_clock` defaults to 1 GHz and `sync_instruction_quantum` defaults to 1,000
+instructions.
+
+Every accepted deployment-burst descriptor, a full legacy scalar transmit
+ring, a blocking `TX_WAIT`, and every analog submission yield through fd 41.
+fd 42 and fd 43 carry only their device data. The deployment descriptor event
+is a zero-wait timestamp: SST resumes the hart immediately unless its bounded
+transmit ring remains full. A normal SiFive finisher write yields `GUEST_EXIT`
+through fd 41 before QEMU terminates, making the last retired instruction
+boundary part of the SST schedule. See
 [`timing-model.md`](timing-model.md) for the exact measurement boundary and
 the limits of the initial functional CPU timing policy.
+
+### Optional tile-private data L1
+
+`mittens.tile` supports `memory_backend=native|memhierarchy`. Native is the
+default and leaves QEMU's private-RAM data path unchanged. The memHierarchy
+backend requires a `memHierarchy.standardInterface` in the tile's `memoryIF`
+slot. Each tile connects that interface to its own L1 instance; no L1 object
+or cache state is shared between tiles.
+
+When enabled, QEMU forces guest RAM data loads and stores through its TCG slow
+path and publishes a `MEMORY_ACCESS` fd 41 event containing the physical
+address, byte size, and read/write direction. SST sends the equivalent
+StandardMem request and holds the hart until the response. QEMU then performs
+the actual functional RAM access. Instruction fetches and MMIO do not use this
+path.
+
+This separation is intentional:
+
+```text
+QEMU private RAM = architectural bytes
+SST private L1   = hit/miss state and completion timing
+```
+
+The initial proof uses a 32 KiB, four-way L1 with 64-byte lines and a simple
+50 ns lower-memory backend. The topology is configurable in the SST Python
+graph, not fixed in the guest ABI. The current implementation is blocking
+with one outstanding CPU memory request per tile. It does not yet model an
+instruction cache, TLB, scratchpad, nonblocking misses, or coherence with the
+NIC receive-DMA path.
+
+Deployments may enable a distinct initialization phase. Before the guest calls
+`mesh_nic::complete_memory_initialization()`, QEMU counts RAM traffic locally.
+That call emits one fd 41 `MEMORY_INIT_COMPLETE` handshake containing the
+aggregate access, read-byte, and write-byte counts. SST charges a configurable
+fixed latency plus `ceil(total_bytes / bytes_per_cycle)`, resumes the hart, and
+then restores detailed per-access StandardMem timing. Platform v0.1 therefore
+retains modeled initialization volume without requiring one host handshake for
+every weight-loading access.
 
 ### Tile-local analog accelerator
 
@@ -142,7 +205,9 @@ An analog-enabled tile has:
 - one `AnalogDevice`;
 - one independently owned numerical backend; and
 - a configurable number of analog arrays, each with its own command stream,
-  transfer state, completion state, and bidirectional 256-bit link.
+  array state, and completion state.
+
+All array payload transfers share one tile-wide bidirectional 256-bit link.
 
 Each configured array has a tile-local, zero-based array ID and owns a distinct
 matrix, input, and output state. The CrossSim backend creates one distinct
@@ -152,17 +217,21 @@ between arrays or tiles.
 The required tile-local topology is:
 
 ```text
-                        +-- channel[0] -- 256-bit link <--> array 0
-QEMU <-> Analog bridge +-- channel[1] -- 256-bit link <--> array 1
-                        +-- channel[2] -- 256-bit link <--> array 2
-                        `-- ...
+                        +-- ordered channel[0] --+
+QEMU <-> Analog bridge +-- ordered channel[1] --+--> round-robin arbiter
+                        +-- ordered channel[2] --+             |
+                        `-- ...                               |
+                                                  shared 256-bit link
+                                                            |
+                                               +------------+------------+
+                                               |            |            |
+                                            array 0       array 1      array 2
 ```
 
-All array links use `analog_link_clock`, but they are independent physical
-lanes rather than clients of one shared lane. No tile-wide arbiter divides
-their bandwidth. Each array link carries at most one beat in one direction
-during a cycle. Platform v0.1 does not provide simultaneous tile-to-array and
-array-to-tile transfer on the same array link.
+The link uses `analog_link_clock` and is a single physical lane shared by all
+array channels. A tile-wide round-robin arbiter grants at most one 256-bit
+beat per cycle. The link is half-duplex: a cycle carries either one
+tile-to-array beat or one array-to-tile beat, never both.
 
 The custom instructions submit the following logical command:
 
@@ -212,7 +281,8 @@ A command instruction blocks only when its selected array's bounded queue
 cannot accept it; `MoveVector` must be accepted by both participating array
 streams. `StoreVector` additionally blocks when its selected array's result is
 unfinished. An instruction targeting an available array is not delayed merely
-because an unrelated array is busy.
+because an unrelated array is computing, although its payload transfer may
+wait for the shared link.
 
 Because each tile has one guest hart, software exposes overlap by issuing work
 to multiple arrays before joining:
@@ -243,22 +313,23 @@ publishes its completion status and any output words. SST resumes a QEMU hart
 through fd 41 after the required acceptance, queue-space, or blocking-store
 boundary. fd 43 never independently resumes execution.
 
-Every analog array has its own bidirectional link of exactly 256 bits. Each
-active array may advance one 32-byte beat in either direction during the same
-analog-link cycle:
+Every tile has exactly one bidirectional analog link of 256 bits, regardless
+of its array count. Exactly one active array may advance one 32-byte beat in
+one direction during an analog-link cycle:
 
 ```text
 one beat = 8 x 32-bit words = 256 bits = 32 bytes
 link cycles for M float32 elements in either direction = ceil(M / 8)
-maximum aggregate bandwidth with N active arrays = N * 256 bits per cycle
+maximum aggregate bandwidth with N active arrays = 256 bits per cycle
 ```
 
-There is no bandwidth arbitration between array links. For example, three
-active arrays may all transfer beat zero in cycle zero and beat one in cycle
-one. The common `analog_link_clock` parameter is initially intended to match
-the modeled tile clock. `analog_compute_latency_cycles` sets each array's
-modeled compute delay for either backend. Arrays schedule their compute
-completion independently, so their modeled compute intervals may overlap.
+Round-robin arbitration occurs at beat granularity. For example, three active
+arrays receive successive grants in cycles zero, one, and two, then the
+sequence repeats. The `analog_link_clock` parameter is initially intended to
+match the modeled tile clock. `analog_compute_latency_cycles` sets each
+array's modeled compute delay for either backend. Arrays schedule compute
+completion independently, so their modeled compute intervals may overlap
+each other and the shared-link transfer selected for that cycle.
 
 The operation transfer directions and lengths are:
 
@@ -268,12 +339,12 @@ The operation transfer directions and lengths are:
 | `LoadVector` | Tile to array | `columns` | `ceil(columns / 8)` |
 | `Compute` | None | `0` | `0` |
 | `StoreVector` | Array to tile | `rows` | `ceil(rows / 8)` |
-| `MoveVector` | Source array to tile, then tile to destination array | `rows` in each direction | `ceil(rows / 8)` beats on each participating link |
+| `MoveVector` | Source array to tile, then tile to destination array | `rows` in each direction | `2 * ceil(rows / 8)` shared-link cycles when uncontended |
 
 `MoveVector` requires `rows == columns`, as defined by the instruction
-contract. Its source and destination links are distinct and may stream
-simultaneously once a source beat is available; each link still transfers no
-more than one beat in its active direction per cycle.
+contract. It performs the source-to-tile transfer first and the
+tile-to-destination transfer second because both directions use the same
+half-duplex link.
 
 CrossSim computes the configured nonideal numerical result while SST continues
 to determine modeled data-transfer and accelerator latency. CrossSim host
@@ -288,7 +359,7 @@ The implemented tile parameters are:
 | `analog_array_columns` | Simulation-wide column count for every array | `100` |
 | `analog_backend` | Numerical backend: `native` or `crosssim` | `native` |
 | `crosssim_config` | Optional CrossSim JSON parameter path or built-in configuration name | Empty/default CrossSim parameters |
-| `analog_link_clock` | Common clock frequency for every independent bidirectional array link | `1GHz` |
+| `analog_link_clock` | Clock frequency for the tile-wide shared bidirectional 256-bit link | `1GHz` |
 | `analog_compute_latency_cycles` | Compute delay in link cycles | `100` |
 
 All tiles in one simulation must use the same `analog_array_count`,
@@ -300,11 +371,12 @@ SST simulation configurations should define these values once in a global
 parameter set and apply that set to every `mittens.tile`.
 
 The SST `AnalogDevice` implements bounded per-array queues and independent
-transfer, compute, and completion state. Every active array advances once per
-analog-link clock tick. `SetMatrix`, `LoadVector`, `StoreVector`, and
-`MoveVector` are metered at eight float32 words per link cycle, and compute
-completion is delayed by `analog_compute_latency_cycles`. The native and
-CrossSim backends use the same transport and timing state machine.
+compute and completion state. A round-robin arbiter selects at most one array
+transfer beat per analog-link clock tick. `SetMatrix`, `LoadVector`,
+`StoreVector`, and `MoveVector` are metered at eight float32 words per granted
+link cycle, and compute completion is delayed by
+`analog_compute_latency_cycles`. The native and CrossSim backends use the
+same transport and timing state machine.
 
 The analog path is local to a tile. It does not bypass the mesh. Tile-to-tile
 data remains a sequence of 32-bit architectural words through the mesh NIC
@@ -339,8 +411,10 @@ unconnected.
 
 The mesh NIC is a programmed-I/O device with an event-driven receive wait.
 Its legacy operation carries one 32-bit payload. Its deployment operation
-snapshots a bounded burst of up to 4096 words and presents it to Merlin as one
-16 KiB timing cell. Payloads are normally raw IEEE-754 representations of
+snapshots a bounded host burst of up to 4096 words and presents it to Merlin
+as a multiword request. The corrected deployment baseline serializes that
+request as one 32-bit timing cell per word; the host batching boundary is not
+a physical flit width. Payloads are normally raw IEEE-754 representations of
 32-bit floats; the NIC transports their bits without interpreting or
 converting them.
 
@@ -374,6 +448,7 @@ All NIC registers are little-endian, 32-bit registers and require aligned
 | `0x54` | `RX_DMA_COMPLETION_SOURCE` | RO | Source tile of the oldest completion |
 | `0x58` | `RX_DMA_COMPLETION_ROUTE_ID` | RO | Route ID of the oldest completion |
 | `0x5c` | `RX_DMA_COMPLETION_ACK` | WO | Consume the oldest completion |
+| `0x60` | `TX_WAIT` | WO | Yield until a deployment burst slot is available |
 
 `STATUS` has the following bit assignments:
 
@@ -409,7 +484,17 @@ For a bulk transfer, software waits for `TX_BURST_READY`, writes
 `TX_DESTINATION`, the 64-bit guest physical source address, and a word count,
 executes `fence rw, iorw`, and writes `TX_BURST_SUBMIT`. QEMU snapshots the
 specified words before the command completes. The snapshot cannot change if
-the guest subsequently reuses its source buffer.
+the guest subsequently reuses its source buffer. Every accepted burst then
+publishes a zero-wait `NIC_TRANSMIT` descriptor doorbell on fd 41. SST sees
+the descriptor at its exact simulated CPU timestamp and resumes QEMU
+immediately when another slot is available.
+
+If `TX_BURST_READY` is clear, software may perform independent work that does
+not overwrite any unsent route buffer. When no such work is safe, it writes
+`TX_WAIT`. QEMU rechecks the burst ring during that write; if it is still
+full, QEMU yields `NIC_TRANSMIT_WAIT` and SST holds the hart until a burst slot
+is free. Direct, non-managed QEMU returns from `TX_WAIT` and software
+continues polling.
 
 ### Receive behavior
 
@@ -448,10 +533,10 @@ DMA engine. The payload remains hidden from the guest until that engine
 completes. SST then authorizes the head burst, resumes a waiting hart, and
 QEMU copies its ordered 32-bit words into the registered guest range.
 
-A descriptor may span multiple 4096-word timing cells. Setup is charged only
-for its first burst. When exactly `RX_DMA_WORD_COUNT` words have been
-authorized and copied, QEMU places `{source, route_id}` in the completion
-queue. Software reads both completion fields and writes
+A descriptor may span multiple bounded 4096-word host bursts. Setup is
+charged only for its first burst. When exactly `RX_DMA_WORD_COUNT` words have
+been authorized and copied, QEMU places `{source, route_id}` in the
+completion queue. Software reads both completion fields and writes
 `RX_DMA_COMPLETION_ACK`; only then does the runtime mark the route and its
 local tensor resource ready.
 
@@ -492,12 +577,13 @@ multiple of 32 bits. Queue depth is from one through four and limits delivered
 fd-42 bursts waiting for local service, so a full destination applies normal
 SST network backpressure.
 
-This models the NIC-to-local-memory write port, but it is not yet a complete
-cache or scratchpad hierarchy: CPU accesses do not contend for this port,
-capacity is still the QEMU private-RAM allocation, and the final host memory
-copy is functional after the modeled transfer completes. The legacy per-word
-receive interface remains available and is the runtime fallback when
-receive-DMA callbacks are absent.
+This models the NIC-to-local-memory write port. When the optional private L1
+is enabled, CPU loads and stores are timed through a separate StandardMem
+path; CPU traffic does not yet contend with this DMA port and DMA writes do
+not update or invalidate L1 state. Capacity is still the QEMU private-RAM
+allocation, and the final host memory copy is functional after the modeled
+transfer completes. The legacy per-word receive interface remains available
+and is the runtime fallback when receive-DMA callbacks are absent.
 
 ### Task trace behavior
 
@@ -522,9 +608,10 @@ runtime task boundary
     -> immediate resume
 ```
 
-The synchronized bridge carries `task_id` and `execution_id` in reserved
-control-plane space. Platform v0.1 bridge version 2 adds these fields and the
-two task stop reasons without changing the 128-byte bridge size.
+The synchronized bridge carries `task_id` and `execution_id` in its fixed
+control-plane record. Platform v0.1 bridge version 5 also carries the optional
+memory address, size, and direction while preserving the 128-byte bridge
+size.
 
 ### Flow control and errors
 
@@ -851,12 +938,13 @@ link bandwidth = W * mesh_link_clock
 timing-cell cycles = ceil((network_cell_words * 32) / W)
 ```
 
-Timing cells are padded to a complete physical beat, and partial requests are
-conservatively padded to the configured cell size. The default remains a
-32-bit, 1 GHz, 4 GB/s link: a 4096-word cell costs 4096 cycles. A 64-bit link
-costs 2048 cycles for the same words. This changes only SST transport
-capacity; it does not change NIC registers, frame fields, tensor element
-representation, or QEMU/runtime ABIs.
+Timing cells are padded to a complete physical beat. The corrected default is
+one 32-bit word per timing cell on a 32-bit, 1 GHz, 4 GB/s link, so each word
+costs one cycle and a 512-word request costs 512 serialization cycles. A
+64-bit link transfers two such words per cycle. Router capacity is configured
+independently as 16,384 one-word cells, preserving the previous 64 KiB
+capacity. These settings do not change NIC registers, frame fields, tensor
+element representation, or QEMU/runtime ABIs.
 
 Platform v0.1 does not add a runtime header. No task ID, execution ID, input
 index, or payload length is transmitted before the data. The compiled tile ELF
@@ -1024,6 +1112,6 @@ transmitted over the mesh.
 ## Stability
 
 The base addresses and region sizes in this table are locked for Platform v0.1.
-The mesh NIC registers through offset `0x5c`, their access behavior, and their
+The mesh NIC registers through offset `0x60`, their access behavior, and their
 status bits are locked for Platform v0.1. The remainder of the NIC's 4 KiB
 region is reserved and reads as zero; writes to it are ignored.

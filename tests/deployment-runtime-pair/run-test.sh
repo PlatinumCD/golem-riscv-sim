@@ -54,6 +54,7 @@ common_flags=(
     -fno-stack-protector
     -ffunction-sections
     -fdata-sections
+    -g
     -O2
 )
 cxx_flags=(
@@ -123,25 +124,29 @@ grep -E "MITTENS_PROFILE tile=1 .*stop_nic_rx_dma_submit=1 .*rx_dma_transfers=1 
     echo "destination tile did not report the expected timed RX DMA" >&2
     exit 1
 }
-timing_line="$(
-    grep -F "scheduled RX DMA" "${SIMULATION_OUTPUT}" |
-        grep -F "words=300" |
-        head -n 1
-)"
-start_cycle="$(
-    sed -E 's/.*start=([0-9]+), complete=.*/\1/' \
-        <<< "${timing_line}"
-)"
-completion_cycle="$(
-    sed -E 's/.*complete=([0-9]+).*/\1/' \
-        <<< "${timing_line}"
-)"
-if [[ -z "${timing_line}" ||
-      ! "${start_cycle}" =~ ^[0-9]+$ ||
-      ! "${completion_cycle}" =~ ^[0-9]+$ ||
-      $((completion_cycle - start_cycle)) -ne RX_DMA_EXPECTED_CYCLES ]]; then
-    echo "300-word RX DMA did not take setup + ceil(words*32/width) = ${RX_DMA_EXPECTED_CYCLES} cycles" >&2
-    exit 1
+if [[ "${MITTENS_DEPLOYMENT_MEMORY_TOPOLOGY:-private_l1}" != \
+      "shared_l2" ]]; then
+    timing_line="$(
+        grep -F "scheduled RX DMA" "${SIMULATION_OUTPUT}" |
+            grep -F "words=300" |
+            head -n 1
+    )"
+    start_cycle="$(
+        sed -E 's/.*start=([0-9]+), complete=.*/\1/' \
+            <<< "${timing_line}"
+    )"
+    completion_cycle="$(
+        sed -E 's/.*complete=([0-9]+).*/\1/' \
+            <<< "${timing_line}"
+    )"
+    if [[ -z "${timing_line}" ||
+          ! "${start_cycle}" =~ ^[0-9]+$ ||
+          ! "${completion_cycle}" =~ ^[0-9]+$ ||
+          $((completion_cycle - start_cycle)) -ne \
+              RX_DMA_EXPECTED_CYCLES ]]; then
+        echo "300-word RX DMA did not take setup + ceil(words*32/width) = ${RX_DMA_EXPECTED_CYCLES} cycles" >&2
+        exit 1
+    fi
 fi
 awk -F, '
     $1 == "router_1_0" &&

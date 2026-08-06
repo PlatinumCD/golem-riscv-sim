@@ -205,8 +205,11 @@ extern "C" int tile_main() {
     uart_putc('\n');
 
     while (!runtime.complete() && !runtime.failed()) {
-        if (runtime.step() == DeploymentStep::WaitForReceive) {
+        const DeploymentStep step = runtime.step();
+        if (step == DeploymentStep::WaitForReceive) {
             mesh_nic::wait_for_receive();
+        } else if (step == DeploymentStep::WaitForTransmit) {
+            mesh_nic::wait_for_transmit();
         }
     }
 #if defined(MITTENS_RESNET18_RUNTIME_PROFILE)

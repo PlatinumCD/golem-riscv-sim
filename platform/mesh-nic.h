@@ -13,6 +13,7 @@ constexpr uint32_t kReceiveDmaSubmitReady = 1U << 0;
 constexpr uint32_t kReceiveDmaCompletionValid = 1U << 1;
 constexpr uint32_t kTaskTraceStart = 1;
 constexpr uint32_t kTaskTraceFinish = 2;
+constexpr uint32_t kMemoryInitializationComplete = 3;
 
 inline volatile uint32_t* registers() {
     return reinterpret_cast<volatile uint32_t*>(kBase);
@@ -140,6 +141,16 @@ inline void wait_for_receive() {
     __asm__ volatile("fence iorw, iorw" ::: "memory");
 }
 
+inline void wait_for_transmit() {
+    if ((status() & kTransmitBurstReady) != 0) {
+        return;
+    }
+
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
+    registers()[24] = 1;
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
+}
+
 inline void trace_task(
     uint32_t event,
     uint32_t task_id,
@@ -150,6 +161,12 @@ inline void trace_task(
     registers()[12] = static_cast<uint32_t>(execution_id >> 32);
     __asm__ volatile("fence iorw, iorw" ::: "memory");
     registers()[13] = event;
+    __asm__ volatile("fence iorw, iorw" ::: "memory");
+}
+
+inline void complete_memory_initialization() {
+    __asm__ volatile("fence rw, iorw" ::: "memory");
+    registers()[13] = kMemoryInitializationComplete;
     __asm__ volatile("fence iorw, iorw" ::: "memory");
 }
 

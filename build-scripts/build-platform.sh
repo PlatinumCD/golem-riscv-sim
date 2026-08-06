@@ -112,11 +112,59 @@ build_hello() {
         "${PROJECT_ROOT}/tests/hello/main.cpp"
 }
 
+build_riscv_vector() {
+    build_tile \
+        "${BUILD_ROOT}/tests/riscv-vector" \
+        riscv-vector \
+        "${PROJECT_ROOT}/tests/riscv-vector/main.cpp"
+}
+
+build_cpu_timing_validation() {
+    build_tile \
+        "${BUILD_ROOT}/tests/cpu-timing-validation" \
+        cpu-timing-validation \
+        "${PROJECT_ROOT}/tests/cpu-timing-validation/main.cpp"
+}
+
 build_runtime_library() {
     build_tile \
         "${BUILD_ROOT}/tests/runtime-library" \
         runtime-library \
         "${PROJECT_ROOT}/tests/runtime-library/main.cpp"
+}
+
+build_scratchpad_dma() {
+    build_tile \
+        "${BUILD_ROOT}/tests/scratchpad-dma" \
+        scratchpad-dma \
+        "${PROJECT_ROOT}/tests/scratchpad-dma/main.cpp"
+}
+
+build_memory_hierarchy_l1() {
+    build_tile \
+        "${BUILD_ROOT}/tests/memory-hierarchy-l1" \
+        memory-hierarchy-l1 \
+        "${PROJECT_ROOT}/tests/memory-hierarchy-l1/main.cpp"
+}
+
+build_memory_timing_validation() {
+    local output_dir="${BUILD_ROOT}/tests/memory-timing-validation"
+
+    build_tile \
+        "${output_dir}" \
+        memory-conflict \
+        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        -DMITTENS_MEMORY_TEST_CONFLICT=1
+    build_tile \
+        "${output_dir}" \
+        memory-capacity \
+        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        -DMITTENS_MEMORY_TEST_CAPACITY=1
+    build_tile \
+        "${output_dir}" \
+        memory-store-buffer \
+        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        -DMITTENS_MEMORY_TEST_STORE_BUFFER=1
 }
 
 build_analog_instructions() {
@@ -131,6 +179,21 @@ build_analog_ops() {
         "${BUILD_ROOT}/tests/analog-ops" \
         analog-ops \
         "${PROJECT_ROOT}/tests/analog-ops/main.cpp"
+}
+
+build_analog_timing_validation() {
+    local output_dir="${BUILD_ROOT}/tests/analog-timing-validation"
+
+    build_tile \
+        "${output_dir}" \
+        analog-timing-single \
+        "${PROJECT_ROOT}/tests/analog-timing-validation/main.cpp" \
+        -DMITTENS_ANALOG_TIMING_ARRAY_COUNT=1
+    build_tile \
+        "${output_dir}" \
+        analog-timing-dual \
+        "${PROJECT_ROOT}/tests/analog-timing-validation/main.cpp" \
+        -DMITTENS_ANALOG_TIMING_ARRAY_COUNT=2
 }
 
 build_analog_mesh_2x2() {
@@ -311,9 +374,15 @@ build_distributed_matvec_reverse() {
 case "${ACTION}" in
     all)
         build_hello
+        build_riscv_vector
+        build_cpu_timing_validation
         build_runtime_library
+        build_scratchpad_dma
+        build_memory_hierarchy_l1
+        build_memory_timing_validation
         build_analog_instructions
         build_analog_ops
+        build_analog_timing_validation
         build_analog_mesh_2x2
         build_analog_mesh_2x2_dual_array
         build_analog_route_2x2
@@ -323,9 +392,15 @@ case "${ACTION}" in
         build_distributed_matvec
         ;;
     hello) build_hello ;;
+    riscv-vector) build_riscv_vector ;;
+    cpu-timing-validation) build_cpu_timing_validation ;;
     runtime-library) build_runtime_library ;;
+    scratchpad-dma) build_scratchpad_dma ;;
+    memory-hierarchy-l1) build_memory_hierarchy_l1 ;;
+    memory-timing-validation) build_memory_timing_validation ;;
     analog-instructions) build_analog_instructions ;;
     analog-ops) build_analog_ops ;;
+    analog-timing-validation) build_analog_timing_validation ;;
     analog-mesh-2x2) build_analog_mesh_2x2 ;;
     analog-mesh-2x2-dual-array) build_analog_mesh_2x2_dual_array ;;
     analog-route-2x2) build_analog_route_2x2 ;;
@@ -335,7 +410,7 @@ case "${ACTION}" in
     distributed-matvec) build_distributed_matvec ;;
     distributed-matvec-reverse) build_distributed_matvec_reverse ;;
     *)
-        echo "usage: $0 [all|hello|runtime-library|analog-instructions|analog-ops|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
+        echo "usage: $0 [all|hello|riscv-vector|cpu-timing-validation|runtime-library|memory-hierarchy-l1|memory-timing-validation|analog-instructions|analog-ops|analog-timing-validation|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
         exit 2
         ;;
 esac

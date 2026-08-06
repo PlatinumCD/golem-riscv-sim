@@ -1,0 +1,350 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1450"
+     viewBox="0 0 1900 1450" role="img"
+     aria-labelledby="title description">
+  <title id="title">Golem Platform v0.1 single-tile UML component diagram</title>
+  <desc id="description">
+    Detailed component and data-flow diagram of one QEMU-backed Golem tile,
+    including the generated runtime, private memory, QEMU devices, shared
+    bridges, SST Mittens tile, receive DMA, analog arrays, SST timing, and the
+    local Merlin router connection.
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5"
+                    flood-color="#0f172a" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0891b2"/>
+    </marker>
+    <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/>
+    </marker>
+    <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "DejaVu Sans", Arial, sans-serif;
+               fill: #0f172a; }
+      .subtitle { font: 400 17px "DejaVu Sans", Arial, sans-serif;
+                  fill: #475569; }
+      .boundary { fill: #ffffff; stroke: #94a3b8; stroke-width: 2.5;
+                  stroke-dasharray: 10 7; }
+      .cluster { stroke-width: 2.5; rx: 18; filter: url(#shadow); }
+      .qemu-cluster { fill: #fff7ed; stroke: #ea580c; }
+      .bridge-cluster { fill: #ecfeff; stroke: #0891b2; }
+      .sst-cluster { fill: #eff6ff; stroke: #2563eb; }
+      .card { fill: #ffffff; stroke-width: 1.8; rx: 12; }
+      .runtime { stroke: #7c3aed; }
+      .memory { stroke: #d97706; }
+      .qemu { stroke: #ea580c; }
+      .bridge { stroke: #0891b2; }
+      .sst { stroke: #2563eb; }
+      .analog { stroke: #db2777; }
+      .network { stroke: #059669; }
+      .neutral { stroke: #64748b; }
+      .cluster-label { font: 700 22px "DejaVu Sans", Arial, sans-serif;
+                       fill: #0f172a; }
+      .stereotype { font: 600 13px "DejaVu Sans", Arial, sans-serif;
+                    fill: #64748b; letter-spacing: 0.5px; }
+      .card-title { font: 700 16px "DejaVu Sans", Arial, sans-serif;
+                    fill: #0f172a; }
+      .body { font: 400 13px "DejaVu Sans", Arial, sans-serif;
+              fill: #334155; }
+      .small { font: 400 12px "DejaVu Sans", Arial, sans-serif;
+               fill: #475569; }
+      .label { font: 600 12px "DejaVu Sans", Arial, sans-serif;
+               fill: #334155; }
+      .flow-blue { fill: none; stroke: #2563eb; stroke-width: 2.8;
+                   marker-end: url(#arrow-blue); }
+      .flow-cyan { fill: none; stroke: #0891b2; stroke-width: 2.8;
+                   marker-end: url(#arrow-cyan); }
+      .flow-violet { fill: none; stroke: #7c3aed; stroke-width: 2.8;
+                     marker-end: url(#arrow-violet); }
+      .flow-green { fill: none; stroke: #059669; stroke-width: 3;
+                    marker-end: url(#arrow-green); }
+      .flow-slate { fill: none; stroke: #475569; stroke-width: 2.4;
+                    marker-end: url(#arrow-slate); }
+      .control { fill: none; stroke: #64748b; stroke-width: 2.2;
+                 stroke-dasharray: 8 6; marker-end: url(#arrow-slate); }
+      .divider { stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+  <rect width="1900" height="1450" fill="#f8fafc"/>
+  <text x="55" y="58" class="title">
+    Golem Platform v0.1 — one simulated tile
+  </text>
+  <text x="55" y="88" class="subtitle">
+    UML component view · ownership, control, data movement, and modeled timing
+  </text>
+
+  <rect x="35" y="115" width="1830" height="1190" rx="24"
+        class="boundary"/>
+  <text x="62" y="148" class="stereotype">&lt;&lt;deployment node&gt;&gt;</text>
+  <text x="62" y="174" class="cluster-label">Tile N — private execution and accelerator endpoint</text>
+
+  <!-- QEMU process -->
+  <rect x="65" y="195" width="700" height="1035" class="cluster qemu-cluster"/>
+  <text x="92" y="230" class="stereotype">&lt;&lt;process&gt;&gt;</text>
+  <text x="92" y="257" class="cluster-label">QEMU riscv64 virt</text>
+  <text x="620" y="234" class="small">one process per tile</text>
+  <text x="620" y="252" class="small">no shared guest RAM</text>
+
+  <!-- Guest artifact/runtime -->
+  <rect x="95" y="285" width="640" height="215" class="card runtime"/>
+  <text x="115" y="311" class="stereotype">&lt;&lt;artifact&gt;&gt;</text>
+  <text x="115" y="335" class="card-title">Per-tile bare-metal RISC-V ELF</text>
+  <line x1="95" y1="350" x2="735" y2="350" class="divider"/>
+
+  <rect x="115" y="370" width="182" height="105" class="card runtime"/>
+  <text x="129" y="394" class="card-title">Generated tile ABI</text>
+  <text x="129" y="417" class="body">• boot-task table</text>
+  <text x="129" y="438" class="body">• dispatch-task table</text>
+  <text x="129" y="459" class="body">• routes + resources</text>
+
+  <rect x="316" y="370" width="196" height="105" class="card runtime"/>
+  <text x="330" y="394" class="card-title">DeploymentRuntime</text>
+  <text x="330" y="417" class="body">• boot matrices → READY</text>
+  <text x="330" y="438" class="body">• assemble input frames</text>
+  <text x="330" y="459" class="body">• dispatch and forward</text>
+
+  <rect x="531" y="370" width="181" height="105" class="card runtime"/>
+  <text x="545" y="394" class="card-title">Compiled tasks</text>
+  <text x="545" y="417" class="body">• scalar digital loops</text>
+  <text x="545" y="438" class="body">• Golem MVM shims</text>
+  <text x="545" y="459" class="body">• ranked memref ABI</text>
+
+  <!-- RAM and hart -->
+  <rect x="95" y="535" width="300" height="170" class="card memory"/>
+  <text x="115" y="561" class="stereotype">&lt;&lt;memory&gt;&gt;</text>
+  <text x="115" y="585" class="card-title">Tile-private RAM</text>
+  <line x1="95" y1="600" x2="395" y2="600" class="divider"/>
+  <text x="115" y="625" class="body">ELF loaded at 0x8000_0000</text>
+  <text x="115" y="647" class="body">code · constants · tensor buffers</text>
+  <text x="115" y="669" class="body">heap · 64 KiB stack</text>
+  <text x="115" y="691" class="body">16 MiB default; configurable</text>
+
+  <rect x="435" y="535" width="300" height="170" class="card qemu"/>
+  <text x="455" y="561" class="stereotype">&lt;&lt;processor&gt;&gt;</text>
+  <text x="455" y="585" class="card-title">One RISC-V hart</text>
+  <line x1="435" y1="600" x2="735" y2="600" class="divider"/>
+  <text x="455" y="625" class="body">RV64IMAFDC + xgolemanalog</text>
+  <text x="455" y="647" class="body">precise TCG instruction counting</text>
+  <text x="455" y="669" class="body">custom Golem instruction decoder</text>
+  <text x="455" y="691" class="body">timing: 1 instruction = 1 cycle</text>
+
+  <!-- QEMU devices -->
+  <text x="95" y="750" class="stereotype">&lt;&lt;device layer&gt;&gt;</text>
+
+  <rect x="95" y="770" width="190" height="185" class="card qemu"/>
+  <text x="112" y="796" class="card-title">mittens-sync</text>
+  <line x1="95" y1="810" x2="285" y2="810" class="divider"/>
+  <text x="112" y="835" class="body">grant / yield / resume</text>
+  <text x="112" y="857" class="body">instruction budget</text>
+  <text x="112" y="879" class="body">device stop reasons</text>
+  <text x="112" y="901" class="body">task start / finish</text>
+  <text x="112" y="932" class="small">control only · fd 41</text>
+
+  <rect x="315" y="770" width="190" height="185" class="card qemu"/>
+  <text x="332" y="796" class="card-title">mittens-nic</text>
+  <line x1="315" y1="810" x2="505" y2="810" class="divider"/>
+  <text x="332" y="835" class="body">MMIO 0x1001_0000</text>
+  <text x="332" y="857" class="body">TX destination + data</text>
+  <text x="332" y="879" class="body">RX source + data</text>
+  <text x="332" y="901" class="body">burst + DMA descriptor</text>
+  <text x="332" y="932" class="small">32-bit guest word ABI · fd 42</text>
+
+  <rect x="535" y="770" width="200" height="185" class="card qemu"/>
+  <text x="552" y="796" class="card-title">mittens-analog</text>
+  <line x1="535" y1="810" x2="735" y2="810" class="divider"/>
+  <text x="552" y="835" class="body">mvm.set · mvm.l</text>
+  <text x="552" y="857" class="body">mvm · mvm.s · mvm.mv</text>
+  <text x="552" y="879" class="body">snapshots guest operands</text>
+  <text x="552" y="901" class="body">stores completed outputs</text>
+  <text x="552" y="932" class="small">custom ISA path · fd 43</text>
+
+  <rect x="95" y="995" width="640" height="115" class="card neutral"/>
+  <text x="115" y="1021" class="card-title">Standard virt-machine devices</text>
+  <text x="115" y="1046" class="body">UART 0x1000_0000 · test/exit 0x0010_0000</text>
+  <text x="115" y="1069" class="body">CLINT and PLIC reserved by the platform; no operating system</text>
+  <text x="115" y="1092" class="small">CRT0 initializes stack/BSS, calls tile_main(), then exits through the finisher.</text>
+
+  <!-- Internal QEMU relationships -->
+  <path d="M 415 500 L 415 520 L 245 520 L 245 535" class="flow-violet"/>
+  <path d="M 415 500 L 415 520 L 585 520 L 585 535" class="flow-violet"/>
+  <text x="266" y="516" class="label">loads / stores / executes</text>
+  <path d="M 585 705 L 585 735 L 190 735 L 190 770" class="flow-slate"/>
+  <path d="M 585 705 L 585 742 L 410 742 L 410 770" class="flow-slate"/>
+  <path d="M 585 705 L 585 750 L 635 750 L 635 770" class="flow-violet"/>
+
+  <!-- Shared-memory bridge column -->
+  <rect x="805" y="195" width="365" height="1035" class="cluster bridge-cluster"/>
+  <text x="832" y="230" class="stereotype">&lt;&lt;shared host memory&gt;&gt;</text>
+  <text x="832" y="257" class="cluster-label">Per-tile bridge ABIs</text>
+  <text x="832" y="280" class="small">anonymous memfd · mmap · versioned C/C++ layout</text>
+
+  <rect x="835" y="330" width="305" height="210" class="card bridge"/>
+  <text x="855" y="356" class="stereotype">&lt;&lt;control bridge&gt;&gt;</text>
+  <text x="855" y="380" class="card-title">fd 41 · SyncTileBridge</text>
+  <line x1="835" y1="395" x2="1140" y2="395" class="divider"/>
+  <text x="855" y="420" class="body">128-byte grant/yield state</text>
+  <text x="855" y="442" class="body">epoch + instruction count</text>
+  <text x="855" y="464" class="body">stop reason + device metadata</text>
+  <text x="855" y="486" class="body">task ID + execution ID markers</text>
+  <text x="855" y="518" class="small">release/acquire atomics + futex wakeups</text>
+
+  <rect x="835" y="585" width="305" height="230" class="card bridge"/>
+  <text x="855" y="611" class="stereotype">&lt;&lt;data bridge&gt;&gt;</text>
+  <text x="855" y="635" class="card-title">fd 42 · NICTileBridge v4</text>
+  <line x1="835" y1="650" x2="1140" y2="650" class="divider"/>
+  <text x="855" y="675" class="body">TX/RX SPSC rings: 64 words</text>
+  <text x="855" y="697" class="body">four burst slots per direction</text>
+  <text x="855" y="719" class="body">up to 4096 × 32-bit words/burst</text>
+  <text x="855" y="741" class="body">source/destination endpoint IDs</text>
+  <text x="855" y="763" class="body">receive-DMA authorization counters</text>
+  <text x="855" y="795" class="small">data only; fd 41 controls hart progress</text>
+
+  <rect x="835" y="860" width="305" height="235" class="card bridge"/>
+  <text x="855" y="886" class="stereotype">&lt;&lt;accelerator bridge&gt;&gt;</text>
+  <text x="855" y="910" class="card-title">fd 43 · AnalogTileBridge</text>
+  <line x1="835" y1="925" x2="1140" y2="925" class="divider"/>
+  <text x="855" y="950" class="body">tile ID + common array geometry</text>
+  <text x="855" y="972" class="body">one channel per local array</text>
+  <text x="855" y="994" class="body">four ordered command slots/array</text>
+  <text x="855" y="1016" class="body">SUBMITTED → ACCEPTED → COMPLETED</text>
+  <text x="855" y="1038" class="body">32-byte / 256-bit data beats</text>
+  <text x="855" y="1070" class="small">independent array channels can overlap</text>
+
+  <!-- QEMU to bridge connections -->
+  <path d="M 285 865 L 300 865 L 300 970 L 780 970 L 780 435 L 835 435"
+        class="flow-cyan"/>
+  <path d="M 505 865 L 520 865 L 520 980 L 790 980 L 790 700 L 835 700"
+        class="flow-cyan"/>
+  <path d="M 735 865 L 800 865 L 800 978 L 835 978" class="flow-cyan"/>
+
+  <!-- SST Mittens tile -->
+  <rect x="1210" y="195" width="625" height="1035" class="cluster sst-cluster"/>
+  <text x="1238" y="230" class="stereotype">&lt;&lt;SST::Component&gt;&gt;</text>
+  <text x="1238" y="257" class="cluster-label">mittens.tile</text>
+  <text x="1675" y="234" class="small">owns QEMU + local timing</text>
+  <text x="1675" y="252" class="small">tile_id = N</text>
+
+  <rect x="1240" y="300" width="270" height="125" class="card sst"/>
+  <text x="1257" y="326" class="stereotype">&lt;&lt;composition&gt;&gt;</text>
+  <text x="1257" y="350" class="card-title">QemuProcess</text>
+  <text x="1257" y="376" class="body">spawn · monitor · reap</text>
+  <text x="1257" y="398" class="body">stage descriptors 41–43</text>
+
+  <rect x="1540" y="300" width="265" height="125" class="card sst"/>
+  <text x="1557" y="326" class="stereotype">&lt;&lt;timed control&gt;&gt;</text>
+  <text x="1557" y="350" class="card-title">CPU grant scheduler</text>
+  <text x="1557" y="376" class="body">cpu_clock + instruction quantum</text>
+  <text x="1557" y="398" class="body">schedule precise-icount boundary</text>
+
+  <rect x="1240" y="465" width="565" height="105" class="card sst"/>
+  <text x="1257" y="491" class="card-title">SharedSyncMemoryBridge</text>
+  <text x="1257" y="516" class="body">grantAndWait() · resumeAndWait() · stop reason capture</text>
+  <text x="1257" y="541" class="small">The only bridge allowed to grant or resume guest execution.</text>
+
+  <rect x="1240" y="615" width="270" height="145" class="card sst"/>
+  <text x="1257" y="641" class="card-title">SharedMemoryBridge</text>
+  <text x="1257" y="666" class="body">drain TX words/bursts</text>
+  <text x="1257" y="688" class="body">publish RX words/bursts</text>
+  <text x="1257" y="710" class="body">validate bridge protocol</text>
+  <text x="1257" y="739" class="small">functional NIC transfer</text>
+
+  <rect x="1540" y="615" width="265" height="145" class="card sst"/>
+  <text x="1557" y="641" class="card-title">ReceiveDMAEngine</text>
+  <text x="1557" y="666" class="body">setup + serialization cycles</text>
+  <text x="1557" y="688" class="body">default 256-bit @ 1 GHz</text>
+  <text x="1557" y="710" class="body">finite queue; one channel/tile</text>
+  <text x="1557" y="739" class="small">authorizes QEMU RAM write</text>
+
+  <rect x="1240" y="805" width="270" height="150" class="card analog"/>
+  <text x="1257" y="831" class="card-title">SharedAnalogMemoryBridge</text>
+  <text x="1257" y="856" class="body">accept ordered submissions</text>
+  <text x="1257" y="878" class="body">publish completion + output</text>
+  <text x="1257" y="900" class="body">validate channel/slot state</text>
+  <text x="1257" y="932" class="small">one mapped bridge per tile</text>
+
+  <rect x="1540" y="805" width="265" height="150" class="card analog"/>
+  <text x="1557" y="831" class="card-title">AnalogDevice</text>
+  <text x="1557" y="856" class="body">per-array four-entry queues</text>
+  <text x="1557" y="878" class="body">256-bit ingress / egress timing</text>
+  <text x="1557" y="900" class="body">compute + move phases</text>
+  <text x="1557" y="932" class="small">arrays operate independently</text>
+
+  <rect x="1240" y="1000" width="270" height="150" class="card network"/>
+  <text x="1257" y="1026" class="stereotype">&lt;&lt;subcomponent&gt;&gt;</text>
+  <text x="1257" y="1050" class="card-title">merlin.linkcontrol</text>
+  <text x="1257" y="1075" class="body">SimpleNetwork endpoint</text>
+  <text x="1257" y="1097" class="body">packet/burst → 32-bit flits</text>
+  <text x="1257" y="1119" class="body">buffering + backpressure</text>
+  <text x="1257" y="1141" class="small">local router port 4</text>
+
+  <rect x="1540" y="1000" width="265" height="150" class="card analog"/>
+  <text x="1557" y="1026" class="stereotype">&lt;&lt;strategy&gt;&gt;</text>
+  <text x="1557" y="1050" class="card-title">AnalogBackend</text>
+  <text x="1557" y="1075" class="body">unique instance per tile</text>
+  <text x="1557" y="1097" class="body">NativeAnalogBackend or</text>
+  <text x="1557" y="1119" class="body">CrossSimAnalogBackend</text>
+  <text x="1557" y="1141" class="small">A arrays × common rows × columns</text>
+
+  <!-- Bridge to SST -->
+  <path d="M 1140 435 L 1190 435 L 1190 518 L 1240 518" class="flow-cyan"/>
+  <path d="M 1140 700 L 1190 700 L 1190 688 L 1240 688" class="flow-cyan"/>
+  <path d="M 1140 978 L 1190 978 L 1190 880 L 1240 880" class="flow-cyan"/>
+  <text x="1150" y="420" class="label">events</text>
+  <text x="1148" y="684" class="label">words</text>
+  <text x="1142" y="965" class="label">array slots</text>
+
+  <!-- SST internal relationships -->
+  <path d="M 1522 465 L 1522 440 L 1672 440 L 1672 425" class="flow-blue"/>
+  <path d="M 1540 362 L 1510 362" class="control"/>
+  <path d="M 1510 688 L 1540 688" class="flow-blue"/>
+  <path d="M 1672 760 L 1672 780 L 1475 780 L 1475 760" class="flow-blue"/>
+  <text x="1485" y="778" class="label">completion authorization</text>
+  <path d="M 1375 760 L 1375 980 L 1375 1000" class="flow-green"/>
+  <text x="1388" y="979" class="label">SST requests</text>
+  <path d="M 1510 880 L 1540 880" class="flow-violet"/>
+  <path d="M 1672 955 L 1672 1000" class="flow-violet"/>
+
+  <!-- External authorities/endpoints -->
+  <rect x="410" y="1340" width="650" height="80" class="card sst"/>
+  <text x="430" y="1367" class="stereotype">&lt;&lt;time authority&gt;&gt;</text>
+  <text x="430" y="1393" class="card-title">SST Core discrete-event scheduler</text>
+  <text x="770" y="1393" class="body">orders CPU, DMA, analog, and network events</text>
+
+  <rect x="1240" y="1340" width="565" height="80" class="card network"/>
+  <text x="1260" y="1367" class="stereotype">&lt;&lt;network node&gt;&gt;</text>
+  <text x="1260" y="1393" class="card-title">Local merlin.hr_router</text>
+  <text x="1490" y="1393" class="body">N/E/S/W + local port · mesh routing</text>
+
+  <path d="M 735 1340 L 735 1270 L 1672 1270 L 1672 1150" class="control"/>
+  <text x="1010" y="1262" class="label">advances component clocks and callbacks</text>
+  <path d="M 1375 1150 L 1375 1310 L 1522 1310 L 1522 1340" class="flow-green"/>
+  <text x="1388" y="1298" class="label">local SST link · 10 ns configuration</text>
+
+  <!-- Legend -->
+  <rect x="65" y="1245" width="700" height="68" rx="12"
+        fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="90" y1="1271" x2="155" y2="1271" class="flow-cyan"/>
+  <text x="170" y="1276" class="small">functional data/control bridge</text>
+  <line x1="365" y1="1271" x2="430" y2="1271" class="control"/>
+  <text x="445" y="1276" class="small">timing/lifecycle authority</text>
+  <line x1="90" y1="1296" x2="155" y2="1296" class="flow-green"/>
+  <text x="170" y="1301" class="small">mesh packet path</text>
+  <line x1="365" y1="1296" x2="430" y2="1296" class="flow-violet"/>
+  <text x="445" y="1301" class="small">task/analog computation path</text>
+</svg>

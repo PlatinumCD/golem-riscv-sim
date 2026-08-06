@@ -11,6 +11,8 @@
 
 using SST::Mittens::AnalogCompletion;
 using SST::Mittens::AnalogDevice;
+using SST::Mittens::AnalogTraceEvent;
+using SST::Mittens::AnalogTracePhase;
 using SST::Mittens::NativeAnalogBackend;
 
 namespace {
@@ -155,52 +157,62 @@ int main()
     }
     assert(queueFullRejected);
 
-    // Both 81-word matrices use their own links and finish in 11 cycles,
-    // rather than serializing into 22 cycles.
-    tick(device, 10);
+    // Both 81-word matrices contend for one shared 256-bit link. Round-robin
+    // arbitration gives each array one eight-word beat every other cycle.
+    tick(device, 20);
     assert(!device.completionReadyForTicket(set0));
     assert(!device.completionReadyForTicket(set1));
     device.tick();
     requireSuccess(
         device, set0, MITTENS_ANALOG_OPERATION_SET_MATRIX, 0);
+    assert(!device.completionReadyForTicket(set1));
+    device.tick();
     requireSuccess(
         device, set1, MITTENS_ANALOG_OPERATION_SET_MATRIX, 1);
 
-    // Both nine-word input vectors overlap and finish in two cycles.
+    // The two nine-word inputs require four shared-link beats in total.
+    device.tick();
+    assert(!device.completionReadyForTicket(load0));
+    assert(!device.completionReadyForTicket(load1));
     device.tick();
     assert(!device.completionReadyForTicket(load0));
     assert(!device.completionReadyForTicket(load1));
     device.tick();
     requireSuccess(
         device, load0, MITTENS_ANALOG_OPERATION_LOAD_VECTOR, 0);
+    assert(!device.completionReadyForTicket(load1));
+    device.tick();
     requireSuccess(
         device, load1, MITTENS_ANALOG_OPERATION_LOAD_VECTOR, 1);
 
     // Independent four-cycle compute intervals overlap.
     tick(device, 3);
-    assert(!device.completionReadyForTicket(compute0));
+    requireSuccess(
+        device, compute0, MITTENS_ANALOG_OPERATION_COMPUTE, 0);
     assert(!device.completionReadyForTicket(compute1));
     device.tick();
     requireSuccess(
-        device, compute0, MITTENS_ANALOG_OPERATION_COMPUTE, 0);
-    requireSuccess(
         device, compute1, MITTENS_ANALOG_OPERATION_COMPUTE, 1);
 
-    // StoreVector is now timed in the reverse direction. Both nine-word
-    // outputs need two cycles and use their independent array links.
+    // Store 0 used the link while compute 1 consumed its final cycle. Both
+    // stores still share one link and consume four beats in total.
     device.tick();
     assert(!device.completionReadyForTicket(store0));
     assert(!device.completionReadyForTicket(store1));
     device.tick();
     requireOutput(device, store0, 0, 9.0F);
+    assert(!device.completionReadyForTicket(store1));
+    device.tick();
     requireOutput(device, store1, 1, 1.0F);
-    assert(device.elapsedCycles() == 19);
+    assert(device.elapsedCycles() == 33);
+    assert(device.linkBeats() == 30);
     assert(!device.busy());
 
-    // MoveVector reserves both links and transfers nine words in two cycles.
+    // MoveVector traverses the shared link in both directions: source array
+    // to tile, then tile to destination array.
     const std::uint64_t move01 = device.submit(
         command(MITTENS_ANALOG_OPERATION_MOVE_VECTOR, 0, 1));
-    device.tick();
+    tick(device, 3);
     assert(!device.completionReadyForTicket(move01));
     device.tick();
     requireSuccess(
@@ -215,9 +227,10 @@ int main()
         command(MITTENS_ANALOG_OPERATION_STORE_VECTOR, 0x80007000, 1));
     tick(device, 2);
     requireOutput(device, movedStore1, 1, 9.0F);
-    assert(device.elapsedCycles() == 27);
+    assert(device.elapsedCycles() == 43);
+    assert(device.linkBeats() == 36);
 
-    // Opposite directions on different array links progress concurrently.
+    // Opposite directions contend for the same half-duplex tile link.
     const std::uint64_t reverse0 = device.submit(
         command(MITTENS_ANALOG_OPERATION_STORE_VECTOR, 0x80008000, 0));
     const std::uint64_t forward1 = device.submit(
@@ -227,12 +240,18 @@ int main()
     assert(!device.completionReadyForTicket(reverse0));
     assert(!device.completionReadyForTicket(forward1));
     device.tick();
+    assert(!device.completionReadyForTicket(reverse0));
+    assert(!device.completionReadyForTicket(forward1));
+    device.tick();
     requireOutput(device, reverse0, 0, 9.0F);
+    assert(!device.completionReadyForTicket(forward1));
+    device.tick();
     requireSuccess(
         device, forward1, MITTENS_ANALOG_OPERATION_LOAD_VECTOR, 1);
-    assert(device.elapsedCycles() == 29);
+    assert(device.elapsedCycles() == 47);
+    assert(device.linkBeats() == 40);
 
-    // The same array link is half-duplex: its queued input does not advance
+    // The shared link is half-duplex: the queued input does not advance
     // during the two cycles consumed by the preceding output.
     const std::uint64_t reverseAgain0 = device.submit(
         command(MITTENS_ANALOG_OPERATION_STORE_VECTOR, 0x8000a000, 0));
@@ -247,7 +266,35 @@ int main()
     device.tick();
     requireSuccess(
         device, forward0, MITTENS_ANALOG_OPERATION_LOAD_VECTOR, 0);
-    assert(device.elapsedCycles() == 33);
+    assert(device.elapsedCycles() == 51);
+    assert(device.linkBeats() == 44);
+
+    device.setTraceEnabled(true);
+    const std::uint64_t tracedCompute = device.submit(
+        command(MITTENS_ANALOG_OPERATION_COMPUTE, 0, 0));
+    tick(device, 4);
+    requireSuccess(
+        device,
+        tracedCompute,
+        MITTENS_ANALOG_OPERATION_COMPUTE,
+        0);
+    const AnalogTracePhase expectedPhases[] = {
+        AnalogTracePhase::Submitted,
+        AnalogTracePhase::ComputeStart,
+        AnalogTracePhase::ComputeFinish,
+        AnalogTracePhase::Complete,
+    };
+    for (const AnalogTracePhase expected : expectedPhases) {
+        const std::optional<AnalogTraceEvent> event =
+            device.takeTraceEvent();
+        assert(event.has_value());
+        assert(event->ticket == tracedCompute);
+        assert(event->operation ==
+               MITTENS_ANALOG_OPERATION_COMPUTE);
+        assert(event->arrayId == 0);
+        assert(event->phase == expected);
+    }
+    assert(!device.takeTraceEvent().has_value());
 
     const std::uint64_t invalidArray = device.submit(
         command(MITTENS_ANALOG_OPERATION_COMPUTE, 99, 0));

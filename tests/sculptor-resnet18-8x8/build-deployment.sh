@@ -8,7 +8,7 @@ source "${COMMON_SCRIPT}"
 
 readonly LLVM="${INSTALL_ROOT}/llvm"
 readonly COMPILER_ARTIFACTS="${RESNET18_COMPILER_ARTIFACTS:-${BUILD_ROOT}/tests/sculptor-resnet18-8x8/compiler-3ed3bdb/cores}"
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/sculptor-resnet18-8x8/deployment"
+readonly OUTPUT_DIR="${MITTENS_RESNET18_OUTPUT_DIR:-${BUILD_ROOT}/tests/sculptor-resnet18-8x8/deployment}"
 readonly RUNTIME_INCLUDE="${INSTALL_ROOT}/runtime/include"
 readonly RUNTIME_LIBRARY="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
 readonly LINKER_SCRIPT="${TEST_DIR}/tile-64m.ld"
@@ -16,6 +16,12 @@ readonly CODEGEN_OPT_LEVEL="${MITTENS_RESNET18_OPT_LEVEL:--O3}"
 readonly CODEGEN_LTO="${MITTENS_RESNET18_LTO:-full}"
 readonly RUNTIME_PROFILE="${MITTENS_RESNET18_RUNTIME_PROFILE:-0}"
 readonly TASK_TRACE="${MITTENS_RESNET18_TASK_TRACE:-0}"
+readonly PROFILE_MODE="${MITTENS_RESNET18_PROFILE_MODE:-off}"
+readonly ACTIVE_CORE_MANIFEST="${OUTPUT_DIR}/active-cores.txt"
+readonly ROUTE_EXTRACTOR="${PROJECT_ROOT}/scripts/extract-deployment-routes.py"
+readonly ROUTE_MANIFEST="${OUTPUT_DIR}/deployment-routes.csv"
+readonly SOURCE_ROUTE_MANIFEST="${MITTENS_RESNET18_ROUTE_MANIFEST:-$(dirname -- "${COMPILER_ARTIFACTS}")/deployment-routes.csv}"
+readonly SOURCE_PARTITIONED_MLIR="${MITTENS_RESNET18_PARTITIONED_MLIR:-$(dirname -- "${COMPILER_ARTIFACTS}")/resnet18-partitioned.mlir}"
 
 case "${CODEGEN_OPT_LEVEL}" in
     -O0|-O1|-O2|-O3|-Os|-Oz) ;;
@@ -45,6 +51,13 @@ case "${TASK_TRACE}" in
         exit 2
         ;;
 esac
+case "${PROFILE_MODE}" in
+    off|summary|trace) ;;
+    *)
+        echo "MITTENS_RESNET18_PROFILE_MODE must be off, summary, or trace" >&2
+        exit 2
+        ;;
+esac
 
 optimization_flags=("${CODEGEN_OPT_LEVEL}")
 lto_flags=()
@@ -59,7 +72,7 @@ if [[ "${RUNTIME_PROFILE}" == "1" ]]; then
         "-DMITTENS_RESNET18_RUNTIME_PROFILE=1"
     )
 fi
-if [[ "${TASK_TRACE}" == "1" ]]; then
+if [[ "${TASK_TRACE}" == "1" || "${PROFILE_MODE}" == "trace" ]]; then
     profile_flags+=("-DMITTENS_RESNET18_TASK_TRACE=1")
 fi
 
@@ -70,7 +83,25 @@ for executable in \
     "${LLVM}/bin/llvm-readelf"; do
     require_executable "${executable}"
 done
-for core_id in {0..18}; do
+
+mapfile -t ACTIVE_CORE_IDS < <(
+    find "${COMPILER_ARTIFACTS}" \
+        -maxdepth 1 \
+        -type f \
+        -name 'core-*.o' \
+        -printf '%f\n' |
+        sed -n 's/^core-\([0-9][0-9]*\)\.o$/\1/p' |
+        sort -n -u
+)
+if [[ "${#ACTIVE_CORE_IDS[@]}" -eq 0 ]]; then
+    echo "no per-core compiler objects found in ${COMPILER_ARTIFACTS}" >&2
+    exit 1
+fi
+for core_id in "${ACTIVE_CORE_IDS[@]}"; do
+    if ((core_id < 0 || core_id >= 64)); then
+        echo "compiler object core ID ${core_id} is outside the 8x8 mesh" >&2
+        exit 1
+    fi
     require_file "${COMPILER_ARTIFACTS}/core-${core_id}.o"
 done
 
@@ -152,7 +183,7 @@ link_elf \
     "${OUTPUT_DIR}/platform-exit.o" \
     "${OUTPUT_DIR}/idle-main.o"
 
-for core_id in {0..18}; do
+for core_id in "${ACTIVE_CORE_IDS[@]}"; do
     elf="${OUTPUT_DIR}/core-${core_id}.elf"
     link_elf \
         "${elf}" \
@@ -180,4 +211,20 @@ for core_id in {0..18}; do
     echo "linked ResNet-18 deployment core ${core_id}: ${elf}"
 done
 
-echo "linked 19 active ResNet-18 tile ELFs and one idle ELF"
+manifest_tmp="${ACTIVE_CORE_MANIFEST}.tmp"
+printf '%s\n' "${ACTIVE_CORE_IDS[@]}" >"${manifest_tmp}"
+mv -- "${manifest_tmp}" "${ACTIVE_CORE_MANIFEST}"
+if [[ -f "${SOURCE_ROUTE_MANIFEST}" ]]; then
+    cp -- "${SOURCE_ROUTE_MANIFEST}" "${ROUTE_MANIFEST}"
+elif [[ -f "${SOURCE_PARTITIONED_MLIR}" ]]; then
+    require_executable "${ROUTE_EXTRACTOR}"
+    "${ROUTE_EXTRACTOR}" \
+        --mesh-width 8 \
+        "${SOURCE_PARTITIONED_MLIR}" \
+        "${ROUTE_MANIFEST}"
+else
+    rm -f -- "${ROUTE_MANIFEST}"
+fi
+
+echo "linked ${#ACTIVE_CORE_IDS[@]} active ResNet-18 tile ELFs and one idle ELF"
+echo "active ResNet-18 cores: ${ACTIVE_CORE_IDS[*]}"

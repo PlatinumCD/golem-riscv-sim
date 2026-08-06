@@ -14,6 +14,7 @@ struct QemuSyncEvent {
     std::uint64_t grantEpoch;
     std::uint64_t eventSequence;
     std::uint64_t instructionsExecuted;
+    std::uint64_t vectorInstructionsExecuted;
     std::uint32_t stopReason;
     std::uint32_t flags;
     std::uint32_t analogArrayId;
@@ -23,6 +24,49 @@ struct QemuSyncEvent {
     std::uint32_t receiveDMASource;
     std::uint32_t receiveDMARouteId;
     std::uint32_t receiveDMAWordCount;
+    std::uint64_t memoryAddress;
+    std::uint32_t memorySize;
+    std::uint32_t memoryFlags;
+    std::uint64_t memoryProgramCounter() const noexcept
+    {
+        return analogSequence;
+    }
+    std::uint64_t memoryReturnAddress() const noexcept
+    {
+        return executionId;
+    }
+    std::uint64_t memoryInitializationAccesses() const noexcept
+    {
+        return analogSequence;
+    }
+    std::uint64_t memoryInitializationReadBytes() const noexcept
+    {
+        return memoryAddress;
+    }
+    std::uint64_t memoryInitializationWriteBytes() const noexcept
+    {
+        return executionId;
+    }
+    std::uint32_t scratchpadDMADirection() const noexcept
+    {
+        return analogArrayId;
+    }
+    std::uint64_t scratchpadDMASource() const noexcept
+    {
+        return analogSequence;
+    }
+    std::uint64_t scratchpadDMADestination() const noexcept
+    {
+        return memoryAddress;
+    }
+    std::uint32_t scratchpadDMAByteCount() const noexcept
+    {
+        return memorySize;
+    }
+    std::uint32_t scratchpadDMATokenId() const noexcept
+    {
+        return taskId;
+    }
 };
 
 class SharedSyncMemoryBridge final

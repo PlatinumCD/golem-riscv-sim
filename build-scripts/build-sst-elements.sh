@@ -38,4 +38,5 @@ make -C "${BUILD}" install
 
 require_file "${INSTALL}/lib/sst-elements-library/libmittens.so"
 require_file "${INSTALL}/lib/sst-elements-library/libmerlin.so"
-echo "installed SST Elements (Merlin and Mittens): ${INSTALL}"
+require_file "${INSTALL}/lib/sst-elements-library/libmemHierarchy.so"
+echo "installed SST Elements (memHierarchy, Merlin, and Mittens): ${INSTALL}"

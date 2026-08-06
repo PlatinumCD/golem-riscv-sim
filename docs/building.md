@@ -110,8 +110,8 @@ third_party/cross-sim
     -> install/cross-sim/python
 ```
 
-The SST Elements preparation enables only the two elements required by
-Platform v0.1: `merlin` and `mittens`.
+The SST Elements preparation enables the three elements required by
+Platform v0.1: `memHierarchy`, `merlin`, and `mittens`.
 
 Override `GOLEM_BUILD_ROOT` or `GOLEM_INSTALL_ROOT` to place generated output
 outside the repository. Those paths must be consistent across the build and

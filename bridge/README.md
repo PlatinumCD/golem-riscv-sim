@@ -17,11 +17,25 @@ budget, QEMU runs under precise icount, and QEMU publishes a monotonic executed
 count plus a stop reason. Analog events also identify their array channel and
 slot sequence. Task trace events identify the global task ID and execution ID.
 Receive-DMA submission events identify the source tile, route ID, and exact
-word count.
+word count. Optional memory events identify a physical address, byte size, and
+read/write direction. They carry no guest data: QEMU remains the functional
+RAM owner while SST models completion through StandardMem.
+ABI version 6 introduced `MEMORY_INIT_COMPLETE`. Before that explicit guest
+marker, QEMU may aggregate initialization accesses into access, read-byte, and
+write-byte counters. It then performs one fd 41 handshake so SST can charge
+the complete initialization transfer without one host synchronization per
+access. After SST resumes the hart, ordinary `MEMORY_ACCESS` events use the
+detailed StandardMem path again.
+ABI version 7 adds the burst/scalar NIC event discriminator and
+`NIC_TRANSMIT_WAIT`. Every accepted deployment burst publishes a zero-wait
+`NIC_TRANSMIT` descriptor doorbell, so SST observes the exact CPU timestamp at
+which the fd 42 descriptor became visible. A guest that finds the burst ring
+full writes `TX_WAIT`; SST holds that hart only until a burst slot is free.
 Release/acquire atomics publish state transitions; shared futex wakeups
 implement the fd 41 grant/yield handshake without polling.
 `GUEST_EXIT` is a terminal event: QEMU publishes it before normal finisher
 shutdown, and SST schedules and reaps the child at that instruction boundary.
+The current synchronization ABI is version 7 and remains exactly 128 bytes.
 
 [`include/mittens/NICTileBridge.h`](include/mittens/NICTileBridge.h) is the versioned
 shared-memory contract between one QEMU `mittens-nic` device and one SST
@@ -39,6 +53,9 @@ beat, and a geometry-sized shared-memory layout. Every array owns an
 independent channel with four command slots. QEMU publishes slot data; SST
 accepts commands, meters their transfer and compute work, and publishes
 completion. Acceptance and completion waits are controlled through fd 41.
+The per-array channels preserve ordering and queue ownership; they do not
+represent separate physical links. SST arbitrates their payload transfers
+over one shared 256-bit link per tile.
 
 Analog-enabled tiles duplicate this second `memfd` to descriptor 43 and pass
 `mittens-analog.bridge-fd=43` to QEMU. Its 64-byte header records tile ID,
@@ -174,16 +191,22 @@ compiler atomic builtins so the C and C++ consumers share identical ordering
 semantics.
 
 The fd 42 data bridge does not contain locks, timestamps, or CPU instruction
-counts. QEMU yields `NIC_TRANSMIT` through fd 41 when either transmit ring
-fills and yields `NIC_RECEIVE_WAIT` through fd 41 when an `RX_WAIT` write
-rechecks both receive rings and finds them empty. fd 42 never wakes a hart by
-itself: Mittens observes delivered fd 42 data and performs the matching fd 41
-resume. Receive-DMA descriptor submission is also an fd-41 event. SST
-schedules eligible receive bursts on its local DMA clock and increments the
+counts. Every accepted deployment burst therefore publishes a zero-wait
+`NIC_TRANSMIT` descriptor doorbell through fd 41. SST services fd 42 at that
+exact CPU boundary and immediately resumes QEMU unless the four-entry burst
+ring remains full. A `TX_WAIT` write closes the status-read/wait race and
+holds the hart until SST has freed the requested ring type. The legacy scalar
+path continues to yield when its 64-entry ring becomes full.
+
+QEMU yields `NIC_RECEIVE_WAIT` through fd 41 when an `RX_WAIT` write rechecks
+both receive rings and finds them empty. fd 42 never wakes a hart by itself:
+Mittens observes delivered fd 42 data and performs the matching fd 41 resume.
+Receive-DMA descriptor submission is also an fd-41 event. SST schedules
+eligible receive bursts on its local DMA clock and increments the
 authorization write index only at completion; QEMU consumes the matching
 authorization before releasing that burst slot. SST services a reported
-boundary only after its instruction count reaches the scheduled CPU cycle. See
-[`../docs/timing-model.md`](../docs/timing-model.md).
+boundary only after its instruction count reaches the scheduled CPU cycle.
+See [`../docs/timing-model.md`](../docs/timing-model.md).
 
 ## Protocol errors
 

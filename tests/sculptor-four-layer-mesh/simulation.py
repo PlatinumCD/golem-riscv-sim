@@ -19,6 +19,7 @@ images = [
     required_path(f"MITTENS_SCULPTOR_FOUR_LAYER_CORE{core_id}_ELF")
     for core_id in range(4)
 ]
+memory_backend = os.environ.get("MITTENS_MEMORY_BACKEND", "native")
 
 build_mesh(
     width=2,
@@ -27,12 +28,13 @@ build_mesh(
     images=images,
     statistics_path=required_path("MITTENS_SCULPTOR_FOUR_LAYER_STATS"),
     verbosity=int(os.environ.get("MITTENS_SCULPTOR_VERBOSITY", "0")),
+    memory_backend=memory_backend,
     tile_params={
         "analog_array_count": 1,
         "analog_array_rows": 8,
         "analog_array_columns": 8,
         "analog_backend": "native",
         "analog_link_clock": "1GHz",
-        "analog_compute_latency_cycles": 8,
+        "analog_compute_latency_cycles": 100,
     },
 )

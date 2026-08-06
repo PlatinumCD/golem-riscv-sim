@@ -131,6 +131,7 @@ std::uint64_t SharedSyncMemoryBridge::grant(
     mapping_->grant_epoch = epoch;
     mapping_->instruction_budget = instructionBudget;
     mapping_->instructions_executed = 0;
+    mapping_->vector_instructions_executed = 0;
     mapping_->stop_reason = MITTENS_SYNC_STOP_NONE;
     mapping_->event_flags = MITTENS_SYNC_EVENT_FLAG_NONE;
     mapping_->analog_array_id = UINT32_MAX;
@@ -140,6 +141,9 @@ std::uint64_t SharedSyncMemoryBridge::grant(
     mapping_->rx_dma_source = UINT32_MAX;
     mapping_->rx_dma_route_id = UINT32_MAX;
     mapping_->rx_dma_word_count = 0;
+    mapping_->memory_address = 0;
+    mapping_->memory_size = 0;
+    mapping_->memory_flags = MITTENS_SYNC_MEMORY_FLAG_NONE;
     mittens_sync_store_release(
         &mapping_->state, MITTENS_SYNC_STATE_GRANTED);
     wake(&mapping_->state);
@@ -163,6 +167,7 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             mapping_->grant_epoch,
             mapping_->event_sequence,
             mapping_->instructions_executed,
+            mapping_->vector_instructions_executed,
             mapping_->stop_reason,
             mapping_->event_flags,
             mapping_->analog_array_id,
@@ -172,6 +177,9 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             mapping_->rx_dma_source,
             mapping_->rx_dma_route_id,
             mapping_->rx_dma_word_count,
+            mapping_->memory_address,
+            mapping_->memory_size,
+            mapping_->memory_flags,
         };
     }
 
@@ -190,6 +198,7 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         mapping_->grant_epoch,
         mapping_->event_sequence,
         mapping_->instructions_executed,
+        mapping_->vector_instructions_executed,
         mapping_->stop_reason,
         mapping_->event_flags,
         mapping_->analog_array_id,
@@ -199,6 +208,9 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         mapping_->rx_dma_source,
         mapping_->rx_dma_route_id,
         mapping_->rx_dma_word_count,
+        mapping_->memory_address,
+        mapping_->memory_size,
+        mapping_->memory_flags,
     };
 }
 

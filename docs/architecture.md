@@ -3,6 +3,18 @@
 This document describes how the compiler, bare-metal tile software, QEMU,
 Mittens, and SST Merlin form the current Platform v0.1 system.
 
+## Architecture diagrams
+
+The editable vector diagrams in [`diagrams/`](diagrams/) provide two
+implementation-level views:
+
+- [one detailed Golem tile](diagrams/single-tile-uml.svg), including its
+  runtime, QEMU devices, fd bridges, SST component, receive DMA, and analog
+  backend; and
+- [the routed tile mesh](diagrams/mesh-topology.svg), including each local
+  Merlin endpoint, five-port router, physical links, and an example Manhattan
+  route.
+
 ## End-to-end system
 
 The complete verified application path is:
@@ -47,13 +59,13 @@ QEMU riscv64 virt machine
         | fd 41 control, fd 42 NIC data, fd 43 analog data
         v
 SST mittens.tile
-        |
-        | SST::Interfaces::SimpleNetwork
-        v
-merlin.linkcontrol
-        |
-        v
-merlin.hr_router <----> neighboring Merlin routers
+   |                         |
+   | StandardMem (optional)  | SST::Interfaces::SimpleNetwork
+   v                         v
+private memHierarchy L1      merlin.linkcontrol
+   |                         |
+   v                         v
+timing memory controller     merlin.hr_router <----> neighboring routers
 ```
 
 The guest-visible platform contract is defined in
@@ -69,7 +81,8 @@ detail documented in [`../bridge/README.md`](../bridge/README.md).
 | `mittens-nic` | Guest MMIO state and QEMU side of the shared queues | Destination routing |
 | `mittens-analog` | Guest-memory snapshots and QEMU side of the per-array queues | Numerical MVM or simulated latency |
 | `mittens-sync` | QEMU side of instruction grants, device-boundary yields, and task markers | CPU timing policy |
-| `mittens.tile` | QEMU lifecycle, fd 41 control, NIC and analog bridges, SST endpoint conversion, CPU and analog timing, optional task timestamps | RISC-V instruction semantics |
+| `mittens.tile` | QEMU lifecycle, fd 41 control, NIC, analog, and optional StandardMem bridges, CPU, memory, and analog timing, optional task timestamps | RISC-V instruction semantics or guest data values |
+| SST memHierarchy | Optional private L1 and lower-memory access timing | Functional guest RAM contents |
 | Merlin | Router topology, buffering, link bandwidth, latency, backpressure | Guest instruction timing |
 | SST Core | Discrete-event schedule, component lifecycle, and QEMU execution authority | RISC-V instruction semantics |
 
@@ -120,8 +133,8 @@ The QEMU patches register the synchronization, NIC, and analog devices, attach
 them to the RISC-V `virt` machine, connect fd 41 to precise TCG icount, and add
 the five Golem instruction patterns and their translation helper. The NIC is
 guest-visible at `0x10010000`; the synchronization and analog devices have no
-guest MMIO range. The SST Elements preparation enables only Merlin and
-Mittens.
+guest MMIO range. The SST Elements preparation enables memHierarchy, Merlin,
+and Mittens.
 
 Bare-metal tests are linked separately for each tile. This permits a tile ELF
 to contain only its local computation and runtime state; routine code is not
@@ -138,26 +151,32 @@ sequence:
 4. Create and map the geometry-sized analog `memfd`.
 5. Stage the close-on-exec bridge descriptors and duplicate them to 41, 42,
    and 43 in the QEMU child without descriptor-remapping collisions.
-6. Launch QEMU with precise icount and all enabled bridge properties.
+6. Launch QEMU with RVV 1.0, the configured `VLEN` and `ELEN`, precise icount,
+   and all enabled bridge properties.
 7. Grant instruction quanta and schedule returned instruction counts on
    `cpu_clock`.
-8. Process NIC, analog, and optional task-marker boundaries only after their
+8. When `memory_backend=memhierarchy`, convert each RAM data access into one
+   StandardMem request and hold QEMU until the private L1 path responds.
+9. Process NIC, analog, and optional task-marker boundaries only after their
    fd 41 yield reaches its scheduled SST cycle.
-9. Advance active analog arrays on `analog_link_clock`.
-10. Schedule the guest's normal finisher write as an fd 41 `GUEST_EXIT`
+10. Arbitrate one shared analog-link beat and advance every active array
+   compute engine on `analog_link_clock`.
+11. Schedule the guest's normal finisher write as an fd 41 `GUEST_EXIT`
     boundary, then reap QEMU at that simulated cycle.
-11. Treat a nonzero or signal-based QEMU exit as a fatal simulation error.
-12. Terminate and reap any surviving child during cleanup.
+12. Treat a nonzero or signal-based QEMU exit as a fatal simulation error.
+13. Terminate and reap any surviving child during cleanup.
 
 The effective QEMU command for an attached tile is:
 
 ```text
 qemu-system-riscv64 \
   -machine virt -smp 1 -m 16M \
+  -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64 \
   -bios none -kernel <tile.elf> \
   -display none -monitor none -serial stdio -no-reboot \
   -icount shift=0,sleep=off \
   -global mittens-sync.bridge-fd=41 \
+  -global mittens-sync.memory-timing=<on|off> \
   -global mittens-nic.bridge-fd=42 \
   -global mittens-analog.bridge-fd=43
 ```
@@ -165,6 +184,18 @@ qemu-system-riscv64 \
 The child maps the bridge during device realization, validates its ABI header,
 and closes its copy of the file descriptor after `mmap`. Both processes retain
 their mappings until tile teardown.
+
+Managed tiles enable the standard RISC-V Vector Extension by default.
+`riscv_vector_enabled`, `riscv_vector_length_bits`, and
+`riscv_vector_element_bits` control the QEMU CPU configuration. Platform
+startup enables `mstatus.VS` before entering `tile_main`. Vector instructions
+remain part of the functional CPU model. QEMU reports total and vector retired
+counts through fd 41; SST applies the configured scalar issue width while
+limiting vector issue to one per `cpu_clock` cycle. The model does not yet
+charge active-vector-length-dependent latency. A conforming Platform v0.1
+tile uses RVV 1.0, `VLEN=256`, and `ELEN=64`; other parameter values are
+experimental processor configurations. The complete normative contract is
+[`vector-architecture.md`](vector-architecture.md).
 
 ## Packet data path
 
@@ -174,9 +205,10 @@ A guest transmission follows this sequence:
 2. It writes the final endpoint ID to `TX_DESTINATION`.
 3. It writes a 32-bit payload to `TX_DATA`, which is the transmit doorbell.
 4. QEMU appends `{destination, payload}` to fd 42.
-5. QEMU yields `NIC_TRANSMIT` through fd 41 when the 64-entry transmit ring
-   fills. A partial ring is serviced at the next fd-41 synchronization
-   boundary.
+5. On the legacy scalar path, QEMU yields `NIC_TRANSMIT` through fd 41 when
+   the 64-entry transmit ring fills. Deployment bursts instead publish a
+   zero-wait descriptor doorbell for every accepted burst, so partial burst
+   rings are visible at their exact CPU submission timestamps.
 6. SST advances to that CPU boundary and `mittens.tile` drains the ring.
 7. It creates one 32-bit SST network request for every bridge entry. Each
    request carries endpoint IDs and a `PacketEvent` containing one 32-bit
@@ -198,9 +230,13 @@ without combining two tensor transfers.
 
 Deployment frames take a bounded bulk path instead. The runtime submits the
 five-word frame header and tensor payload in chunks of at most 4096 words.
-QEMU snapshots each chunk into fd 42 and Mittens creates one multi-flit Merlin
-request. Merlin carries ordered 32-bit words at the physical width configured
-by the SST topology. At the destination, guest software consumes the
+QEMU snapshots each chunk into fd 42 and yields a zero-wait fd-41 descriptor
+doorbell. Mittens services the descriptor at that exact simulated CPU
+timestamp and creates one multi-flit Merlin request. If no burst slot was
+available, the runtime writes `TX_WAIT`; QEMU rechecks the ring in the same
+MMIO operation, then SST holds the hart only until a slot is free. Merlin
+carries ordered 32-bit words at the physical width configured by the SST
+topology. At the destination, guest software consumes the
 five-word frame header through `RX_SOURCE`/`RX_DATA`, validates it, and
 registers the payload's local tensor address with the NIC. QEMU reports that
 descriptor through fd 41. Mittens schedules delivered fd-42 payload bursts on
@@ -286,9 +322,13 @@ of the mesh NIC and its `NICTileBridge`. The complete path through one tile is:
 |  |  ordered queue 0       ordered queue 1          ordered queue N         |  |
 |  |  depth 4               depth 4                  depth 4                 |  |
 |  |       |                     |                        |                  |  |
-|  |       v                     v                        v                  |  |
-|  |  256-bit link 0        256-bit link 1           256-bit link N          |  |
-|  |  bidirectional         bidirectional            bidirectional           |  |
+|  |       +---------------------+------------------------+                  |  |
+|  |                             |                                           |  |
+|  |                    round-robin link arbiter                             |  |
+|  |                             |                                           |  |
+|  |              one shared bidirectional 256-bit link                      |  |
+|  |                             |                                           |  |
+|  |       +---------------------+------------------------+                  |  |
 |  |       |                     |                        |                  |  |
 |  |       v                     v                        v                  |  |
 |  |  +---------+           +---------+              +---------+             |  |
@@ -328,35 +368,39 @@ tile. Every CrossSim backend is independently owned by its tile and contains
 one distinct CrossSim `AnalogCore` per array, ensuring that array state is
 never shared between arrays or tiles.
 
-Every analog array has its own tile-to-array channel and its own bidirectional
-256-bit link:
+Every analog array has its own ordered command channel, while all payload
+movement shares one bidirectional 256-bit link:
 
 ```text
-                        +-- array channel 0 -- 256-bit link <--> array 0
-QEMU <-> Analog bridge +-- array channel 1 -- 256-bit link <--> array 1
-                        +-- array channel 2 -- 256-bit link <--> array 2
-                        `-- ...
+                        +-- array channel 0 --+
+QEMU <-> Analog bridge +-- array channel 1 --+--> round-robin arbiter
+                        +-- array channel 2 --+             |
+                        `-- ...                             |
+                                                 shared 256-bit link
+                                                           |
+                                              +------------+------------+
+                                              |            |            |
+                                           array 0       array 1      array 2
 ```
 
-The channels use the same configured clock frequency but have independent
-bandwidth and transfer state. There is no tile-wide analog-link arbiter. If
-`N` arrays are active, all `N` links may each advance one 256-bit beat in
-either direction during the same simulated cycle, giving a maximum aggregate
-link bandwidth of `N * 256` bits per cycle. One array link carries at most one
-beat total per cycle; Platform v0.1 does not model simultaneous full-duplex
-transfer on one array.
+The per-array channels preserve command ordering and queue backpressure, but
+they do not provide independent bandwidth. The arbiter selects one active
+channel per link cycle and advances one 256-bit beat in one direction. It
+rotates to the next array after each beat to prevent starvation. Aggregate
+tile analog-link bandwidth remains 256 bits per cycle for any array count.
 
-For example, independent links may overlap as follows:
+For example, three transfers and three compute engines may overlap as follows:
 
 ```text
 Analog-link cycle          0       1       2       3       4       5
 
-Array 0 link             [SET]   [SET]   [LOAD]  [MVM]   [MVM]   [STORE]
-Array 1 link             [SET]   [SET]   [LOAD]  [MVM]   [MVM]   [STORE]
-Array 2 link             [LOAD]  [MVM]   [MVM]   [MVM]   [STORE] [IDLE]
-                           ^       ^       ^       ^       ^       ^
-                           Every active array may advance one independent
-                           256-bit beat during the same SST cycle.
+Shared link grant        [A0]    [A1]    [A2]    [A0]    [A1]    [A2]
+Array 0 compute          [MVM]   [MVM]   [MVM]   [MVM]   [DONE]  [IDLE]
+Array 1 compute          [IDLE]  [MVM]   [MVM]   [MVM]   [MVM]   [DONE]
+Array 2 compute          [MVM]   [MVM]   [DONE]  [IDLE]  [IDLE]  [IDLE]
+                           ^
+                           At most one 256-bit transfer beat per tile cycle;
+                           array-local compute advances independently.
 ```
 
 QEMU decodes each custom analog instruction and submits a command containing
@@ -376,8 +420,9 @@ The initially agreed operations are:
 | `StoreVector` | Destination address | Local array ID |
 | `MoveVector` | Source array ID | Destination array ID |
 
-Commands are ordered within each array and may progress independently across
-different arrays. QEMU snapshots guest memory for `SetMatrix` and
+Commands are ordered within each array and compute may progress independently
+across different arrays. Their transfers contend for the shared link. QEMU
+snapshots guest memory for `SetMatrix` and
 `LoadVector`, submits the command to the selected array channel, and may
 retire the instruction once that command is accepted. `Compute` is likewise
 asynchronous after acceptance. A full per-array queue applies backpressure
@@ -394,24 +439,23 @@ SST.
 
 Because QEMU owns private guest RAM, an SST `AnalogDevice` cannot dereference
 a guest address directly. `AnalogTileBridge` therefore provides one
-array-indexed command stream and local bulk-data path per array. QEMU copies
-matrix and vector contents between guest memory and those paths; the SST side
-meters their delivery over the corresponding array links. Eagerly snapshotting
-input memory before an instruction retires ensures later guest writes cannot
-change an already submitted operation.
+array-indexed command stream and local bulk-data queue per array. QEMU copies
+matrix and vector contents between guest memory and those queues; the SST side
+meters every payload over the shared tile link. Eagerly snapshotting input
+memory before an instruction retires ensures later guest writes cannot change
+an already submitted operation.
 
-Each array's bidirectional data path transfers at most one 256-bit beat per
-analog-link cycle. One beat is 32 bytes, or eight 32-bit tensor elements. A
-transfer containing `M` float32 elements on one array consequently requires
-`ceil(M / 8)` link cycles in either direction. The final beat may contain
-unused words. `StoreVector` returns `rows` float32 values and therefore takes
-`ceil(rows / 8)` array-to-tile link cycles. Transfers for other arrays consume
-their own links and do not increase that latency.
+The shared bidirectional data path transfers at most one 256-bit beat per
+analog-link cycle. One beat is 32 bytes, or eight 32-bit tensor elements. An
+uncontended transfer containing `M` float32 elements consequently requires
+`ceil(M / 8)` granted link cycles in either direction. The final beat may
+contain unused words. `StoreVector` returns `rows` float32 values and therefore
+needs `ceil(rows / 8)` grants; other arrays may add arbitration delay.
 
 This 256-bit local path does not change the mesh word contract. Communication
 between different tiles remains an ordered stream of 32-bit words. The SST
 mesh width controls how many of those words a physical link can carry per
-cycle, independently of each array's fixed 256-bit local link.
+cycle, independently of the tile's fixed 256-bit local analog link.
 
 CrossSim determines the numerical result, including configured analog
 nonidealities. Its host execution duration is not simulated hardware time.
@@ -435,7 +479,7 @@ QEMU                                      SST
 ------------------------------------      ------------------------------------
 Executes RISC-V instructions              Models accelerator time
 Owns private guest RAM                    Owns array scheduling
-Snapshots command inputs                  Advances independent 256-bit links
+Snapshots command inputs                  Arbitrates one shared 256-bit link
 Blocks on mvm.s                           Applies configured compute latency
 Copies returned output                    Runs the Native or CrossSim MVM
 ```
@@ -461,13 +505,17 @@ The reusable test topology is implemented in
 - Platform v0.1 uses an explicit `RX_WAIT` doorbell rather than NIC
   interrupts. A waiting hart resumes when delivered data becomes visible.
 - The legacy NIC path carries one payload per transaction. The deployment path
-  supports bounded 4096-word host transactions represented by 16 KiB Merlin
-  timing cells. At the default 32-bit, 1 GHz mesh width, each cell is charged
-  4096 link cycles; wider SST configurations reduce that serialization time.
+  supports bounded 4096-word host transactions, but Merlin serializes them as
+  one-word physical timing cells. At the default 32-bit, 1 GHz mesh width,
+  each cell costs one cycle while the independent router buffer retains
+  64 KiB of capacity.
 - There is no operating system, dynamic loader, pthread runtime, or OpenMP
   runtime in a tile.
-- The CPU timing policy is one retired instruction per cycle. Pipeline, cache,
-  TLB, and memory-system timing are not yet modeled.
+- The CPU issue model supports scalar widths 1, 2, and 4 while preserving at
+  most one vector issue per cycle. Pipeline dependencies, instruction-cache
+  timing, TLB timing, cache/DMA coherence, nonblocking memory accesses, and
+  vector operation latency are not yet modeled. The optional memHierarchy
+  backend currently provides a blocking private data-L1 path only.
 - UART output is functional and is not assigned detailed device latency.
 
 These limits determine which timing measurements are meaningful. See

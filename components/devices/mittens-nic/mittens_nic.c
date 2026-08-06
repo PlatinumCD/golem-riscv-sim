@@ -44,6 +44,7 @@
 #define MITTENS_NIC_RX_DMA_COMPLETION_SOURCE 0x54
 #define MITTENS_NIC_RX_DMA_COMPLETION_ROUTE_ID 0x58
 #define MITTENS_NIC_RX_DMA_COMPLETION_ACK 0x5c
+#define MITTENS_NIC_TX_WAIT 0x60
 
 #define MITTENS_NIC_STATUS_TX_READY (1U << 0)
 #define MITTENS_NIC_STATUS_RX_VALID (1U << 1)
@@ -55,6 +56,7 @@
 
 #define MITTENS_NIC_TRACE_EVENT_START 1
 #define MITTENS_NIC_TRACE_EVENT_FINISH 2
+#define MITTENS_NIC_TRACE_EVENT_MEMORY_INIT_COMPLETE 3
 
 typedef struct MittensNICReceiveDMA {
     bool active;
@@ -155,6 +157,25 @@ static bool mittens_nic_receive_dma_completion_has_space(
            MITTENS_NIC_RX_DMA_CAPACITY;
 }
 
+static bool mittens_nic_receive_dma_completion_pending_for_source(
+    const MittensNICState *s,
+    uint32_t source)
+{
+    uint32_t index;
+
+    for (index = s->receive_dma_completion_read;
+         index != s->receive_dma_completion_write;
+         ++index) {
+        const MittensNICReceiveDMACompletion *completion =
+            &s->receive_dma_completions[
+                index % MITTENS_NIC_RX_DMA_CAPACITY];
+        if (completion->source == source) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void mittens_nic_complete_receive_dma(
     MittensNICState *s,
     MittensNICReceiveDMA *descriptor)
@@ -185,6 +206,17 @@ static bool mittens_nic_receive_burst_visible(
     if (s->bridge == NULL ||
         !mittens_bridge_rx_burst_peek_word(
             s->bridge, &packet)) {
+        return false;
+    }
+    /*
+     * Preserve per-source frame ordering across the DMA boundary. The
+     * completed descriptor is released before the guest acknowledges its
+     * completion, so a following frame from the same source may already be
+     * queued. Keep that frame hidden until software consumes the completion;
+     * otherwise its magic word can overtake the completion notification.
+     */
+    if (mittens_nic_receive_dma_completion_pending_for_source(
+            s, packet.source)) {
         return false;
     }
     if (!mittens_bridge_rx_dma_timing_enabled(s->bridge) ||
@@ -396,6 +428,7 @@ static uint64_t mittens_nic_read(void *opaque, hwaddr offset,
     case MITTENS_NIC_RX_DMA_WORD_COUNT:
     case MITTENS_NIC_RX_DMA_SUBMIT:
     case MITTENS_NIC_RX_DMA_COMPLETION_ACK:
+    case MITTENS_NIC_TX_WAIT:
         mittens_nic_set_error(s, MITTENS_BRIDGE_ERROR_BAD_MMIO,
                               "read from a write-only register");
         return 0;
@@ -432,8 +465,8 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
                                   "TX_DATA write while TX_READY is clear");
         } else if (mittens_sync_available() &&
                    !mittens_bridge_tx_ready(s->bridge)) {
-            mittens_sync_yield_nic(
-                MITTENS_SYNC_STOP_NIC_TRANSMIT);
+            mittens_sync_yield_nic_transmit(
+                MITTENS_SYNC_STOP_NIC_TRANSMIT, false);
         }
         return;
 
@@ -489,11 +522,29 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
                 "TX burst ring became full during submission");
             return;
         }
-        if (mittens_sync_available() &&
-            !mittens_bridge_tx_burst_ready(s->bridge)) {
-            mittens_sync_yield_nic(
-                MITTENS_SYNC_STOP_NIC_TRANSMIT);
+        /*
+         * This is a zero-wait descriptor doorbell. It gives SST the exact
+         * simulated CPU timestamp at which the descriptor became visible.
+         * SST resumes immediately if the bounded device queue has room.
+         */
+        if (mittens_sync_available()) {
+            mittens_sync_yield_nic_transmit(
+                MITTENS_SYNC_STOP_NIC_TRANSMIT, true);
         }
+        return;
+
+    case MITTENS_NIC_TX_WAIT:
+        /*
+         * Close the race between the guest's failed status read and
+         * publishing its wait. SST may have drained a burst meanwhile.
+         */
+        if (s->bridge == NULL ||
+            mittens_bridge_tx_burst_ready(s->bridge) ||
+            !mittens_sync_available()) {
+            return;
+        }
+        mittens_sync_yield_nic_transmit(
+            MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT, true);
         return;
 
     case MITTENS_NIC_RX_WAIT:
@@ -542,6 +593,10 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
                 MITTENS_SYNC_STOP_TASK_FINISH,
                 s->trace_task_id,
                 s->trace_execution_id);
+            return;
+        }
+        if (value == MITTENS_NIC_TRACE_EVENT_MEMORY_INIT_COMPLETE) {
+            mittens_sync_memory_init_complete();
             return;
         }
         mittens_nic_set_error(
@@ -603,6 +658,7 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
             mittens_sync_yield_receive_dma(
                 descriptor->source,
                 descriptor->route_id,
+                descriptor->address,
                 descriptor->word_count);
         }
         mittens_nic_service_receive_dma(s);

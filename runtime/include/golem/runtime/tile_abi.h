@@ -43,6 +43,8 @@ enum class ResourceKind : uint32_t {
 enum ResourceFlags : uint32_t {
     ResourceWorkspace = UINT32_C(1) << 0,
     ResourceExternal = UINT32_C(1) << 1,
+    ResourceScratchpad = UINT32_C(1) << 2,
+    ResourceSpill = UINT32_C(1) << 3,
 };
 
 struct Resource {

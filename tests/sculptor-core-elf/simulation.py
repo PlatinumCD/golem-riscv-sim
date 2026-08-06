@@ -33,6 +33,6 @@ build_mesh(
         "analog_array_columns": 8,
         "analog_backend": "native",
         "analog_link_clock": "1GHz",
-        "analog_compute_latency_cycles": 8,
+        "analog_compute_latency_cycles": 100,
     },
 )

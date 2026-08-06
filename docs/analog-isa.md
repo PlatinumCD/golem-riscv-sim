@@ -112,9 +112,10 @@ LLVM does not define accelerator latency, asynchronous queues, or instruction
 retirement behavior. Platform v0.1 supplies the asynchronous execution
 contract:
 
-- every analog array has an independent ordered command stream and
-  bidirectional 256-bit link;
-- commands for different array IDs may transfer and compute concurrently;
+- every analog array has an independent ordered command stream;
+- all array transfers share one tile-wide bidirectional 256-bit link;
+- commands for different array IDs may compute concurrently, while their
+  transfers are arbitrated one 256-bit beat per tile per cycle;
 - `mvm.set` and `mvm.l` retire after QEMU snapshots their guest-memory source
   and the selected array queue accepts the command;
 - `mvm` retires after queue acceptance;
@@ -128,11 +129,12 @@ contract:
 Commands within one array stream remain in issue order, so the array ID is
 sufficient for platform-v0.1 dependency tracking and no command ID is encoded.
 SST remains responsible for each array's modeled transfer and compute time.
-With `N` active arrays, all `N` links may advance one 256-bit beat in either
-direction during one cycle, for a maximum aggregate link bandwidth of
-`N * 256` bits per cycle. A single array transfers in at most one direction
-per cycle. In particular, `mvm.s` returns `rows` float32 values in
-`ceil(rows / 8)` array-to-tile link cycles.
+With `N` active arrays, the tile still advances at most one 256-bit beat in
+one direction during one cycle. Maximum aggregate tile-to-array bandwidth is
+therefore always 256 bits per cycle, independent of `N`. Round-robin
+beat arbitration prevents one active array from starving the others. In
+particular, an uncontended `mvm.s` returns `rows` float32 values in
+`ceil(rows / 8)` array-to-tile link cycles; contention adds waiting cycles.
 Software must issue independent array work before a blocking `mvm.s`; the
 single guest hart cannot issue later instructions while that join is waiting,
 although every previously submitted array command continues in SST.

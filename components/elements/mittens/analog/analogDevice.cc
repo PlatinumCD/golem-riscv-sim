@@ -104,6 +104,7 @@ std::uint64_t AnalogDevice::submit(
     request->primaryArray = primaryArray;
     request->arrays = std::move(arrays);
     request->transferWords = std::move(inputWords);
+    recordTrace(request, AnalogTracePhase::Submitted);
 
     for (const std::uint32_t arrayId : request->arrays) {
         channels_[arrayId].requests.push_back(request);
@@ -144,10 +145,44 @@ void AnalogDevice::tick()
     }
 
     ++elapsedCycles_;
+
+    /*
+     * Compute engines are array-local and advance concurrently. All data
+     * movement shares one tile-wide, half-duplex 256-bit link, so exactly
+     * one transfer request may consume one beat during this tick.
+     */
     for (const std::shared_ptr<Request>& request : active) {
-        if (request->phase != Phase::Complete) {
+        if (request->phase == Phase::Computing) {
             advanceRequest(request);
         }
+    }
+
+    std::shared_ptr<Request> linkWinner;
+    std::uint32_t bestDistance =
+        std::numeric_limits<std::uint32_t>::max();
+    for (const std::shared_ptr<Request>& request : active) {
+        if (!usesLink(request)) {
+            continue;
+        }
+        const std::uint32_t arrayId = linkArray(request);
+        const std::uint32_t distance =
+            (arrayId + static_cast<std::uint32_t>(channels_.size()) -
+             nextLinkArray_) %
+            static_cast<std::uint32_t>(channels_.size());
+        if (linkWinner == nullptr || distance < bestDistance ||
+            (distance == bestDistance &&
+             request->ticket < linkWinner->ticket)) {
+            linkWinner = request;
+            bestDistance = distance;
+        }
+    }
+    if (linkWinner != nullptr) {
+        const std::uint32_t arrayId = linkArray(linkWinner);
+        advanceRequest(linkWinner);
+        ++linkBeats_;
+        nextLinkArray_ =
+            (arrayId + 1U) %
+            static_cast<std::uint32_t>(channels_.size());
     }
 
     startReadyRequests();
@@ -253,6 +288,24 @@ std::optional<AnalogCompletion> AnalogDevice::takeCompletionForTicket(
     AnalogCompletion completion = std::move(*found);
     completions_.erase(found);
     return completion;
+}
+
+void AnalogDevice::setTraceEnabled(bool enabled) noexcept
+{
+    traceEnabled_ = enabled;
+    if (!traceEnabled_) {
+        traceEvents_.clear();
+    }
+}
+
+std::optional<AnalogTraceEvent> AnalogDevice::takeTraceEvent()
+{
+    if (traceEvents_.empty()) {
+        return std::nullopt;
+    }
+    AnalogTraceEvent event = traceEvents_.front();
+    traceEvents_.pop_front();
+    return event;
 }
 
 std::size_t AnalogDevice::arrayCount() const noexcept
@@ -418,6 +471,7 @@ void AnalogDevice::startRequest(
     case MITTENS_ANALOG_OPERATION_SET_MATRIX:
     case MITTENS_ANALOG_OPERATION_LOAD_VECTOR:
         request->phase = Phase::TransferringInput;
+        recordTrace(request, AnalogTracePhase::InputTransferStart);
         return;
 
     case MITTENS_ANALOG_OPERATION_COMPUTE:
@@ -430,6 +484,7 @@ void AnalogDevice::startRequest(
         }
         request->remainingComputeCycles = computeLatencyCycles_;
         request->phase = Phase::Computing;
+        recordTrace(request, AnalogTracePhase::ComputeStart);
         return;
 
     case MITTENS_ANALOG_OPERATION_STORE_VECTOR:
@@ -442,6 +497,7 @@ void AnalogDevice::startRequest(
             return;
         }
         request->phase = Phase::TransferringOutput;
+        recordTrace(request, AnalogTracePhase::OutputTransferStart);
         return;
 
     case MITTENS_ANALOG_OPERATION_MOVE_VECTOR:
@@ -454,6 +510,7 @@ void AnalogDevice::startRequest(
             return;
         }
         request->phase = Phase::MovingOutput;
+        recordTrace(request, AnalogTracePhase::MoveOutputStart);
         return;
 
     default:
@@ -469,7 +526,8 @@ void AnalogDevice::advanceRequest(
     switch (request->phase) {
     case Phase::TransferringInput:
     case Phase::TransferringOutput:
-    case Phase::MovingOutput: {
+    case Phase::MovingOutput:
+    case Phase::MovingInput: {
         const std::size_t remaining =
             request->transferWords.size() - request->transferredWords;
         request->transferredWords += std::min<std::size_t>(
@@ -481,10 +539,18 @@ void AnalogDevice::advanceRequest(
         }
 
         if (request->phase == Phase::TransferringInput) {
+            recordTrace(request, AnalogTracePhase::InputTransferFinish);
             finishInputTransfer(request);
         } else if (request->phase == Phase::MovingOutput) {
+            recordTrace(request, AnalogTracePhase::MoveOutputFinish);
+            request->transferredWords = 0;
+            request->phase = Phase::MovingInput;
+            recordTrace(request, AnalogTracePhase::MoveInputStart);
+        } else if (request->phase == Phase::MovingInput) {
+            recordTrace(request, AnalogTracePhase::MoveInputFinish);
             finishMoveTransfer(request);
         } else {
+            recordTrace(request, AnalogTracePhase::OutputTransferFinish);
             finishRequest(
                 request,
                 MITTENS_ANALOG_STATUS_SUCCESS,
@@ -496,6 +562,7 @@ void AnalogDevice::advanceRequest(
     case Phase::Computing:
         --request->remainingComputeCycles;
         if (request->remainingComputeCycles == 0) {
+            recordTrace(request, AnalogTracePhase::ComputeFinish);
             finishRequest(
                 request, MITTENS_ANALOG_STATUS_SUCCESS);
         }
@@ -505,6 +572,24 @@ void AnalogDevice::advanceRequest(
     case Phase::Complete:
         return;
     }
+}
+
+bool AnalogDevice::usesLink(
+    const std::shared_ptr<Request>& request) const noexcept
+{
+    return request->phase == Phase::TransferringInput ||
+           request->phase == Phase::TransferringOutput ||
+           request->phase == Phase::MovingOutput ||
+           request->phase == Phase::MovingInput;
+}
+
+std::uint32_t AnalogDevice::linkArray(
+    const std::shared_ptr<Request>& request) const noexcept
+{
+    if (request->phase == Phase::MovingInput) {
+        return static_cast<std::uint32_t>(request->command.operand1);
+    }
+    return request->primaryArray;
 }
 
 void AnalogDevice::finishInputTransfer(
@@ -561,6 +646,7 @@ void AnalogDevice::finishRequest(
         channel.requests.pop_front();
     }
     request->phase = Phase::Complete;
+    recordTrace(request, AnalogTracePhase::Complete);
 }
 
 void AnalogDevice::completeImmediately(
@@ -569,12 +655,45 @@ void AnalogDevice::completeImmediately(
     std::uint32_t arrayId,
     std::uint64_t status)
 {
+    recordTrace(
+        ticket, command.operation, arrayId, AnalogTracePhase::Submitted);
     completions_.push_back(AnalogCompletion{
         MittensAnalogResponse{status},
         ticket,
         command.operation,
         arrayId,
         {},
+    });
+    recordTrace(
+        ticket, command.operation, arrayId, AnalogTracePhase::Complete);
+}
+
+void AnalogDevice::recordTrace(
+    const std::shared_ptr<Request>& request,
+    AnalogTracePhase phase)
+{
+    recordTrace(
+        request->ticket,
+        request->command.operation,
+        request->primaryArray,
+        phase);
+}
+
+void AnalogDevice::recordTrace(
+    std::uint64_t ticket,
+    std::uint32_t operation,
+    std::uint32_t arrayId,
+    AnalogTracePhase phase)
+{
+    if (!traceEnabled_) {
+        return;
+    }
+    traceEvents_.push_back(AnalogTraceEvent{
+        ticket,
+        operation,
+        arrayId,
+        phase,
+        elapsedCycles_,
     });
 }
 

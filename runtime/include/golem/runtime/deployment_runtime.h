@@ -15,6 +15,7 @@ enum class DeploymentStep : uint32_t {
     Complete = 2,
     Failed = 3,
     WaitForReceive = 4,
+    WaitForTransmit = 5,
 };
 
 enum class DeploymentError : uint32_t {
@@ -27,6 +28,40 @@ enum class DeploymentError : uint32_t {
     InvalidFrame = 6,
     TaskFailed = 7,
     RouteSendFailed = 8,
+};
+
+enum class DeploymentTransmitPolicy : uint32_t {
+    Blocking = 0,
+    OverlapReadyTasks = 1,
+};
+
+enum class InvalidFrameReason : uint32_t {
+    None = 0,
+    UnknownSource = 1,
+    InvalidMagic = 2,
+    UnknownRoute = 3,
+    SourceMismatch = 4,
+    ExecutionMismatch = 5,
+    WordCountMismatch = 6,
+    DuplicateRoute = 7,
+    UnexpectedWordDuringDMA = 8,
+    DMACompletionUnknownSource = 9,
+    DMACompletionPhaseMismatch = 10,
+    DMACompletionRouteMismatch = 11,
+    DMACompletionUnknownRoute = 12,
+    DMACompletionSourceMismatch = 13,
+    DMACompletionDuplicateRoute = 14,
+    MissingPayloadRoute = 15,
+    InvalidReceivePhase = 16,
+};
+
+struct InvalidFrameDiagnostic {
+    InvalidFrameReason reason = InvalidFrameReason::None;
+    uint32_t source_tile = UINT32_MAX;
+    uint32_t route_id = UINT32_MAX;
+    uint32_t receive_phase = UINT32_MAX;
+    uint64_t expected = 0;
+    uint64_t actual = 0;
 };
 
 using ReadRuntimeCycle = uint64_t (*)(void* context);
@@ -81,7 +116,9 @@ public:
         TileABI abi,
         RoutedWordTransport transport,
         DeploymentProfile* profile = nullptr,
-        DeploymentTrace* trace = nullptr
+        DeploymentTrace* trace = nullptr,
+        DeploymentTransmitPolicy transmit_policy =
+            DeploymentTransmitPolicy::Blocking
     ) noexcept;
 
     bool initialize() noexcept;
@@ -94,6 +131,7 @@ public:
     bool complete() const noexcept;
     bool failed() const noexcept;
     DeploymentError error() const noexcept;
+    const InvalidFrameDiagnostic& invalidFrameDiagnostic() const noexcept;
     ExecutionId executionId() const noexcept;
 
     const Tensor* resourceTensor(uint32_t local_slot) const noexcept;
@@ -127,13 +165,28 @@ private:
     bool consumeWord(const RoutedWord& word) noexcept;
     bool progressReceiveDMA() noexcept;
     bool executeReadyTask() noexcept;
+    bool executeReadyTaskWithoutTransmitConflict() noexcept;
+    bool executeTask(uint32_t task_index) noexcept;
     bool taskReady(uint32_t task_index) const noexcept;
+    bool taskOutputConflictsWithPendingTransmit(
+        uint32_t task_index) const noexcept;
     bool beginTaskRoutes(uint32_t task_id) noexcept;
+    bool scheduleTaskRoutes(uint32_t task_id) noexcept;
+    bool beginNextQueuedTaskRoutes() noexcept;
+    bool taskHasOutgoingRoutes(uint32_t task_id) const noexcept;
     bool progressTaskRoutes() noexcept;
     bool allOutgoingRoutesSent() const noexcept;
     bool hasPendingIncomingRoute() const noexcept;
     ReceiveState* receiveState(uint32_t source_tile) noexcept;
     uint32_t taskIndex(uint32_t task_id) const noexcept;
+    void setInvalidFrame(
+        InvalidFrameReason reason,
+        uint32_t source_tile,
+        uint32_t route_id,
+        uint32_t receive_phase,
+        uint64_t expected,
+        uint64_t actual
+    ) noexcept;
     void setError(DeploymentError error) noexcept;
     uint64_t profileCycle() const noexcept;
     void recordProfileStep(
@@ -149,6 +202,7 @@ private:
     RoutedWordTransport transport_;
     ExecutionId execution_id_;
     DeploymentError error_;
+    InvalidFrameDiagnostic invalid_frame_diagnostic_;
     bool initialized_;
     bool booted_;
     uint32_t complete_task_count_;
@@ -168,6 +222,10 @@ private:
     ReceiveState* receive_states_;
     uint32_t receive_state_count_;
 
+    DeploymentTransmitPolicy transmit_policy_;
+    uint32_t* pending_transmit_tasks_;
+    uint32_t pending_transmit_read_;
+    uint32_t pending_transmit_write_;
     bool transmit_active_;
     uint32_t transmit_task_id_;
     uint32_t transmit_route_index_;

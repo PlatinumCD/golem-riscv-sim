@@ -22,11 +22,18 @@ struct RankedMemRefHeader {
 typedef uint64_t AliasedUInt64 __attribute__((__may_alias__));
 typedef uint32_t AliasedUInt32 __attribute__((__may_alias__));
 
+#if defined(MITTENS_MEMREF_COPY_TEST_HOOK)
+extern "C" void mittensMemrefCopyTestHook(size_t byte_count);
+#endif
+
 void copyBytes(
     uint8_t* destination,
     const uint8_t* source,
     size_t byte_count
 ) {
+#if defined(MITTENS_MEMREF_COPY_TEST_HOOK)
+    mittensMemrefCopyTestHook(byte_count);
+#endif
     if ((reinterpret_cast<uintptr_t>(destination) |
          reinterpret_cast<uintptr_t>(source)) %
             alignof(AliasedUInt64) ==
@@ -120,23 +127,25 @@ extern "C" void memrefCopy(
     bool source_is_contiguous = true;
     bool destination_is_contiguous = true;
     for (int64_t axis = rank; axis-- > 0;) {
-        if (contiguous_element_count >
-            static_cast<size_t>(INT64_MAX)) {
-            source_is_contiguous = false;
-            destination_is_contiguous = false;
-        } else {
-            const int64_t expected_stride =
-                static_cast<int64_t>(contiguous_element_count);
-            source_is_contiguous =
-                source_is_contiguous &&
-                source_strides[axis] == expected_stride;
-            destination_is_contiguous =
-                destination_is_contiguous &&
-                destination_strides[axis] == expected_stride;
-        }
-
         const size_t axis_size =
             static_cast<size_t>(source_sizes[axis]);
+        if (axis_size != 1) {
+            if (contiguous_element_count >
+                static_cast<size_t>(INT64_MAX)) {
+                source_is_contiguous = false;
+                destination_is_contiguous = false;
+            } else {
+                const int64_t expected_stride =
+                    static_cast<int64_t>(contiguous_element_count);
+                source_is_contiguous =
+                    source_is_contiguous &&
+                    source_strides[axis] == expected_stride;
+                destination_is_contiguous =
+                    destination_is_contiguous &&
+                    destination_strides[axis] == expected_stride;
+            }
+        }
+
         if (axis_size > SIZE_MAX / contiguous_element_count) {
             return;
         }
@@ -157,16 +166,64 @@ extern "C" void memrefCopy(
         return;
     }
 
+    size_t suffix_element_count = 1;
+    int64_t suffix_start = rank;
+    for (int64_t axis = rank; axis-- > 0;) {
+        const size_t axis_size =
+            static_cast<size_t>(source_sizes[axis]);
+        if (axis_size != 1) {
+            if (suffix_element_count >
+                static_cast<size_t>(INT64_MAX)) {
+                break;
+            }
+            const int64_t expected_stride =
+                static_cast<int64_t>(suffix_element_count);
+            if (source_strides[axis] != expected_stride ||
+                destination_strides[axis] != expected_stride) {
+                break;
+            }
+        }
+        if (axis_size > SIZE_MAX / suffix_element_count) {
+            return;
+        }
+        suffix_element_count *= axis_size;
+        suffix_start = axis;
+    }
+
+    int64_t iteration_rank = rank;
+    size_t copy_byte_count = static_cast<size_t>(element_size);
+    if (suffix_element_count > 1) {
+        if (copy_byte_count > SIZE_MAX / suffix_element_count) {
+            return;
+        }
+        copy_byte_count *= suffix_element_count;
+        iteration_rank = suffix_start;
+    }
+    if (iteration_rank == 0) {
+        copyBytes(
+            destination_pointer,
+            source_pointer,
+            copy_byte_count
+        );
+        return;
+    }
+
     auto* indices = static_cast<int64_t*>(
-        __builtin_alloca(static_cast<size_t>(rank) * sizeof(int64_t))
+        __builtin_alloca(
+            static_cast<size_t>(iteration_rank) * sizeof(int64_t)
+        )
     );
     auto* source_byte_strides = static_cast<int64_t*>(
-        __builtin_alloca(static_cast<size_t>(rank) * sizeof(int64_t))
+        __builtin_alloca(
+            static_cast<size_t>(iteration_rank) * sizeof(int64_t)
+        )
     );
     auto* destination_byte_strides = static_cast<int64_t*>(
-        __builtin_alloca(static_cast<size_t>(rank) * sizeof(int64_t))
+        __builtin_alloca(
+            static_cast<size_t>(iteration_rank) * sizeof(int64_t)
+        )
     );
-    for (int64_t axis = 0; axis < rank; ++axis) {
+    for (int64_t axis = 0; axis < iteration_rank; ++axis) {
         indices[axis] = 0;
         source_byte_strides[axis] =
             source_strides[axis] * element_size;
@@ -180,10 +237,10 @@ extern "C" void memrefCopy(
         copyBytes(
             destination_pointer + destination_index,
             source_pointer + source_index,
-            static_cast<size_t>(element_size)
+            copy_byte_count
         );
 
-        for (int64_t axis = rank; axis-- > 0;) {
+        for (int64_t axis = iteration_rank; axis-- > 0;) {
             const int64_t next_index = ++indices[axis];
             source_index += source_byte_strides[axis];
             destination_index += destination_byte_strides[axis];

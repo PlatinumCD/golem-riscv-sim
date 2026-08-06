@@ -22,6 +22,13 @@ readonly FUSED_MLIR="${OUTPUT_DIR}/four-linear-fused.mlir"
 readonly LLVM_SHIMS_MLIR="${OUTPUT_DIR}/four-linear-llvm-shims.mlir"
 readonly STATISTICS="${OUTPUT_DIR}/router-statistics.csv"
 readonly SIMULATION_OUTPUT="${OUTPUT_DIR}/simulation.log"
+readonly MEMORY_BACKEND="${MITTENS_MEMORY_BACKEND:-native}"
+
+if [[ "${MEMORY_BACKEND}" != "native" &&
+      "${MEMORY_BACKEND}" != "memhierarchy" ]]; then
+    echo "MITTENS_MEMORY_BACKEND must be native or memhierarchy" >&2
+    exit 1
+fi
 
 for executable in \
     "${COMPILER_PYTHON}" \
@@ -260,6 +267,7 @@ done
 export SST_LIB_PATH="${ELEMENT_LIBRARY}${SST_LIB_PATH:+:${SST_LIB_PATH}}"
 export MITTENS_TEST_QEMU="${QEMU}"
 export MITTENS_SCULPTOR_FOUR_LAYER_STATS="${STATISTICS}"
+export MITTENS_MEMORY_BACKEND="${MEMORY_BACKEND}"
 for core_id in 0 1 2 3; do
     export "MITTENS_SCULPTOR_FOUR_LAYER_CORE${core_id}_ELF=${OUTPUT_DIR}/core-${core_id}.elf"
 done
@@ -278,6 +286,32 @@ grep -Fq "SCULPTOR_FOUR_LAYER_2X2_PASS" "${SIMULATION_OUTPUT}"
 if [[ ! -s "${STATISTICS}" ]]; then
     echo "the four-layer proof did not produce router statistics" >&2
     exit 1
+fi
+
+if [[ "${MEMORY_BACKEND}" == "memhierarchy" ]]; then
+    for core_id in 0 1 2 3; do
+        cache_summary="$(awk -F, -v component="tile${core_id}.private_l1" '
+            $1 == component &&
+            $2 == "CacheHits" {
+                hits += $7
+            }
+            $1 == component &&
+            $2 == "CacheMisses" {
+                misses += $7
+            }
+            END {
+                if (hits + misses == 0) {
+                    exit 1
+                }
+                printf "hits=%d misses=%d accesses=%d",
+                       hits, misses, hits + misses
+            }
+        ' "${STATISTICS}")" || {
+            echo "core ${core_id} private L1 observed no accesses" >&2
+            exit 1
+        }
+        echo "core ${core_id} private L1: ${cache_summary}"
+    done
 fi
 if ! awk -F, '
     $1 ~ /^router_/ &&
@@ -311,4 +345,5 @@ completion_time="$(awk \
     '/Simulation is complete/ { print $(NF - 1), $NF }' \
     "${SIMULATION_OUTPUT}")"
 echo "four-layer PyTorch -> four generated ELFs -> 2x2 mesh: PASS"
+echo "memory backend: ${MEMORY_BACKEND}"
 echo "simulated completion time: ${completion_time}"

@@ -31,3 +31,7 @@ release/acquire ordering. Slot state is data-plane state only: SST resumes
 QEMU through fd 41 after acceptance or completion. QEMU never interprets
 numerical values; the native or CrossSim backend in the Mittens element owns
 MVM semantics.
+
+These per-array slots are logical command queues, not independent physical
+links. The SST element arbitrates all array payload transfers over the tile's
+single shared 256-bit analog link.

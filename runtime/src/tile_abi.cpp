@@ -141,7 +141,11 @@ bool TileABI::validDeploymentPlan() const noexcept {
                 resource.rank,
                 resource_dimension_count
             ) ||
-            (resource.flags & ~(ResourceWorkspace | ResourceExternal)) != 0) {
+            (resource.flags & ~(
+                ResourceWorkspace |
+                ResourceExternal |
+                ResourceScratchpad |
+                ResourceSpill)) != 0) {
             return false;
         }
 
@@ -149,7 +153,15 @@ bool TileABI::validDeploymentPlan() const noexcept {
             (resource.flags & ResourceWorkspace) != 0;
         const bool is_external =
             (resource.flags & ResourceExternal) != 0;
-        if (uses_workspace == is_external) {
+        const bool uses_scratchpad =
+            (resource.flags & ResourceScratchpad) != 0;
+        const uint32_t primary_storage_count =
+            static_cast<uint32_t>(uses_workspace) +
+            static_cast<uint32_t>(is_external) +
+            static_cast<uint32_t>(uses_scratchpad);
+        if (primary_storage_count != 1 ||
+            ((resource.flags & ResourceSpill) != 0 &&
+             !uses_workspace)) {
             return false;
         }
         if (uses_workspace &&

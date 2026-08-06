@@ -14,11 +14,17 @@ readonly ANALOG_TEST="${HOST_TEST_DIR}/analog-device-test"
 readonly ANALOG_BRIDGE_TEST="${HOST_TEST_DIR}/analog-bridge-test"
 readonly NIC_BRIDGE_TEST="${HOST_TEST_DIR}/nic-bridge-test"
 readonly RECEIVE_DMA_ENGINE_TEST="${HOST_TEST_DIR}/receive-dma-engine-test"
+readonly SCRATCHPAD_TIMING_MODEL_TEST="${HOST_TEST_DIR}/scratchpad-timing-model-test"
+readonly PERFORMANCE_PROFILE_TEST="${HOST_TEST_DIR}/performance-profile-test"
 readonly SYNC_BRIDGE_TEST="${HOST_TEST_DIR}/sync-bridge-test"
 readonly CROSSSIM_TEST="${HOST_TEST_DIR}/crosssim-backend-test"
 readonly CROSSSIM_PYTHON="${CROSSSIM_PYTHON:-/usr/bin/python3}"
 readonly CROSSSIM_PYTHON_CONFIG="${CROSSSIM_PYTHON_CONFIG:-/usr/bin/python3-config}"
 readonly CROSSSIM_SITE_PACKAGES="${INSTALL_ROOT}/cross-sim/python"
+readonly PROFILE_ANALYZER="${PROJECT_ROOT}/scripts/analyze-performance-profile.py"
+readonly PROFILE_TEST_RAW_DIRECTORY="${HOST_TEST_DIR}/performance-profile-raw"
+readonly PROFILE_TEST_OUTPUT_DIRECTORY="${HOST_TEST_DIR}/performance-profile"
+readonly PROFILE_TEST_STATS="${HOST_TEST_DIR}/performance-profile-router-statistics.csv"
 
 if [[ ! -x "${SST}" || ! -x "${QEMU}" ]] ||
    [[ ! -x "${CROSSSIM_PYTHON}" || ! -x "${CROSSSIM_PYTHON_CONFIG}" ]] ||
@@ -85,6 +91,30 @@ mkdir -p -- "${HOST_TEST_DIR}"
     -Wextra \
     -Wpedantic \
     -Werror \
+    -I"${PROJECT_ROOT}/components/elements/mittens" \
+    "${PROJECT_ROOT}/components/elements/mittens/scratchpad/scratchpadTimingModel.cc" \
+    "${TEST_DIR}/scratchpad_timing_model_test.cpp" \
+    -o "${SCRATCHPAD_TIMING_MODEL_TEST}"
+"${SCRATCHPAD_TIMING_MODEL_TEST}"
+
+"${HOST_CXX}" \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Wpedantic \
+    -Werror \
+    -I"${PROJECT_ROOT}/components/elements/mittens" \
+    "${PROJECT_ROOT}/components/elements/mittens/performanceProfile.cc" \
+    "${TEST_DIR}/performance_profile_test.cpp" \
+    -o "${PERFORMANCE_PROFILE_TEST}"
+"${PERFORMANCE_PROFILE_TEST}"
+
+"${HOST_CXX}" \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Wpedantic \
+    -Werror \
     -pthread \
     -I"${PROJECT_ROOT}/bridge/include" \
     -I"${PROJECT_ROOT}/components/elements/mittens" \
@@ -125,3 +155,38 @@ export PYTHONPATH="${CROSSSIM_SITE_PACKAGES}${PYTHONPATH:+:${PYTHONPATH}}"
 "${SST}" "${TEST_DIR}/qemu_boot.py"
 MITTENS_TEST_TILES=4 "${SST}" "${TEST_DIR}/multi_tile_boot.py"
 "${SST}" "${TEST_DIR}/two_tile_bridge.py"
+
+mkdir -p -- \
+    "${PROFILE_TEST_RAW_DIRECTORY}" \
+    "${PROFILE_TEST_OUTPUT_DIRECTORY}"
+find "${PROFILE_TEST_RAW_DIRECTORY}" \
+    -maxdepth 1 \
+    -type f \
+    -name 'tile-*.csv' \
+    -delete
+find "${PROFILE_TEST_OUTPUT_DIRECTORY}" \
+    -maxdepth 1 \
+    -type f \
+    \( -name '*.csv' -o -name '*.json' \) \
+    -delete
+rm -f -- "${PROFILE_TEST_STATS}"
+export MITTENS_PROFILE_TEST_RAW_DIRECTORY="${PROFILE_TEST_RAW_DIRECTORY}"
+export MITTENS_PROFILE_TEST_STATS="${PROFILE_TEST_STATS}"
+"${SST}" "${TEST_DIR}/performance_profile.py"
+python3 "${PROFILE_ANALYZER}" \
+    "${PROFILE_TEST_RAW_DIRECTORY}" \
+    "${PROFILE_TEST_OUTPUT_DIRECTORY}" \
+    --router-statistics "${PROFILE_TEST_STATS}"
+python3 - \
+    "${PROFILE_TEST_OUTPUT_DIRECTORY}/summary.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as source:
+    summary = json.load(source)
+
+assert summary["network"]["packets"] == 2
+assert summary["network"]["injected_words"] == 2
+assert summary["network"]["directional_word_hops"] == 2
+assert summary["network"]["physical_router_link_bits"] >= 64
+PY

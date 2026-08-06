@@ -46,6 +46,7 @@ void publish(
     MittensSyncBridge* mapping,
     std::uint32_t reason,
     std::uint64_t executed,
+    std::uint64_t vectorExecuted,
     std::uint32_t flags,
     std::uint32_t arrayId,
     std::uint64_t analogSequence,
@@ -53,12 +54,16 @@ void publish(
     std::uint64_t executionId,
     std::uint32_t receiveDMASource = UINT32_MAX,
     std::uint32_t receiveDMARouteId = UINT32_MAX,
-    std::uint32_t receiveDMAWordCount = 0)
+    std::uint32_t receiveDMAWordCount = 0,
+    std::uint64_t memoryAddress = 0,
+    std::uint32_t memorySize = 0,
+    std::uint32_t memoryFlags = MITTENS_SYNC_MEMORY_FLAG_NONE)
 {
     assert(
         mittens_sync_load_acquire(&mapping->state) ==
         MITTENS_SYNC_STATE_RUNNING);
     mapping->instructions_executed = executed;
+    mapping->vector_instructions_executed = vectorExecuted;
     mapping->stop_reason = reason;
     mapping->event_flags = flags;
     mapping->analog_array_id = arrayId;
@@ -68,6 +73,9 @@ void publish(
     mapping->rx_dma_source = receiveDMASource;
     mapping->rx_dma_route_id = receiveDMARouteId;
     mapping->rx_dma_word_count = receiveDMAWordCount;
+    mapping->memory_address = memoryAddress;
+    mapping->memory_size = memorySize;
+    mapping->memory_flags = memoryFlags;
     ++mapping->event_sequence;
     mittens_sync_store_release(
         &mapping->state, MITTENS_SYNC_STATE_EVENT);
@@ -110,6 +118,7 @@ int main()
             mapping,
             MITTENS_SYNC_STOP_ANALOG_SUBMIT,
             17,
+            3,
             MITTENS_SYNC_EVENT_FLAG_WAIT_FOR_COMPLETION,
             2,
             11,
@@ -128,6 +137,7 @@ int main()
             mapping,
             MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT,
             21,
+            3,
             MITTENS_SYNC_EVENT_FLAG_NONE,
             UINT32_MAX,
             0,
@@ -147,8 +157,59 @@ int main()
 
         publish(
             mapping,
+            MITTENS_SYNC_STOP_MEMORY_ACCESS,
+            23,
+            3,
+            MITTENS_SYNC_EVENT_FLAG_NONE,
+            UINT32_MAX,
+            UINT64_C(0x80000420),
+            UINT32_MAX,
+            UINT64_C(0x80000800),
+            UINT32_MAX,
+            UINT32_MAX,
+            0,
+            UINT64_C(0x80001234),
+            4,
+            MITTENS_SYNC_MEMORY_FLAG_WRITE);
+
+        waitWhile(&mapping->state, MITTENS_SYNC_STATE_EVENT);
+        assert(
+            mittens_sync_load_acquire(&mapping->state) ==
+            MITTENS_SYNC_STATE_RESUME);
+        mittens_sync_store_release(
+            &mapping->state, MITTENS_SYNC_STATE_RUNNING);
+        wake(&mapping->state);
+
+        publish(
+            mapping,
+            MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE,
+            24,
+            3,
+            MITTENS_SYNC_EVENT_FLAG_NONE,
+            UINT32_MAX,
+            1000,
+            UINT32_MAX,
+            2048,
+            UINT32_MAX,
+            UINT32_MAX,
+            0,
+            4096,
+            0,
+            MITTENS_SYNC_MEMORY_FLAG_NONE);
+
+        waitWhile(&mapping->state, MITTENS_SYNC_STATE_EVENT);
+        assert(
+            mittens_sync_load_acquire(&mapping->state) ==
+            MITTENS_SYNC_STATE_RESUME);
+        mittens_sync_store_release(
+            &mapping->state, MITTENS_SYNC_STATE_RUNNING);
+        wake(&mapping->state);
+
+        publish(
+            mapping,
             MITTENS_SYNC_STOP_TASK_START,
             25,
+            4,
             MITTENS_SYNC_EVENT_FLAG_NONE,
             UINT32_MAX,
             0,
@@ -167,6 +228,7 @@ int main()
             mapping,
             MITTENS_SYNC_STOP_TASK_FINISH,
             40,
+            6,
             MITTENS_SYNC_EVENT_FLAG_NONE,
             UINT32_MAX,
             0,
@@ -185,6 +247,7 @@ int main()
             mapping,
             MITTENS_SYNC_STOP_QUANTUM_END,
             100,
+            12,
             MITTENS_SYNC_EVENT_FLAG_NONE,
             UINT32_MAX,
             0,
@@ -204,6 +267,7 @@ int main()
             mapping,
             MITTENS_SYNC_STOP_GUEST_EXIT,
             3,
+            1,
             MITTENS_SYNC_EVENT_FLAG_NONE,
             UINT32_MAX,
             0,
@@ -221,6 +285,7 @@ int main()
     } while (!analog.has_value());
     assert(analog->grantEpoch == 1);
     assert(analog->instructionsExecuted == 17);
+    assert(analog->vectorInstructionsExecuted == 3);
     assert(
         analog->stopReason ==
         MITTENS_SYNC_STOP_ANALOG_SUBMIT);
@@ -243,10 +308,49 @@ int main()
         receiveDMA->stopReason ==
         MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT);
     assert(receiveDMA->instructionsExecuted == 21);
+    assert(receiveDMA->vectorInstructionsExecuted == 3);
     assert(receiveDMA->receiveDMASource == 4);
     assert(receiveDMA->receiveDMARouteId == 19);
     assert(receiveDMA->receiveDMAWordCount == 300);
     bridge.resume(*receiveDMA);
+
+    std::optional<QemuSyncEvent> memory;
+    do {
+        memory = bridge.waitForEvent(
+            std::chrono::milliseconds(100));
+    } while (!memory.has_value());
+    assert(
+        memory->stopReason ==
+        MITTENS_SYNC_STOP_MEMORY_ACCESS);
+    assert(memory->instructionsExecuted == 23);
+    assert(memory->memoryAddress == UINT64_C(0x80001234));
+    assert(memory->memoryProgramCounter() == UINT64_C(0x80000420));
+    assert(memory->memoryReturnAddress() == UINT64_C(0x80000800));
+    assert(memory->memorySize == 4);
+    assert(
+        memory->memoryFlags ==
+        MITTENS_SYNC_MEMORY_FLAG_WRITE);
+    bridge.resume(*memory);
+
+    std::optional<QemuSyncEvent> memoryInitialization;
+    do {
+        memoryInitialization = bridge.waitForEvent(
+            std::chrono::milliseconds(100));
+    } while (!memoryInitialization.has_value());
+    assert(
+        memoryInitialization->stopReason ==
+        MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE);
+    assert(memoryInitialization->instructionsExecuted == 24);
+    assert(
+        memoryInitialization->memoryInitializationAccesses() ==
+        1000);
+    assert(
+        memoryInitialization->memoryInitializationReadBytes() ==
+        4096);
+    assert(
+        memoryInitialization->memoryInitializationWriteBytes() ==
+        2048);
+    bridge.resume(*memoryInitialization);
 
     std::optional<QemuSyncEvent> taskStart;
     do {
@@ -257,6 +361,7 @@ int main()
         taskStart->stopReason ==
         MITTENS_SYNC_STOP_TASK_START);
     assert(taskStart->instructionsExecuted == 25);
+    assert(taskStart->vectorInstructionsExecuted == 4);
     assert(taskStart->taskId == 37);
     assert(taskStart->executionId == UINT64_C(0x100000002));
     bridge.resume(*taskStart);
@@ -270,6 +375,7 @@ int main()
         taskFinish->stopReason ==
         MITTENS_SYNC_STOP_TASK_FINISH);
     assert(taskFinish->instructionsExecuted == 40);
+    assert(taskFinish->vectorInstructionsExecuted == 6);
     assert(taskFinish->taskId == 37);
     assert(taskFinish->executionId == UINT64_C(0x100000002));
     bridge.resume(*taskFinish);
@@ -283,6 +389,7 @@ int main()
         quantum->stopReason ==
         MITTENS_SYNC_STOP_QUANTUM_END);
     assert(quantum->instructionsExecuted == 100);
+    assert(quantum->vectorInstructionsExecuted == 12);
 
     assert(bridge.grant(50) == 2);
     std::optional<QemuSyncEvent> guestExit;
@@ -295,6 +402,7 @@ int main()
         MITTENS_SYNC_STOP_GUEST_EXIT);
     assert(guestExit->grantEpoch == 2);
     assert(guestExit->instructionsExecuted == 3);
+    assert(guestExit->vectorInstructionsExecuted == 1);
 
     qemu.join();
     assert(

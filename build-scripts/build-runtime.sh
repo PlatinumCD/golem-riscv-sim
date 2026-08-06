@@ -57,6 +57,7 @@ sources=(
     deployment_runtime.cpp
     ready_queue.cpp
     routed_transport.cpp
+    scratchpad_abi.cpp
     task_instance.cpp
     task_registry.cpp
     tile_abi.cpp

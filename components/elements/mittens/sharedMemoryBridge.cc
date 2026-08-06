@@ -118,6 +118,40 @@ std::optional<MittensBridgeTxBurst> SharedMemoryBridge::popTransmitBurst()
     return burst;
 }
 
+std::uint32_t SharedMemoryBridge::transmitCount() const noexcept
+{
+    if (!open()) {
+        return 0;
+    }
+    return static_cast<std::uint32_t>(
+        mittens_bridge_load_acquire(
+            &mapping_->transmit.write_index) -
+        mittens_bridge_load_acquire(
+            &mapping_->transmit.read_index));
+}
+
+std::uint32_t SharedMemoryBridge::transmitBurstCount() const noexcept
+{
+    if (!open()) {
+        return 0;
+    }
+    return static_cast<std::uint32_t>(
+        mittens_bridge_load_acquire(
+            &mapping_->burst_transmit.write_index) -
+        mittens_bridge_load_acquire(
+            &mapping_->burst_transmit.read_index));
+}
+
+bool SharedMemoryBridge::transmitHasSpace() const noexcept
+{
+    return open() && mittens_bridge_tx_ready(mapping_);
+}
+
+bool SharedMemoryBridge::transmitBurstHasSpace() const noexcept
+{
+    return open() && mittens_bridge_tx_burst_ready(mapping_);
+}
+
 bool SharedMemoryBridge::receiveHasData() const noexcept
 {
     return open() &&

@@ -32,7 +32,7 @@ actions:
   crosssim       initialize and install the minimal CrossSim Python stack
   qemu           initialize and build QEMU with the Mittens NIC and analog ISA
   sst-core       initialize and build SST Core
-  sst            initialize and build SST Core, Merlin, and Mittens
+  sst            initialize and build SST Core, memHierarchy, Merlin, and Mittens
   runtime        build and install the bare-metal runtime archive
   platform       build all bare-metal test images
   test           run compiler, element, boot, mesh, routing, and compute proofs
@@ -59,6 +59,7 @@ build_environment() {
 
 run_system_tests() {
     "${ROOT}/components/elements/mittens/tests/run-test.sh"
+    "${ROOT}/visualizer/tests/run-test.sh"
     "${ROOT}/tests/torch-mlir/run-test.sh"
     "${ROOT}/tests/pytorch-single-core/run-test.sh"
     "${ROOT}/tests/torch-mlir-sculptor/run-test.sh"
@@ -68,15 +69,22 @@ run_system_tests() {
     "${ROOT}/tests/sculptor-eight-layer-mesh-4x2/run-test.sh"
     "${ROOT}/runtime/tests/run-test.sh"
     "${ROOT}/tests/runtime-library/run-test.sh"
+    "${ROOT}/tests/memory-hierarchy-l1/run-test.sh"
     "${ROOT}/tests/deployment-runtime-pair/run-test.sh"
     "${ROOT}/tests/hello/run-test.sh"
+    "${ROOT}/tests/riscv-vector/run-test.sh"
+    "${ROOT}/tests/cpu-timing-validation/run-test.sh"
     "${ROOT}/tests/analog-instructions/run-test.sh"
     "${ROOT}/tests/analog-ops/run-test.sh"
+    "${ROOT}/tests/analog-timing-validation/run-test.sh"
     "${ROOT}/tests/analog-mesh-2x2/run-test.sh"
     "${ROOT}/tests/analog-route-2x2/run-test.sh"
     "${ROOT}/tests/analog-mesh-2x2-dual-array/run-test.sh"
     "${ROOT}/tests/mesh-pair/run-test.sh"
     "${ROOT}/tests/mesh-3x3/run-test.sh"
+    "${ROOT}/tests/network-timing-validation/run-test.sh"
+    "${ROOT}/tests/transmit-fanout/run-test.sh"
+    "${ROOT}/tests/memory-timing-validation/run-test.sh"
     "${ROOT}/tests/mesh-pipeline/run-test.sh"
     "${ROOT}/tests/distributed-matvec/run-test.sh"
 }
