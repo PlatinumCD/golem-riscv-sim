@@ -15,6 +15,12 @@ transfers. The platform
 contract gives every analog array an ordered four-command queue while all
 arrays on a tile share one round-robin, bidirectional 256-bit link.
 
+Sculptor uses its RA-tree deployment path. The repository cross-compiles the
+pinned Sculptor tile runtime for RISC-V, while QEMU and SST remain the
+functional and timing models for a tile and its mesh. See
+[`docs/sculptor-ra-tree-migration.md`](docs/sculptor-ra-tree-migration.md) for
+the compiler-to-simulator boundary and migration status.
+
 SST is the simulation-time authority. Managed QEMU tiles execute precise
 instruction-count grants through fd 41; Platform v0.1 initially models one
 retired RISC-V instruction as one `cpu_clock` cycle. fd 42 carries mesh data
@@ -50,12 +56,7 @@ pass:
 ./visualizer/tests/run-test.sh
 ./tests/torch-mlir/run-test.sh
 ./tests/pytorch-single-core/run-test.sh
-./tests/torch-mlir-sculptor/run-test.sh
-./tests/sculptor-core-elf/run-test.sh
-./tests/sculptor-four-layer-mesh/run-test.sh
-./tests/sculptor-eight-layer-mesh/run-test.sh
-./tests/sculptor-eight-layer-mesh-4x2/run-test.sh
-./runtime/tests/run-test.sh
+./tests/sculptor-ra-tree-single-tile/run-test.sh
 ./tests/runtime-library/run-test.sh
 ./tests/memory-hierarchy-l1/run-test.sh
 ./tests/deployment-runtime-pair/run-test.sh
@@ -96,9 +97,8 @@ config/                         pinned revisions and Platform v0.1 build setting
 docs/                           platform, build, and testing documentation
 patches/qemu/                   minimal upstream QEMU integration changes
 platform/                       bare-metal startup, linker script, and MMIO API
-runtime/                        freestanding task/dataflow runtime library
 tests/                          complete system test scenarios
-third_party/                    pinned, pristine Git submodules
+third_party/                    pinned compilers, runtime source, and simulators
 visualizer/                     opt-in mesh activity exporter and web viewer
 build/                          generated source and build trees (ignored)
 install/                        generated local installation (ignored)
@@ -112,6 +112,8 @@ small integration patches there.
 
 - [`docs/architecture.md`](docs/architecture.md) explains component ownership,
   lifecycle, and the complete packet data path.
+- [`docs/sculptor-ra-tree-migration.md`](docs/sculptor-ra-tree-migration.md)
+  defines the current compiler, runtime, QEMU, and SST boundary.
 - [`docs/platform-v0.1.md`](docs/platform-v0.1.md) defines the guest-visible address
   map, NIC registers, and mesh-routing contract.
 - [`docs/platform-v0.2.md`](docs/platform-v0.2.md) defines the optional private
@@ -121,10 +123,6 @@ small integration patches there.
 - [`docs/vector-architecture.md`](docs/vector-architecture.md) locks the RVV
   1.0 ISA, 256-bit vector geometry, issue boundary, compiler contract, analog
   relationship, and timing ownership for a conforming Golem tile.
-- [`docs/compiler-workflow.md`](docs/compiler-workflow.md) walks a concrete
-  two-layer PyTorch model through Torch-MLIR, Sculptor task-graph construction,
-  two-core scheduling, same-core task fusion, Golem shim/task-graph ABI
-  lowering, runtime resource finalization, and LLVM-dialect task code.
 - [`docs/timing-model.md`](docs/timing-model.md) defines which timing and
   performance claims are valid in the current QEMU/SST integration.
 - [`docs/building.md`](docs/building.md) documents host requirements and build
@@ -138,10 +136,9 @@ small integration patches there.
   current experimental architecture, timing parameters, and claim limits.
 - [`docs/compiler-scoring-advice.md`](docs/compiler-scoring-advice.md) gives
   evidence-backed guidance for Sculptor's placement and timing model.
-- [`config/epoch-c.env`](config/epoch-c.env) and
-  [`results/epoch-c-freeze-2026-07-30.md`](results/epoch-c-freeze-2026-07-30.md)
-  preserve the first component-validated experimental baseline. Epoch C used
-  a coarse 4,096-word network timing cell.
+- [`config/epoch-c.env`](config/epoch-c.env) preserves the first
+  component-validated experimental baseline. Epoch C used a coarse
+  4,096-word network timing cell.
 - [`config/epoch-d.env`](config/epoch-d.env) is the corrected physical-word
   network baseline: one 32-bit timing cell with the same 64 KiB router
   capacity.

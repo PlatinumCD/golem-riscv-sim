@@ -136,8 +136,7 @@ also pass after the correction. A 61-active-core GPT-2 Greedy-L3
 analog/digital pair additionally validates variable-sized receive-DMA traffic:
 both backends finish with unchanged numerical signatures.
 
-The full evidence is in
-[`results/network-timing-validation-2026-07-30.md`](results/network-timing-validation-2026-07-30.md).
+The active network timing tests are the maintained evidence for this claim.
 
 ### Completed analog timing milestone
 
@@ -161,8 +160,7 @@ overlap but only one 256-bit beat crosses the tile-wide half-duplex link each
 cycle, while separate array compute engines may advance concurrently. Both
 guests also verified their numerical matrix-vector outputs.
 
-The full evidence is in
-[`results/analog-timing-validation-2026-07-30.md`](results/analog-timing-validation-2026-07-30.md).
+The active analog timing tests are the maintained evidence for this claim.
 
 ### Current timing and profiling capabilities
 
@@ -558,8 +556,7 @@ one-million-instruction lookahead is 523 ns (1.45%) above the converged
 1,000/100-instruction result in a 24-route fanout. Epoch D therefore validates
 the physical-word network correction but does not yet close the receive-side
 co-simulation convergence gate. The machine-readable configuration is
-`config/epoch-d.env`; the correction report is
-`results/epoch-d-network-cell-correction-2026-07-30.md`.
+`config/epoch-d.env`.
 
 #### Epoch E: 100 ns analog-MVM baseline
 

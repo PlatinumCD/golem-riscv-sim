@@ -452,16 +452,9 @@ verbose console counters:
 | `summary` | One finish-time counter file per tile | None |
 | `trace` | Summary plus wait, packet, receive-DMA, analog, memory, and task event files | Task markers add guest instructions and fd-41 boundaries |
 
-The GPT-2 and ResNet-18 runners configure all tiles and run the system-level
-analyzer automatically:
-
-```bash
-MITTENS_GPT2_PROFILE_MODE=trace \
-./tests/sculptor-gpt2-8x8/run-deployment.sh
-
-MITTENS_RESNET18_PROFILE_MODE=trace \
-./tests/sculptor-resnet18-8x8/run-deployment.sh
-```
+The next RA-tree multi-tile deployment runner will configure all tiles and run
+the system-level analyzer automatically. Existing platform tests validate the
+profile format independently of a neural-network deployment.
 
 `summary` is the correct mode for low-overhead counter collection. `trace` is
 the diagnostic mode used to locate a critical chain. Host-side CSV writes do
@@ -529,20 +522,11 @@ per-access records.
 
 `mittens.tile` verbosity level 1 reports per-tile synchronized instruction,
 stop-reason, network-word, and analog-operation counters at simulation finish.
-The ResNet-18 deployment also supports an opt-in, cycle-level runtime profile:
-
-```bash
-MITTENS_RESNET18_RUNTIME_PROFILE=1 \
-./tests/sculptor-resnet18-8x8/run-deployment.sh
-```
-
-That mode measures receive, receive-wait, transmit, blocked-transmit,
-generated-task, and idle runtime steps with `rdcycle`. The reads and
-accounting instructions perturb the simulated CPU timeline, so profile runs
-are for attribution only. Official completion comparisons must use the
-default uninstrumented build. The measured baseline and blocking-receive
-comparison are documented in
-[ResNet-18 8x8 performance profile](resnet18-profile.md).
+A future RA-tree neural-network deployment can enable cycle-level runtime
+profiling. Such instrumentation measures receive, receive-wait, transmit,
+blocked-transmit, generated-task, and idle runtime steps with `rdcycle`.
+It perturbs the simulated CPU timeline, so profile runs are for attribution
+only. Official completion comparisons must use an uninstrumented build.
 
 ## Limits
 

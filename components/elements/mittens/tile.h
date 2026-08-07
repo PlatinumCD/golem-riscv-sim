@@ -48,6 +48,7 @@ class Tile : public SST::Component
         {"mesh_height", "Physical mesh height used for hop accounting; zero means unspecified", "0"},
         {"mesh_link_clock", "Clock defining one physical mesh transfer cycle", "1GHz"},
         {"mesh_link_width_bits", "Physical mesh link width in bits per transfer cycle", "32"},
+        {"network_packet_words", "Maximum 32-bit words in one SST network request. This value must not exceed the endpoint buffer capacity", "16"},
         {"qemu_path", "Path to the QEMU system emulator", "qemu-system-riscv64"},
         {"elf", "Bare-metal ELF image loaded by QEMU", ""},
         {"memory", "Private QEMU RAM assigned to this tile", "16M"},
@@ -117,6 +118,7 @@ class Tile : public SST::Component
         std::uint32_t meshHeight;
         std::string meshLinkClock;
         std::uint32_t meshLinkWidthBits;
+        std::uint32_t networkPacketWords;
         std::string qemuPath;
         std::string elfPath;
         std::string memory;
@@ -414,6 +416,7 @@ class Tile : public SST::Component
     std::deque<ReceiveDMATransfer> receiveDMATransfersInFlight_;
     std::optional<MittensBridgePacket> pendingTransmit_;
     std::optional<MittensBridgeTxBurst> pendingTransmitBurst_;
+    std::uint32_t pendingTransmitBurstOffset_ = 0;
     bool transmitWaitArmed_ = false;
     bool receiveWaitArmed_ = false;
     bool primaryEndSignaled_ = false;

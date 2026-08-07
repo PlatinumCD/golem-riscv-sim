@@ -237,11 +237,15 @@ def _attach_private_l1(tile, node_id, tile_memory, configuration):
         (memory_if, "lowlink", configuration["cpu_l1_latency"]),
         (l1, "highlink", configuration["cpu_l1_latency"]),
     )
+    # Keep private memory accesses within the tile's SST partition. Mesh links
+    # remain partition cuts, so independent tile groups can run concurrently.
+    cpu_l1.setNoCut()
     l1_memory = sst.Link(f"tile{node_id}.l1_memory")
     l1_memory.connect(
         (l1, "lowlink", configuration["l1_memory_latency"]),
         (memory_controller, "highlink", configuration["l1_memory_latency"]),
     )
+    l1_memory.setNoCut()
 
     l1.enableStatistics(["CacheHits", "CacheMisses"])
 
@@ -417,6 +421,7 @@ def _attach_shared_l1(tile, node_id, configuration, network):
         (memory_if, "lowlink", configuration["cpu_l1_latency"]),
         (l1, "highlink", configuration["cpu_l1_latency"]),
     )
+    cpu_l1.setNoCut()
     _connect_memory_endpoint(
         f"tile{node_id}.l1_memory_network",
         l1_nic,
@@ -430,7 +435,8 @@ def _attach_shared_l1(tile, node_id, configuration, network):
 def _attach_tile(router, node_id, image, qemu_path, network_size,
                  mesh_width, mesh_height, verbosity, tile_params,
                  buffer_size, link_bandwidth, mesh_link_width_bits,
-                 mesh_link_clock, memory_backend, memory_hierarchy,
+                 mesh_link_clock, network_packet_words, memory_backend,
+                 memory_hierarchy,
                  shared_memory_fabric=None, tile_memory_stride=0):
     tile = sst.Component(f"tile{node_id}", "mittens.tile")
     params = {
@@ -449,6 +455,7 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
     # Keep endpoint completion timing identical to the physical Merlin links.
     params["mesh_link_width_bits"] = mesh_link_width_bits
     params["mesh_link_clock"] = mesh_link_clock
+    params["network_packet_words"] = network_packet_words
     params["memory_backend"] = memory_backend
     if shared_memory_fabric is not None:
         params["memory_guest_base"] = GUEST_RAM_BASE
@@ -488,7 +495,8 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
 def build_mesh(*, width, height, qemu_path, images, statistics_path,
                verbosity=2, tile_params=None, network_cell_words=1,
                network_buffer_cells=16, mesh_link_width_bits=32,
-               mesh_link_clock="1GHz", memory_backend="native",
+               mesh_link_clock="1GHz", network_packet_words=None,
+               memory_backend="native",
                memory_hierarchy=None):
     """Build a mesh whose physical links carry fixed 32-bit words.
 
@@ -511,6 +519,17 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
     if network_cell_words <= 0 or network_buffer_cells <= 0:
         raise ValueError(
             "network cell and buffer counts must both be positive"
+        )
+    buffer_words = network_cell_words * network_buffer_cells
+    if network_packet_words is None:
+        network_packet_words = buffer_words
+    if network_packet_words < 5:
+        raise ValueError(
+            "network_packet_words must be at least five words"
+        )
+    if network_packet_words > buffer_words:
+        raise ValueError(
+            "network_packet_words must not exceed the network buffer capacity"
         )
     link_bandwidth, flit_size, buffer_size = _mesh_link_configuration(
         mesh_link_width_bits,
@@ -578,6 +597,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 link_bandwidth,
                 mesh_link_width_bits,
                 mesh_link_clock,
+                network_packet_words,
                 memory_backend,
                 memory_hierarchy,
                 shared_memory_fabric,

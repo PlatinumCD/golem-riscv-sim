@@ -81,6 +81,7 @@ Tile::Configuration Tile::readConfiguration(SST::Params& params)
         params.find<std::uint32_t>("mesh_height", 0),
         params.find<std::string>("mesh_link_clock", "1GHz"),
         params.find<std::uint32_t>("mesh_link_width_bits", 32),
+        params.find<std::uint32_t>("network_packet_words", 16),
         params.find<std::string>("qemu_path", "qemu-system-riscv64"),
         params.find<std::string>("elf", ""),
         params.find<std::string>("memory", "16M"),
@@ -323,7 +324,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         CALL_INFO,
         1,
         0,
-        "configured tile %u (qemu=%s, elf=%s, memory=%s, memory_backend=%s/init-batch-%s/%uB-cycle/setup-%llu, launch=%s, cpu_clock=%s, issue_width=%u, sync_quantum=%llu, rvv=%s/vlen-%u/elen-%u, network=%s, network_size=%u, mesh_link=%s/%u-bit, rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
+        "configured tile %u (qemu=%s, elf=%s, memory=%s, memory_backend=%s/init-batch-%s/%uB-cycle/setup-%llu, launch=%s, cpu_clock=%s, issue_width=%u, sync_quantum=%llu, rvv=%s/vlen-%u/elen-%u, network=%s, network_size=%u, mesh_link=%s/%u-bit/packet-%u-words, rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
         static_cast<unsigned>(config_.tileId),
         config_.qemuPath.c_str(),
         config_.elfPath.empty() ? "<unset>" : config_.elfPath.c_str(),
@@ -346,6 +347,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         static_cast<unsigned>(config_.networkSize),
         config_.meshLinkClock.c_str(),
         static_cast<unsigned>(config_.meshLinkWidthBits),
+        static_cast<unsigned>(config_.networkPacketWords),
         config_.receiveDMAClock.c_str(),
         static_cast<unsigned>(config_.receiveDMAWidthBits),
         static_cast<unsigned long long>(
@@ -428,6 +430,15 @@ void Tile::validateConfiguration() const
             "tile %u requires mesh_link_width_bits to be a positive "
             "multiple of 32\n",
             static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.networkPacketWords < kDeploymentFrameHeaderWords) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u requires network_packet_words to be at least %zu "
+            "so one deployment header stays in one packet\n",
+            static_cast<unsigned>(config_.tileId),
+            kDeploymentFrameHeaderWords);
     }
     if (config_.qemuPath.empty()) {
         output_.fatal(CALL_INFO, -1, "tile %u has an empty qemu_path\n",
@@ -2019,6 +2030,7 @@ void Tile::serviceOutgoingPackets()
         if (!pendingTransmitBurst_.has_value()) {
             pendingTransmitBurst_ = bridge_.popTransmitBurst();
             if (pendingTransmitBurst_.has_value()) {
+                pendingTransmitBurstOffset_ = 0;
                 pendingTransmitBurstReadyTick_ =
                     getCurrentSimCycle();
             }
@@ -2046,15 +2058,21 @@ void Tile::serviceOutgoingPackets()
                     static_cast<unsigned>(burst.word_count));
             }
 
-            const int burstBits =
-                static_cast<int>(burst.word_count) * kPacketBits;
+            const std::uint32_t remainingWords =
+                burst.word_count - pendingTransmitBurstOffset_;
+            const std::uint32_t packetWords = std::min(
+                remainingWords, config_.networkPacketWords);
+            const int packetBits =
+                static_cast<int>(packetWords) * kPacketBits;
+            const std::uint32_t* const packetBegin =
+                burst.words + pendingTransmitBurstOffset_;
             if (!network_->spaceToSend(
-                    kVirtualNetwork, burstBits)) {
+                    kVirtualNetwork, packetBits)) {
                 const std::uint64_t blockTick =
                     getCurrentSimCycle();
                 const std::vector<std::uint32_t> blockedPayload(
-                    burst.words,
-                    burst.words + burst.word_count);
+                    packetBegin,
+                    packetBegin + packetWords);
                 OutgoingFrame blockedFrame = outgoingFrame_;
                 const PacketEvent::Metadata blockedMetadata =
                     describePacket(
@@ -2072,14 +2090,14 @@ void Tile::serviceOutgoingPackets()
                         : (blockedMetadata.payloadWords != 0
                                ? "frame-payload"
                                : "raw"),
-                    burst.word_count,
+                    packetWords,
                     1U + bridge_.transmitBurstCount());
                 return;
             }
 
             std::vector<std::uint32_t> payload(
-                burst.words,
-                burst.words + burst.word_count);
+                packetBegin,
+                packetBegin + packetWords);
             const std::uint64_t injectionTick =
                 getCurrentSimCycle();
             completeTransmitBlock();
@@ -2095,7 +2113,7 @@ void Tile::serviceOutgoingPackets()
                 new SST::Interfaces::SimpleNetwork::Request(
                     burst.destination,
                     config_.tileId,
-                    burstBits,
+                    packetBits,
                     true,
                     true,
                     new PacketEvent(
@@ -2107,11 +2125,11 @@ void Tile::serviceOutgoingPackets()
             outgoingFrame_ = nextFrame;
             ++nextNetworkPacketId_;
             ++networkTransmitPackets_;
-            networkTransmitWords_ += burst.word_count;
+            networkTransmitWords_ += packetWords;
             const std::uint32_t hops =
                 meshHops(config_.tileId, burst.destination);
             networkWordHops_ +=
-                static_cast<std::uint64_t>(burst.word_count) * hops;
+                static_cast<std::uint64_t>(packetWords) * hops;
             networkEndpointQueueTicks_ +=
                 injectionTick >= metadata.readyTick
                     ? injectionTick - metadata.readyTick
@@ -2128,7 +2146,7 @@ void Tile::serviceOutgoingPackets()
                     : (metadata.payloadWords != 0
                            ? "frame-payload"
                            : "raw"),
-                burst.word_count,
+                packetWords,
                 metadata.protocolWords,
                 metadata.payloadWords,
                 hops,
@@ -2140,12 +2158,20 @@ void Tile::serviceOutgoingPackets()
                 CALL_INFO,
                 2,
                 0,
-                "tile %u sent %u-word burst to tile %u\n",
+                "tile %u sent %u-word packet to tile %u "
+                "(%u/%u burst words)\n",
                 static_cast<unsigned>(config_.tileId),
-                static_cast<unsigned>(burst.word_count),
-                static_cast<unsigned>(burst.destination));
-            pendingTransmitBurst_.reset();
-            pendingTransmitBurstReadyTick_.reset();
+                static_cast<unsigned>(packetWords),
+                static_cast<unsigned>(burst.destination),
+                static_cast<unsigned>(
+                    pendingTransmitBurstOffset_ + packetWords),
+                static_cast<unsigned>(burst.word_count));
+            pendingTransmitBurstOffset_ += packetWords;
+            if (pendingTransmitBurstOffset_ == burst.word_count) {
+                pendingTransmitBurst_.reset();
+                pendingTransmitBurstOffset_ = 0;
+                pendingTransmitBurstReadyTick_.reset();
+            }
             continue;
         }
 

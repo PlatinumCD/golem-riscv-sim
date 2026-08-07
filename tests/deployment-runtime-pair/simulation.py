@@ -58,10 +58,9 @@ build_mesh(
         os.environ.get("MITTENS_DEPLOYMENT_VERBOSITY", "3")
     ),
     tile_params=tile_params,
-    # Preserve 64 KiB of buffering while modeling one physical 32-bit word
-    # per timing cell instead of padding each request to a 16 KiB cell.
+    # Use a small buffer to make sure that SST fragments the 300-word tensor.
     network_cell_words=1,
-    network_buffer_cells=16384,
+    network_buffer_cells=16,
     mesh_link_width_bits=int(
         os.environ.get("MITTENS_DEPLOYMENT_MESH_LINK_WIDTH_BITS", "32")
     ),

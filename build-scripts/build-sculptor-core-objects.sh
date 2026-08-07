@@ -5,7 +5,10 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-readonly PARTITIONED="${SCULPTOR_PARTITIONED_MLIR:?SCULPTOR_PARTITIONED_MLIR must name the partitioned Sculptor module}"
+# SCULPTOR_DEPLOYMENT_MLIR is the RA-tree pipeline output after tile routines
+# have been outlined.  Keep the former name as a compatibility alias while
+# callers migrate from the retired task-graph partitioner.
+readonly DEPLOYMENT="${SCULPTOR_DEPLOYMENT_MLIR:-${SCULPTOR_PARTITIONED_MLIR:-}}"
 readonly CORES="${SCULPTOR_CORE_OBJECT_DIR:?SCULPTOR_CORE_OBJECT_DIR must name the output directory}"
 readonly JOBS="${SCULPTOR_CORE_BUILD_JOBS:-$(nproc)}"
 readonly LTO="${SCULPTOR_CORE_LTO:-full}"
@@ -20,7 +23,11 @@ readonly TRANSLATE="${INSTALL_ROOT}/llvm/bin/mlir-translate"
 readonly CLANG="${INSTALL_ROOT}/llvm/bin/clang"
 readonly LLVM_READOBJ="${INSTALL_ROOT}/llvm/bin/llvm-readobj"
 
-require_file "${PARTITIONED}"
+if [[ -z "${DEPLOYMENT}" ]]; then
+    echo "SCULPTOR_DEPLOYMENT_MLIR must name the outlined Sculptor tile deployment" >&2
+    exit 1
+fi
+require_file "${DEPLOYMENT}"
 for executable in "${OPT}" "${TRANSLATE}" "${CLANG}" "${LLVM_READOBJ}"; do
     require_executable "${executable}"
 done
@@ -61,7 +68,7 @@ fi
 export SCULPTOR_CORE_OPTIMIZATION_FLAGS="${optimization_flags[*]}"
 
 mapfile -t CORE_IDS < <(
-    rg -o '^  module @tile_[0-9]+' "${PARTITIONED}" |
+    rg -o '^  module @tile_[0-9]+' "${DEPLOYMENT}" |
         sed -E 's/^  module @tile_//' |
         sort -n -u
 )
@@ -86,7 +93,7 @@ build_core() {
     rm -f -- "${prefix}.o" "${fallback_marker}"
 
     echo "[tile ${core_id}] extract tile"
-    "${OPT}" "${PARTITIONED}" \
+    "${OPT}" "${DEPLOYMENT}" \
         "--sculptor-extract-tile-module=tile-id=${core_id}" \
         -o "${prefix}-extracted.mlir"
 
@@ -181,7 +188,7 @@ build_core() {
     echo "[core ${core_id}] complete"
 }
 export -f build_core
-export OPT TRANSLATE CLANG LLVM_READOBJ PARTITIONED CORES GOLEM_TARGET GOLEM_CPU GOLEM_ABI
+export OPT TRANSLATE CLANG LLVM_READOBJ DEPLOYMENT CORES GOLEM_TARGET GOLEM_CPU GOLEM_ABI
 export REGALLOC REGALLOC_FALLBACK SCRATCHPAD_BYTES
 export REUSE_OBJECTS
 

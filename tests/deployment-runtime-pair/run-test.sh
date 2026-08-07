@@ -17,6 +17,8 @@ readonly SIMULATION_OUTPUT="${OUTPUT_DIR}/simulation.log"
 readonly STATISTICS="${OUTPUT_DIR}/router-statistics.csv"
 readonly RX_DMA_WIDTH_BITS="${MITTENS_DEPLOYMENT_RX_DMA_WIDTH_BITS:-256}"
 readonly RX_DMA_SETUP_CYCLES="${MITTENS_DEPLOYMENT_RX_DMA_SETUP_CYCLES:-8}"
+readonly NETWORK_PACKET_WORDS=16
+readonly ROUTE_WORDS=300
 
 if [[ ! "${RX_DMA_WIDTH_BITS}" =~ ^[1-9][0-9]*$ ]] ||
    (( RX_DMA_WIDTH_BITS % 32 != 0 )); then
@@ -29,8 +31,11 @@ if [[ ! "${RX_DMA_SETUP_CYCLES}" =~ ^[0-9]+$ ]]; then
 fi
 readonly RX_DMA_WORDS_PER_CYCLE=$((RX_DMA_WIDTH_BITS / 32))
 readonly RX_DMA_EXPECTED_CYCLES=$((
-    (300 + RX_DMA_WORDS_PER_CYCLE - 1) / RX_DMA_WORDS_PER_CYCLE +
+    (ROUTE_WORDS + RX_DMA_WORDS_PER_CYCLE - 1) / RX_DMA_WORDS_PER_CYCLE +
     RX_DMA_SETUP_CYCLES
+))
+readonly RX_DMA_EXPECTED_TRANSFERS=$((
+    (ROUTE_WORDS + NETWORK_PACKET_WORDS - 1) / NETWORK_PACKET_WORDS
 ))
 
 for executable in \
@@ -119,32 +124,28 @@ grep -E "MITTENS_PROFILE tile=1 .*stop_nic_rx=[1-9][0-9]*" \
     echo "destination tile never entered the blocking NIC receive state" >&2
     exit 1
 }
-grep -E "MITTENS_PROFILE tile=1 .*stop_nic_rx_dma_submit=1 .*rx_dma_transfers=1 rx_dma_words=300 rx_dma_active_cycles=${RX_DMA_EXPECTED_CYCLES}" \
+grep -E "MITTENS_PROFILE tile=1 .*stop_nic_rx_dma_submit=1 .*rx_dma_transfers=${RX_DMA_EXPECTED_TRANSFERS} rx_dma_words=${ROUTE_WORDS} rx_dma_active_cycles=${RX_DMA_EXPECTED_CYCLES}" \
     "${SIMULATION_OUTPUT}" >/dev/null || {
     echo "destination tile did not report the expected timed RX DMA" >&2
     exit 1
 }
 if [[ "${MITTENS_DEPLOYMENT_MEMORY_TOPOLOGY:-private_l1}" != \
       "shared_l2" ]]; then
-    timing_line="$(
-        grep -F "scheduled RX DMA" "${SIMULATION_OUTPUT}" |
-            grep -F "words=300" |
-            head -n 1
+    dma_observation="$(
+        awk '
+            /scheduled RX DMA burst/ &&
+            match($0, /start=([0-9]+), complete=([0-9]+)/, values) {
+                ++transfers
+                cycles += values[2] - values[1]
+            }
+            END {
+                print transfers "," cycles
+            }
+        ' "${SIMULATION_OUTPUT}"
     )"
-    start_cycle="$(
-        sed -E 's/.*start=([0-9]+), complete=.*/\1/' \
-            <<< "${timing_line}"
-    )"
-    completion_cycle="$(
-        sed -E 's/.*complete=([0-9]+).*/\1/' \
-            <<< "${timing_line}"
-    )"
-    if [[ -z "${timing_line}" ||
-          ! "${start_cycle}" =~ ^[0-9]+$ ||
-          ! "${completion_cycle}" =~ ^[0-9]+$ ||
-          $((completion_cycle - start_cycle)) -ne \
-              RX_DMA_EXPECTED_CYCLES ]]; then
-        echo "300-word RX DMA did not take setup + ceil(words*32/width) = ${RX_DMA_EXPECTED_CYCLES} cycles" >&2
+    if [[ "${dma_observation}" != \
+          "${RX_DMA_EXPECTED_TRANSFERS},${RX_DMA_EXPECTED_CYCLES}" ]]; then
+        echo "fragmented RX DMA did not retain one setup charge and ${RX_DMA_EXPECTED_CYCLES} total cycles" >&2
         exit 1
     fi
 fi
@@ -160,10 +161,10 @@ awk -F, '
         bits = $7
     }
     END {
-        exit !(packets == 2 && bits == 9760)
+        exit !(packets == 20 && bits == 9760)
     }
 ' "${STATISTICS}" || {
-    echo "expected 5-word header and 300-word payload packets (9760 bits)" >&2
+    echo "expected one header packet and 19 bounded payload packets (9760 bits)" >&2
     exit 1
 }
 

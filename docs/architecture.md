@@ -89,6 +89,21 @@ detail documented in [`../bridge/README.md`](../bridge/README.md).
 Guest RAM is never shared between tiles. A tile can affect another tile only
 by sending a packet through its NIC and the SST network.
 
+## Parallel host execution
+
+Each QEMU tile remains a separate host process. SST uses one event thread by
+default.
+
+`GOLEM_MODEL_SST_THREADS` selects the number of SST threads for the model
+suite. The `sst.simple` partitioner divides the component graph at mesh links.
+SST keeps each tile, local router, private L1, and memory controller in one
+partition.
+
+Parallel execution changes wall time only. It does not change CPU cycles,
+memory latency, analog latency, mesh timing, or simulated completion time.
+A valid comparison must produce identical guest output, simulated time, task
+completion, and router statistics.
+
 ## Compiler path
 
 The smallest verified application path is:

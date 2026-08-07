@@ -9,6 +9,7 @@ readonly LLVM="${GOLEM_LLVM_DIR:-${INSTALL_ROOT}/llvm}"
 readonly CLANGXX="${LLVM}/bin/clang++"
 readonly LLVM_AR="${LLVM}/bin/llvm-ar"
 readonly LLVM_NM="${LLVM}/bin/llvm-nm"
+readonly SCULPTOR_RUNTIME_SOURCE="${PROJECT_ROOT}/third_party/sculptor-mlir/runtime"
 readonly OBJECT_DIR="${BUILD_ROOT}/runtime/objects"
 readonly INSTALL_INCLUDE_DIR="${INSTALL_ROOT}/runtime/include/golem/runtime"
 readonly INSTALL_LIBRARY_DIR="${INSTALL_ROOT}/runtime/lib"
@@ -51,6 +52,8 @@ fi
 for executable in "${CLANGXX}" "${LLVM_AR}" "${LLVM_NM}"; do
     require_executable "${executable}"
 done
+require_file "${SCULPTOR_RUNTIME_SOURCE}/src/deployment_runtime.cpp"
+require_file "${SCULPTOR_RUNTIME_SOURCE}/src/mlir_runtime.cpp"
 
 sources=(
     basic_tile_runtime.cpp
@@ -62,6 +65,7 @@ sources=(
     task_registry.cpp
     tile_abi.cpp
     transport.cpp
+    mlir_runtime.cpp
 )
 
 cxx_flags=(
@@ -86,7 +90,7 @@ cxx_flags=(
     -Wextra
     -Wpedantic
     -Werror
-    "-I${PROJECT_ROOT}/runtime/include"
+    "-I${SCULPTOR_RUNTIME_SOURCE}/include"
     "${profile_flags[@]}"
 )
 
@@ -99,7 +103,7 @@ objects=()
 for source in "${sources[@]}"; do
     object="${OBJECT_DIR}/${source%.cpp}.o"
     "${CLANGXX}" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/runtime/src/${source}" \
+        -c "${SCULPTOR_RUNTIME_SOURCE}/src/${source}" \
         -o "${object}"
     objects+=("${object}")
 done
@@ -110,7 +114,7 @@ rm -f -- \
     "${INSTALL_INCLUDE_DIR}/packet.h"
 "${LLVM_AR}" rcsD "${LIBRARY}" "${objects[@]}"
 
-for header in "${PROJECT_ROOT}"/runtime/include/golem/runtime/*.h; do
+for header in "${SCULPTOR_RUNTIME_SOURCE}"/include/golem/runtime/*.h; do
     install -m 0644 -- "${header}" "${INSTALL_INCLUDE_DIR}/"
 done
 

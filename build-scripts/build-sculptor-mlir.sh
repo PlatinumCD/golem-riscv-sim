@@ -36,10 +36,17 @@ cmake --build "${BUILD}" --parallel "${BUILD_JOBS}"
 cmake --install "${BUILD}"
 
 require_executable "${INSTALL}/bin/sculptor-mlir-opt"
-if ! "${INSTALL}/bin/sculptor-mlir-opt" --help |
-    grep -- '--sculptor-extract-layers' >/dev/null; then
-    echo "installed Sculptor-MLIR tool does not expose the extract pass" >&2
-    exit 1
-fi
+require_file "${INSTALL}/lib/libgolem-runtime.a"
+for pass in \
+    --sculptor-build-ra-tree \
+    --sculptor-plan-mapping \
+    --sculptor-place-logical-tiles \
+    --sculptor-outline-tile-routines \
+    --sculptor-materialize-tile-runtime-graph; do
+    if ! "${INSTALL}/bin/sculptor-mlir-opt" --help | grep -- "${pass}" >/dev/null; then
+        echo "installed Sculptor-MLIR tool does not expose ${pass}" >&2
+        exit 1
+    fi
+done
 
 echo "installed Sculptor-MLIR: ${INSTALL}"

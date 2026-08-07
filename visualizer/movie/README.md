@@ -52,42 +52,12 @@ When more than 192 packets are simultaneously in flight, all packets continue
 to contribute to link heat, while the 192 most informative packet heads are
 drawn individually.
 
-## Build the exact GPT-2 movie source
-
-The movie has a dedicated placement rather than silently consuming an
-anonymous compiler fixture:
+## Render a trace movie
 
 ```bash
-./visualizer/movie/prepare-gpt2-8x8-source.sh
-```
-
-It uses:
-
-- analog GPT-2-small with four tokens;
-- an 8x8 mesh and four arrays per core;
-- timing-aware Greedy placement;
-- lookahead 3 and beam width 8;
-- transfer-cost, boundary-regret, compact-region, and link-pressure terms;
-- diagonal candidate scope; and
-- width-2 balanced reductions.
-
-The focused configuration does not alter the historical 112-deployment sweep.
-
-## Render the 8x8 GPT-2 movie
-
-```bash
-./visualizer/movie/build-gpt2-8x8-movie.sh
-```
-
-The first run creates a local Python environment under `build/` containing
-Pillow and a pinned FFmpeg distribution. The default output is:
-
-```text
-build/movies/gpt2-8x8-greedy-timing-l3-b8-all-heuristics/
-├── greedy-timing-l3-b8-all-heuristics.mp4
-├── greedy-timing-l3-b8-all-heuristics-preview.png
-├── greedy-timing-l3-b8-all-heuristics-trace.json
-└── greedy-timing-l3-b8-all-heuristics-manifest.json
+python3 visualizer/movie/render-movie.py \
+  /absolute/path/to/trace.json \
+  /absolute/path/to/movie.mp4
 ```
 
 Defaults:
@@ -101,35 +71,13 @@ Defaults:
 ## Configuration
 
 ```bash
-MITTENS_MOVIE_SECONDS=120 \
-MITTENS_MOVIE_FPS=60 \
-MITTENS_MOVIE_WIDTH=3840 \
-MITTENS_MOVIE_HEIGHT=2160 \
-MITTENS_MOVIE_CRF=15 \
-./visualizer/movie/build-gpt2-8x8-movie.sh
+python3 visualizer/movie/render-movie.py \
+  /absolute/path/to/trace.json \
+  /absolute/path/to/movie.mp4 \
+  --seconds 120 --fps 60 --width 3840 --height 2160 --crf 15
 ```
 
-Two presentation-speed variants can be generated from the exact same trace:
-
-```bash
-./visualizer/movie/build-speed-variants.sh
-```
-
-Relative to the canonical 90-second film, this produces a 180-second
-half-speed movie and a 22.5-second 4x-speed movie. Both remain 30 FPS and map
-the complete simulated interval linearly.
-
-Input and output locations can also be replaced:
-
-```bash
-MITTENS_MOVIE_PROFILE=/absolute/performance-profile \
-MITTENS_MOVIE_TASK_IR=/absolute/core-ir-directory \
-MITTENS_MOVIE_OUTPUT_DIRECTORY=/absolute/movie-output \
-./visualizer/movie/build-gpt2-8x8-movie.sh
-```
-
-The task IR is optional to the trace format but used by the GPT-2 wrapper to
-retain compiler task identities in the exported movie trace and provenance.
+The renderer requires Pillow and FFmpeg in the host environment.
 
 ## Linear frame mapping
 

@@ -388,7 +388,7 @@ This permits multiple tasks assigned to one RISC-V tile to execute concurrently 
 
 The actual runtime does not behave this way. In:
 
-`runtime/src/deployment_runtime.cpp`
+`third_party/sculptor-mlir/runtime/src/deployment_runtime.cpp`
 
 the runtime scans tasks in local runtime-index order, selects a ready task, and executes one task on the tile. Output transmission may overlap with later ready work under the configured policy, subject to output-buffer conflicts, but two CPU task bodies do not execute simultaneously on one core.
 

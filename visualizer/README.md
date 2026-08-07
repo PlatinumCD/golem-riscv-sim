@@ -20,19 +20,8 @@ declared XY path; they are not a per-router trace.
 
 ## Opt-in export
 
-For GPT-2:
-
-```bash
-MITTENS_VISUALIZATION_EXPORT=1 \
-./tests/sculptor-gpt2-8x8/run-deployment.sh
-```
-
-For ResNet-18:
-
-```bash
-MITTENS_VISUALIZATION_EXPORT=1 \
-./tests/sculptor-resnet18-8x8/run-deployment.sh
-```
+Set `MITTENS_VISUALIZATION_EXPORT=1` when running a deployment test that
+supports trace export.
 
 The flag enables the detailed profile and task markers required to construct
 the flow view, then writes:
@@ -55,7 +44,7 @@ MITTENS_VISUALIZATION_DIRECTORY=/absolute/output/path
 
 ```bash
 ./visualizer/serve.sh 8000 \
-  "$PWD/build/tests/sculptor-gpt2-8x8/deployment/visualization/trace.json"
+  /absolute/path/to/trace.json
 ```
 
 Open the printed URL. The server binds to `0.0.0.0`, so another device on the
@@ -83,11 +72,6 @@ linearly time-scaled H.264 movie. It adds packet header/payload intervals,
 transmit-backpressure activity, critical-chain markers, and compiler task
 metadata to the event presentation.
 
-Render the existing 8x8 GPT-2 demonstration with:
-
-```bash
-./visualizer/movie/build-gpt2-8x8-movie.sh
-```
-
-See [movie/README.md](movie/README.md) for the fidelity contract, exact frame
-mapping, output files, and configurable resolution, duration, and frame rate.
+Use `render-movie.py` with an exported trace. See
+[movie/README.md](movie/README.md) for the fidelity contract, frame mapping,
+output files, and configurable resolution, duration, and frame rate.

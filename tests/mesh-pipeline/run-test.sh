@@ -10,6 +10,12 @@ readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly STATISTICS="${TEST_BUILD}/router-statistics.csv"
+: "${GOLEM_SST_THREADS:=1}"
+
+if [[ ! "${GOLEM_SST_THREADS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "GOLEM_SST_THREADS must be a positive integer" >&2
+    exit 2
+fi
 
 for executable in "${SST}" "${QEMU}"; do
     if [[ ! -x "${executable}" ]]; then
@@ -31,7 +37,8 @@ for tile_id in {1..8}; do
 done
 
 rm -f -- "${STATISTICS}"
-"${SST}" "${TEST_DIR}/simulation.py"
+"${SST}" -n "${GOLEM_SST_THREADS}" --partitioner=sst.simple \
+    "${TEST_DIR}/simulation.py"
 
 if [[ ! -s "${STATISTICS}" ]]; then
     echo "pipeline simulation did not produce router statistics" >&2
@@ -77,5 +84,5 @@ require_packet_count router_0_2 port3 1
 require_packet_count router_0_1 port3 1
 require_packet_count router_0_0 port4 1
 
-echo "3x3 computation pipeline passed; final float32 result: 36.0"
+echo "3x3 computation pipeline passed with ${GOLEM_SST_THREADS} SST thread(s); final float32 result: 36.0"
 echo "router statistics: ${STATISTICS}"

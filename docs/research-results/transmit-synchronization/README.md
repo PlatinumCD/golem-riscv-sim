@@ -82,21 +82,9 @@ MITTENS_FANOUT_MODE=overlap-blocking ./tests/transmit-fanout/run-test.sh
 MITTENS_FANOUT_MODE=async ./tests/transmit-fanout/run-test.sh
 ```
 
-Run the final GPT-2 trace:
-
-```bash
-MITTENS_GPT2_CPU_ISSUE_WIDTH=2 \
-MITTENS_GPT2_PROFILE_MODE=trace \
-MITTENS_GPT2_TRANSMIT_POLICY=blocking \
-MITTENS_GPT2_DEPLOYMENT_DIR="$PWD/build/tests/sculptor-gpt2-8x8/deployment-doorbell-blocking-trace" \
-./tests/sculptor-gpt2-8x8/run-deployment.sh
-```
-
-Regenerate the SVGs and create a self-contained results archive:
-
-```bash
-./scripts/plot-transmit-synchronization-study.py
-./scripts/package-transmit-synchronization-study.sh
-```
+This is a historical result set from the retired task-graph deployment path.
+Its source deployment and regeneration scripts were removed during the
+RA-tree migration. Preserve these recorded results as provenance; do not use
+them as a current compiler validation procedure.
 
 All plotted time is SST simulated time, not simulator wall-clock time.

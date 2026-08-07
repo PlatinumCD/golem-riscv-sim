@@ -646,10 +646,11 @@ read RX_DATA
 
 ## Bare-metal runtime
 
-The Platform v0.1 runtime is implemented in `runtime/` as the freestanding
-`libgolem-runtime.a`. It consumes the compiler's resource, dimension,
-workspace, route, and task-binding tables and constructs the concrete memref
-descriptors required by generated task adapters.
+The Platform v0.1 runtime source is in `third_party/sculptor-mlir/runtime/`.
+`build-scripts/build-runtime.sh` cross-compiles this source as the
+freestanding `libgolem-runtime.a` archive. The runtime consumes the compiler's
+resource, dimension, workspace, route, and task-binding tables. It constructs
+the concrete memref descriptors that generated task adapters require.
 
 The first executable milestone also implements `BasicTileRuntime`. It consumes
 the C ABI tables emitted by `sculptor-emit-golem-tile-abi`, validates their

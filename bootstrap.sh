@@ -62,12 +62,7 @@ run_system_tests() {
     "${ROOT}/visualizer/tests/run-test.sh"
     "${ROOT}/tests/torch-mlir/run-test.sh"
     "${ROOT}/tests/pytorch-single-core/run-test.sh"
-    "${ROOT}/tests/torch-mlir-sculptor/run-test.sh"
-    "${ROOT}/tests/sculptor-core-elf/run-test.sh"
-    "${ROOT}/tests/sculptor-four-layer-mesh/run-test.sh"
-    "${ROOT}/tests/sculptor-eight-layer-mesh/run-test.sh"
-    "${ROOT}/tests/sculptor-eight-layer-mesh-4x2/run-test.sh"
-    "${ROOT}/runtime/tests/run-test.sh"
+    "${ROOT}/tests/sculptor-ra-tree-single-tile/run-test.sh"
     "${ROOT}/tests/runtime-library/run-test.sh"
     "${ROOT}/tests/memory-hierarchy-l1/run-test.sh"
     "${ROOT}/tests/deployment-runtime-pair/run-test.sh"
@@ -154,7 +149,6 @@ case "${ACTION}" in
         "${ROOT}/components/elements/mittens/tests/run-test.sh"
         ;;
     test-runtime)
-        "${ROOT}/runtime/tests/run-test.sh"
         "${ROOT}/tests/runtime-library/run-test.sh"
         "${ROOT}/tests/deployment-runtime-pair/run-test.sh"
         ;;
