@@ -76,10 +76,10 @@ out-of-task execution.
 Run the four fanout matrices:
 
 ```bash
-MITTENS_FANOUT_MODE=polling ./tests/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=blocking ./tests/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=overlap-blocking ./tests/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=async ./tests/transmit-fanout/run-test.sh
+MITTENS_FANOUT_MODE=polling ./tests/network/transmit-fanout/run-test.sh
+MITTENS_FANOUT_MODE=blocking ./tests/network/transmit-fanout/run-test.sh
+MITTENS_FANOUT_MODE=overlap-blocking ./tests/network/transmit-fanout/run-test.sh
+MITTENS_FANOUT_MODE=async ./tests/network/transmit-fanout/run-test.sh
 ```
 
 This is a historical result set from the retired task-graph deployment path.

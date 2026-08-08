@@ -109,42 +109,42 @@ build_hello() {
     build_tile \
         "${BUILD_ROOT}/tests/hello" \
         hello \
-        "${PROJECT_ROOT}/tests/hello/main.cpp"
+        "${PROJECT_ROOT}/tests/platform/hello/main.cpp"
 }
 
 build_riscv_vector() {
     build_tile \
         "${BUILD_ROOT}/tests/riscv-vector" \
         riscv-vector \
-        "${PROJECT_ROOT}/tests/riscv-vector/main.cpp"
+        "${PROJECT_ROOT}/tests/platform/riscv-vector/main.cpp"
 }
 
 build_cpu_timing_validation() {
     build_tile \
         "${BUILD_ROOT}/tests/cpu-timing-validation" \
         cpu-timing-validation \
-        "${PROJECT_ROOT}/tests/cpu-timing-validation/main.cpp"
+        "${PROJECT_ROOT}/tests/platform/cpu-timing/main.cpp"
 }
 
 build_runtime_library() {
     build_tile \
         "${BUILD_ROOT}/tests/runtime-library" \
         runtime-library \
-        "${PROJECT_ROOT}/tests/runtime-library/main.cpp"
+        "${PROJECT_ROOT}/tests/runtime/library/main.cpp"
 }
 
 build_scratchpad_dma() {
     build_tile \
         "${BUILD_ROOT}/tests/scratchpad-dma" \
         scratchpad-dma \
-        "${PROJECT_ROOT}/tests/scratchpad-dma/main.cpp"
+        "${PROJECT_ROOT}/tests/memory/scratchpad-dma/main.cpp"
 }
 
 build_memory_hierarchy_l1() {
     build_tile \
         "${BUILD_ROOT}/tests/memory-hierarchy-l1" \
         memory-hierarchy-l1 \
-        "${PROJECT_ROOT}/tests/memory-hierarchy-l1/main.cpp"
+        "${PROJECT_ROOT}/tests/memory/private-l1/main.cpp"
 }
 
 build_memory_timing_validation() {
@@ -153,17 +153,17 @@ build_memory_timing_validation() {
     build_tile \
         "${output_dir}" \
         memory-conflict \
-        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
         -DMITTENS_MEMORY_TEST_CONFLICT=1
     build_tile \
         "${output_dir}" \
         memory-capacity \
-        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
         -DMITTENS_MEMORY_TEST_CAPACITY=1
     build_tile \
         "${output_dir}" \
         memory-store-buffer \
-        "${PROJECT_ROOT}/tests/memory-timing-validation/main.cpp" \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
         -DMITTENS_MEMORY_TEST_STORE_BUFFER=1
 }
 
@@ -171,14 +171,14 @@ build_analog_instructions() {
     build_tile \
         "${BUILD_ROOT}/tests/analog-instructions" \
         analog-instructions \
-        "${PROJECT_ROOT}/tests/analog-instructions/main.cpp"
+        "${PROJECT_ROOT}/tests/analog/instructions/main.cpp"
 }
 
 build_analog_ops() {
     build_tile \
         "${BUILD_ROOT}/tests/analog-ops" \
         analog-ops \
-        "${PROJECT_ROOT}/tests/analog-ops/main.cpp"
+        "${PROJECT_ROOT}/tests/analog/ops/main.cpp"
 }
 
 build_analog_timing_validation() {
@@ -187,12 +187,12 @@ build_analog_timing_validation() {
     build_tile \
         "${output_dir}" \
         analog-timing-single \
-        "${PROJECT_ROOT}/tests/analog-timing-validation/main.cpp" \
+        "${PROJECT_ROOT}/tests/analog/timing/main.cpp" \
         -DMITTENS_ANALOG_TIMING_ARRAY_COUNT=1
     build_tile \
         "${output_dir}" \
         analog-timing-dual \
-        "${PROJECT_ROOT}/tests/analog-timing-validation/main.cpp" \
+        "${PROJECT_ROOT}/tests/analog/timing/main.cpp" \
         -DMITTENS_ANALOG_TIMING_ARRAY_COUNT=2
 }
 
@@ -204,7 +204,7 @@ build_analog_mesh_2x2() {
         build_tile \
             "${output_dir}" \
             "tile${tile_id}" \
-            "${PROJECT_ROOT}/tests/analog-mesh-2x2/main.cpp" \
+            "${PROJECT_ROOT}/tests/analog/mesh-2x2/main.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}"
     done
 }
@@ -217,7 +217,7 @@ build_analog_mesh_2x2_dual_array() {
         build_tile \
             "${output_dir}" \
             "tile${tile_id}" \
-            "${PROJECT_ROOT}/tests/analog-mesh-2x2-dual-array/main.cpp" \
+            "${PROJECT_ROOT}/tests/analog/mesh-2x2-dual-array/main.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}"
     done
 }
@@ -247,7 +247,7 @@ build_analog_route_2x2_variant() {
         build_tile \
             "${output_dir}" \
             "tile${tile_id}" \
-            "${PROJECT_ROOT}/tests/analog-route-2x2/main.cpp" \
+            "${PROJECT_ROOT}/tests/analog/route-2x2/main.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}" \
             "-DMITTENS_ROUTE_POSITION=${position}" \
             "-DMITTENS_NEXT_TILE=${next_tile}" \
@@ -265,11 +265,11 @@ build_mesh_pair() {
     build_tile \
         "${output_dir}" \
         tile0-sender \
-        "${PROJECT_ROOT}/tests/mesh-pair/sender.cpp"
+        "${PROJECT_ROOT}/tests/network/pair/sender.cpp"
     build_tile \
         "${output_dir}" \
         tile1-receiver \
-        "${PROJECT_ROOT}/tests/mesh-pair/receiver.cpp"
+        "${PROJECT_ROOT}/tests/network/pair/receiver.cpp"
 }
 
 build_mesh_3x3() {
@@ -279,20 +279,20 @@ build_mesh_3x3() {
     build_tile \
         "${output_dir}" \
         tile0-sender \
-        "${PROJECT_ROOT}/tests/mesh-3x3/sender.cpp"
+        "${PROJECT_ROOT}/tests/network/mesh-3x3/sender.cpp"
 
     for tile_id in {1..7}; do
         build_tile \
             "${output_dir}" \
             "tile${tile_id}-worker" \
-            "${PROJECT_ROOT}/tests/mesh-3x3/worker.cpp" \
+            "${PROJECT_ROOT}/tests/network/mesh-3x3/worker.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}"
     done
 
     build_tile \
         "${output_dir}" \
         tile8-receiver \
-        "${PROJECT_ROOT}/tests/mesh-3x3/receiver.cpp"
+        "${PROJECT_ROOT}/tests/network/mesh-3x3/receiver.cpp"
 }
 
 build_mesh_pipeline() {
@@ -330,13 +330,13 @@ build_mesh_pipeline() {
     build_tile \
         "${output_dir}" \
         tile0-dispatcher \
-        "${PROJECT_ROOT}/tests/mesh-pipeline/dispatcher.cpp"
+        "${PROJECT_ROOT}/tests/network/pipeline/dispatcher.cpp"
 
     for tile_id in {1..8}; do
         build_tile \
             "${output_dir}" \
             "tile${tile_id}-worker" \
-            "${PROJECT_ROOT}/tests/mesh-pipeline/worker.cpp" \
+            "${PROJECT_ROOT}/tests/network/pipeline/worker.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}" \
             "-DMITTENS_NEXT_TILE=${successors[${tile_id}]}" \
             "-DMITTENS_EXPECTED_INPUT=${expected_inputs[${tile_id}]}U" \
@@ -354,7 +354,7 @@ build_distributed_matvec_variant() {
         build_tile \
             "${output_dir}" \
             "tile${tile_id}" \
-            "${PROJECT_ROOT}/tests/distributed-matvec/main.cpp" \
+            "${PROJECT_ROOT}/tests/analog/distributed-matvec/main.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}" \
             "${mapping_flags[@]}"
     done

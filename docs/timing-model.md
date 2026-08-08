@@ -78,7 +78,7 @@ ready while QEMU is inside a grant is the remaining exception: because the
 current co-simulation has no rollback, a coarse grant can allow QEMU to take
 an empty-receive software path that a finer grant would have avoided.
 
-`tests/cpu-timing-validation` verifies this rule with widths 1/2/4 and quanta
+`tests/platform/cpu-timing` verifies this rule with widths 1/2/4 and quanta
 37/1,000. Its 18 region checks have zero-cycle error, including explicit
 counting of `vsetivli`, and each width has identical timestamps and completion
 time under both quanta.
@@ -177,7 +177,7 @@ state, and post-marker cache hits and misses are measured independently. The
 profile reports the handshake count, access count, read and write byte counts,
 and charged initialization cycles.
 
-`tests/memory-timing-validation` independently verifies the cache boundary.
+`tests/memory/timing` independently verifies the cache boundary.
 For the documented L1, links, and 50 ns lower-memory backend, it observes exact
 five-cycle hits and 61-cycle misses. Its conflict/LRU sequence matches four
 hits, six misses, and 386 wait cycles; its capacity sequence matches one hit,
@@ -262,7 +262,7 @@ head[rank] = 35 + rank * packet_words
 completion[rank] = 35 + (rank + 1) * packet_words - 1
 ```
 
-`tests/network-timing-validation` checks this law with 21 exact timestamp
+`tests/network/timing` checks this law with 21 exact timestamp
 comparisons across packet size, Manhattan distance, and two/four-source
 contention.
 
@@ -416,7 +416,7 @@ tile, followed by tile to destination array. CrossSim host execution time is
 not charged as simulated latency; CrossSim supplies numerical behavior while
 SST supplies the modeled transfer and compute schedule.
 
-`tests/analog-timing-validation` checks this boundary end to end from real
+`tests/analog/timing` checks this boundary end to end from real
 bare-metal Golem instructions through QEMU, fd 43, fd 41, and SST. An
 independent reference scheduler predicts every service-phase timestamp from
 the observed command arrivals. For 9x9 arrays and an eight-cycle compute

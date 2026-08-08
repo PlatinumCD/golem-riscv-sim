@@ -1,21 +1,71 @@
 # Testing
 
-Each test owns its sources and runs in the foreground. The repository uses
-Sculptor's RA-tree compiler pipeline. The former task-graph and island tests
-were removed because their compiler interface no longer exists.
+Each test owns its source files and runs in the foreground. The source tree
+groups tests by the subsystem that owns the primary behavior.
+
+## Test groups
+
+| Directory | Scope |
+|---|---|
+| `tests/platform/` | Bare-metal boot, RISC-V vectors, and CPU timing |
+| `tests/compiler/` | Torch-MLIR, PyTorch lowering, Sculptor, and compiler integration |
+| `tests/runtime/` | Runtime library and routed deployment behavior |
+| `tests/memory/` | Private caches, shared caches, scratchpad DMA, and memory timing |
+| `tests/network/` | Mesh routing, pipelines, fanout, and network timing |
+| `tests/analog/` | Analog instructions, arrays, routes, and distributed MVM behavior |
+| `tests/models/` | Complete compiler-to-simulator model deployments |
+| `tests/validation/` | Cross-component baselines and profile analysis |
+| `tests/support/` | Shared shell and Python test infrastructure |
+
+Execution cost does not determine the directory. A change in execution time
+does not change the owning subsystem.
+
+Component-owned tests remain beside their components:
+
+```text
+components/elements/mittens/tests/
+visualizer/tests/
+```
+
+## Run tests
+
+Run one test from its directory:
+
+```bash
+./tests/network/pair/run-test.sh
+```
+
+Run one subsystem group:
+
+```bash
+./tests/run-group.sh network
+```
+
+Run all root test groups:
+
+```bash
+./tests/run-all.sh
+```
+
+The complete run includes the 25-case model suite and the validation group.
+Use a subsystem runner for a shorter development cycle.
+
+The shared `tests/support/test-env.sh` file supplies repository, build, and
+installation paths. Generated files keep their existing flat paths below
+`build/tests/`.
 
 ## Compiler and runtime proof
 
 ```bash
-./tests/torch-mlir/run-test.sh
-./tests/pytorch-single-core/run-test.sh
-./tests/sculptor-ra-tree-single-tile/run-test.sh
-./tests/runtime-library/run-test.sh
+./tests/compiler/torch-mlir/run-test.sh
+./tests/compiler/pytorch-single-core/run-test.sh
+./tests/compiler/sculptor-ra-tree-single-tile/run-test.sh
+./tests/runtime/library/run-test.sh
 ```
 
-`sculptor-ra-tree-single-tile` exports a deterministic PyTorch linear layer,
-builds its RA tree, plans and places a tile, outlines its boot and dispatch
-routines, and emits a RISC-V object with the generated tile ABI.
+The single-tile Sculptor test exports a deterministic PyTorch linear layer.
+It builds, maps, places, and outlines the RA tree. Then it emits a RISC-V
+object with the generated tile ABI.
 
 The shared RA-tree entry points are:
 
@@ -24,40 +74,23 @@ build-scripts/lower-sculptor-ra-tree.sh
 build-scripts/build-sculptor-core-objects.sh
 ```
 
-See [Sculptor RA-tree migration](sculptor-ra-tree-migration.md) for the full
-compiler-to-runtime-to-simulator contract.
+See [Sculptor RA-tree migration](sculptor-ra-tree-migration.md) for the
+compiler, runtime, QEMU, and SST boundary.
 
-## Platform and simulator proof
+## Model-family simulation
+
+`tests/models/sculptor-ra-tree/` adapts all 25 non-GPT Python fixtures from
+the pinned Sculptor repository. Each case produces a bare-metal tile ELF.
+QEMU and SST run the deployment and record the simulated completion time.
+
+Run all model cases with the native memory backend:
 
 ```bash
-./components/elements/mittens/tests/run-test.sh
-./visualizer/tests/run-test.sh
-./tests/hello/run-test.sh
-./tests/riscv-vector/run-test.sh
-./tests/cpu-timing-validation/run-test.sh
-./tests/analog-instructions/run-test.sh
-./tests/analog-ops/run-test.sh
-./tests/analog-timing-validation/run-test.sh
-./tests/analog-mesh-2x2/run-test.sh
-./tests/analog-route-2x2/run-test.sh
-./tests/analog-mesh-2x2-dual-array/run-test.sh
-./tests/mesh-pair/run-test.sh
-./tests/mesh-3x3/run-test.sh
-./tests/network-timing-validation/run-test.sh
-./tests/transmit-fanout/run-test.sh
-./tests/memory-timing-validation/run-test.sh
-./tests/memory-hierarchy-l1/run-test.sh
-./tests/deployment-runtime-pair/run-test.sh
-./tests/mesh-pipeline/run-test.sh
-./tests/distributed-matvec/run-test.sh
+./tests/models/sculptor-ra-tree/run-all.sh
 ```
 
-These tests validate the QEMU execution model, SST/Mittens mesh transport,
-32-bit routed words, analog backends, timing synchronization, memory models,
-and the reusable runtime independently of a particular neural-network model.
-## Sculptor model-family simulation
+Run all model cases with the memHierarchy backend:
 
-`tests/sculptor-ra-tree-model-suite` adapts all 25 non-GPT Python model
-fixtures from the pinned Sculptor repository. Each case lowers a PyTorch model,
-creates a bare-metal tile ELF, runs it with QEMU and SST, and records SST
-simulated completion time. See its `README.md` for commands and scope.
+```bash
+./tests/models/sculptor-ra-tree/run-all.sh --memhierarchy
+```

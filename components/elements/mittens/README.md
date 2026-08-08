@@ -140,7 +140,7 @@ The intended component boundary is:
 bare-metal ELF <-> QEMU <-> mittens.tile <-> merlin.linkcontrol <-> Merlin mesh
 ```
 
-`tests/memory-hierarchy-l1` separately verifies the optional path:
+`tests/memory/private-l1` separately verifies the optional path:
 
 ```text
 QEMU tile <-> fd 41 <-> mittens.tile <-> StandardMem <-> private L1

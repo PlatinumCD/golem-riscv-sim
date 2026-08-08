@@ -120,7 +120,8 @@ Torch dialect -> Linalg-on-tensors -> bufferized scalar loops
 freestanding RISC-V ELF -> one QEMU hart
 ```
 
-The single-core proof is implemented in `tests/pytorch-single-core`. PyTorch
+The single-core proof is implemented in `tests/compiler/pytorch-single-core`.
+PyTorch
 is a host-side compiler dependency only. The generated ELF contains the
 lowered model, a small memref ABI driver, and the existing bare-metal startup
 and UART code; it neither embeds Python nor requires an operating system.

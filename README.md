@@ -54,35 +54,47 @@ pass:
 ```bash
 ./components/elements/mittens/tests/run-test.sh
 ./visualizer/tests/run-test.sh
-./tests/torch-mlir/run-test.sh
-./tests/pytorch-single-core/run-test.sh
-./tests/sculptor-ra-tree-single-tile/run-test.sh
-./tests/runtime-library/run-test.sh
-./tests/memory-hierarchy-l1/run-test.sh
-./tests/deployment-runtime-pair/run-test.sh
-./tests/hello/run-test.sh
-./tests/riscv-vector/run-test.sh
-./tests/cpu-timing-validation/run-test.sh
-./tests/analog-instructions/run-test.sh
-./tests/analog-ops/run-test.sh
-./tests/analog-timing-validation/run-test.sh
-./tests/analog-mesh-2x2/run-test.sh
-./tests/analog-route-2x2/run-test.sh
-./tests/analog-mesh-2x2-dual-array/run-test.sh
-./tests/mesh-pair/run-test.sh
-./tests/mesh-3x3/run-test.sh
-./tests/network-timing-validation/run-test.sh
-./tests/transmit-fanout/run-test.sh
-./tests/memory-timing-validation/run-test.sh
-./tests/mesh-pipeline/run-test.sh
-./tests/distributed-matvec/run-test.sh
+./tests/compiler/torch-mlir/run-test.sh
+./tests/compiler/pytorch-single-core/run-test.sh
+./tests/compiler/sculptor-ra-tree-single-tile/run-test.sh
+./tests/runtime/library/run-test.sh
+./tests/memory/private-l1/run-test.sh
+./tests/runtime/deployment-pair/run-test.sh
+./tests/platform/hello/run-test.sh
+./tests/platform/riscv-vector/run-test.sh
+./tests/platform/cpu-timing/run-test.sh
+./tests/analog/instructions/run-test.sh
+./tests/analog/ops/run-test.sh
+./tests/analog/timing/run-test.sh
+./tests/analog/mesh-2x2/run-test.sh
+./tests/analog/route-2x2/run-test.sh
+./tests/analog/mesh-2x2-dual-array/run-test.sh
+./tests/network/pair/run-test.sh
+./tests/network/mesh-3x3/run-test.sh
+./tests/network/timing/run-test.sh
+./tests/network/transmit-fanout/run-test.sh
+./tests/memory/timing/run-test.sh
+./tests/network/pipeline/run-test.sh
+./tests/analog/distributed-matvec/run-test.sh
 ```
 
 The frozen component evidence gates can also be rerun together, without
 building or executing the GPT-2 sweep:
 
 ```bash
-./tests/epoch-c-validation/run-test.sh
+./tests/validation/epoch-c/run-test.sh
+```
+
+Run one subsystem group with:
+
+```bash
+./tests/run-group.sh network
+```
+
+Run all root test groups with:
+
+```bash
+./tests/run-all.sh
 ```
 
 ## Repository layout
@@ -97,7 +109,15 @@ config/                         pinned revisions and Platform v0.1 build setting
 docs/                           platform, build, and testing documentation
 patches/qemu/                   minimal upstream QEMU integration changes
 platform/                       bare-metal startup, linker script, and MMIO API
-tests/                          complete system test scenarios
+tests/platform/                 boot, ISA, and CPU tests
+tests/compiler/                 compiler integration tests
+tests/runtime/                  tile runtime tests
+tests/memory/                   cache, memory, and scratchpad tests
+tests/network/                  mesh and transport tests
+tests/analog/                   analog accelerator tests
+tests/models/                   complete model deployments
+tests/validation/               cross-component validation tests
+tests/support/                  shared test infrastructure
 third_party/                    pinned compilers, runtime source, and simulators
 visualizer/                     opt-in mesh activity exporter and web viewer
 build/                          generated source and build trees (ignored)
