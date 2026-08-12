@@ -8,6 +8,18 @@ exposes optional `SST::Interfaces::SimpleNetwork` and
 component forwards the SST `init`, `setup`, and `finish` phases to those
 interfaces.
 
+The element also supplies `mittens.wormholeNIC` and
+`mittens.wormholeRouter`. These components implement the default model network.
+
+The router has four mesh ports and one local port. It uses deterministic XY
+routing, finite input buffers, per-flit credits, and round-robin arbitration.
+
+Each request becomes a stream of 32-bit flits. The output stays reserved until
+the packet tail departs.
+
+The network interface returns ejection credits when the tile removes a
+complete request. A full tile receive path can therefore stop upstream links.
+
 With `launch_mode=managed`, the component launches one QEMU child process in
 `setup()`, keeps the simulation alive until QEMU exits, and controls that
 child through the fd 41 synchronization bridge. SST grants precise icount
@@ -27,6 +39,10 @@ to host-side process polling.
 | `sync_instruction_quantum` | Maximum instructions in one QEMU grant | `1000` |
 | `memory_backend` | Data-memory timing backend: `native` or `memhierarchy` | `native` |
 | `memory_init_batching` | Aggregate pre-marker memory traffic into one fd 41 initialization event | `false` |
+| `memory_access_batching` | Group the fd 41 transport for runtime memory accesses | `false` |
+| `memory_access_batch_records` | Set the maximum records in one runtime batch | `16` |
+| `memory_load_queue_entries` | Limit grouped vector and scalar load requests | `8` |
+| `memory_store_buffer_entries` | Limit incomplete timed stores | `1` |
 | `memory_init_bytes_per_cycle` | Aggregate initialization transfer rate | `32` |
 | `memory_init_latency_cycles` | Fixed setup cost for the aggregate initialization transfer | `2` |
 | `rx_dma_clock` | Clock for the tile-local NIC-to-memory receive DMA engine | `1GHz` |
@@ -40,9 +56,13 @@ to host-side process polling.
 | `task_trace_directory` | Optional directory for collision-free per-tile task trace CSV files | Empty |
 
 With `memory_backend=memhierarchy`, the `memoryIF` slot is required. QEMU
-publishes each guest RAM data access through fd 41, Mittens sends a matching
-StandardMem request, and the hart resumes only after the response. The
-functional load or store still uses QEMU RAM; memHierarchy owns timing and
+publishes guest RAM data accesses through fd 41. Mittens sends matching
+StandardMem requests. Proven-independent consecutive scalar loads can use the
+configured load queue. Other scalar loads wait for their responses. Stores can
+remain in the configured store buffer. Cache-line fragments from one vector
+load can also use the load queue together.
+
+The functional load or store still uses QEMU RAM. MemHierarchy owns timing and
 cache state, not guest bytes. Each tile configuration attaches its own private
 L1. Native mode creates no StandardMem traffic.
 
@@ -61,6 +81,28 @@ The marker does not bypass modeled time or alter functional memory. It replaces
 millions of host synchronization round trips with one analytically timed
 initialization transfer. All later accesses return to the detailed
 StandardMem/private-L1 path.
+
+Runtime access batching is valid only with `memory_backend=memhierarchy`.
+QEMU writes ordered access records to the fd 41 shared-memory region.
+Each record contains its instruction count, vector count, address, size,
+direction, PC, and return address. Standard scalar load records also contain
+register dependency masks and the instruction length. SST replays each record
+through the same StandardMem path. Each request uses the standard cache and
+memory model.
+
+Mittens combines adjacent elements from one vector instruction by cache line.
+It can issue the resulting line requests together. It can also group adjacent
+scalar loads when the later address does not depend on an earlier load result.
+It preserves access order when the dependency data is absent or incomplete.
+
+The protocol supports a maximum of 1,024 records. The
+`memory_access_batch_records` parameter sets a smaller active limit. QEMU
+sends a partial batch at each quantum or external event. Atomic and
+scratchpad accesses stay synchronous.
+
+Set `memory_access_batching=true` to use this transport. A larger active limit
+decreases host synchronization. It also increases functional lookahead before
+SST replays the records. Use the standard transport for reference results.
 
 When `networkIF` is attached, the component creates the fd 42 data bridge for
 the custom QEMU `mittens-nic` device. A transmit publishes data on fd 42 and
@@ -137,8 +179,14 @@ link totals with `scripts/analyze-performance-profile.py`.
 The intended component boundary is:
 
 ```text
-bare-metal ELF <-> QEMU <-> mittens.tile <-> merlin.linkcontrol <-> Merlin mesh
+bare-metal ELF <-> QEMU <-> mittens.tile <-> mittens.wormholeNIC
+                                              <-> mittens.wormholeRouter mesh
 ```
+
+`tests/wormhole_network.py` sends two simultaneous 16-word packets through a
+shared output. It checks tail delivery and switch-arbitration delay.
+
+The same test gives identical packet times with one or two SST threads.
 
 `tests/memory/private-l1` separately verifies the optional path:
 

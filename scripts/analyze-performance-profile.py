@@ -16,6 +16,7 @@ MAX_TICK = (1 << 64) - 1
 INVALID_ROUTE_ID = 2**32 - 1
 INVALID_TASK_ID = 2**32 - 1
 LOCAL_ROUTER_PORT = "port4"
+MITTENS_LOCAL_ROUTER_PORT = "local"
 FREQUENCY_PATTERN = re.compile(
     r"^(?P<value>[0-9]+(?:\.[0-9]+)?)"
     r"(?P<unit>Hz|kHz|MHz|GHz)$"
@@ -745,25 +746,64 @@ def aggregate_task_memory(memory, tasks):
 def router_summary(path, finish_tick, timebase_ps, link_width_bits,
                    link_clock_hz):
     if path is None or not path.exists():
-        return {"physical_link_bits": 0, "router_stalls": 0, "links": []}
-    links = defaultdict(lambda: {"bits": 0, "packets": 0, "stalls": 0})
+        return {
+            "physical_link_bits": 0,
+            "router_stalls": 0,
+            "output_credit_stall_cycles": 0,
+            "switch_arbitration_stall_cycles": 0,
+            "input_buffer_full_cycles": 0,
+            "links": [],
+        }
+    links = defaultdict(
+        lambda: {
+            "bits": 0,
+            "packets": 0,
+            "stalls": 0,
+            "output_credit_stall_cycles": 0,
+            "switch_arbitration_stall_cycles": 0,
+            "input_buffer_full_cycles": 0,
+            "output_link_busy_cycles": 0,
+        }
+    )
+    cycle_ticks = 1e12 / link_clock_hz / timebase_ps
     with path.open("r", encoding="utf-8", newline="") as source:
         for row in csv.DictReader(source):
             component = row["ComponentName"]
             port = row["StatisticSubId"]
-            if not component.startswith("router_") or port == LOCAL_ROUTER_PORT:
+            if (
+                not component.startswith("router_") or
+                port in {LOCAL_ROUTER_PORT, MITTENS_LOCAL_ROUTER_PORT}
+            ):
                 continue
             key = (component, port)
             value = int(row.get("Sum.u64", 0))
             if row["StatisticName"] == "send_bit_count":
                 links[key]["bits"] += value
+            elif row["StatisticName"] == "flits_forwarded":
+                links[key]["bits"] += value * 32
             elif row["StatisticName"] == "send_packet_count":
                 links[key]["packets"] += value
-            elif row["StatisticName"] in {
-                "output_port_stalls",
-                "xbar_stalls",
-            }:
+            elif row["StatisticName"] == "packets_forwarded":
+                links[key]["packets"] += value
+            elif row["StatisticName"] == "output_port_stalls":
+                cycles = int(round(value / cycle_ticks))
+                links[key]["stalls"] += cycles
+                links[key]["output_credit_stall_cycles"] += cycles
+            elif row["StatisticName"] == "xbar_stalls":
                 links[key]["stalls"] += value
+                links[key]["switch_arbitration_stall_cycles"] += value
+            elif row["StatisticName"] == \
+                    "output_credit_stall_cycles":
+                links[key]["stalls"] += value
+                links[key]["output_credit_stall_cycles"] += value
+            elif row["StatisticName"] == \
+                    "switch_arbitration_stall_cycles":
+                links[key]["stalls"] += value
+                links[key]["switch_arbitration_stall_cycles"] += value
+            elif row["StatisticName"] == "input_buffer_full_cycles":
+                links[key]["input_buffer_full_cycles"] += value
+            elif row["StatisticName"] == "output_link_busy_cycles":
+                links[key]["output_link_busy_cycles"] += value
     seconds = finish_tick * timebase_ps * 1e-12
     capacity = seconds * link_clock_hz * link_width_bits
     records = []
@@ -781,6 +821,15 @@ def router_summary(path, finish_tick, timebase_ps, link_width_bits,
     return {
         "physical_link_bits": sum(item["bits"] for item in records),
         "router_stalls": sum(item["stalls"] for item in records),
+        "output_credit_stall_cycles": sum(
+            item["output_credit_stall_cycles"] for item in records
+        ),
+        "switch_arbitration_stall_cycles": sum(
+            item["switch_arbitration_stall_cycles"] for item in records
+        ),
+        "input_buffer_full_cycles": sum(
+            item["input_buffer_full_cycles"] for item in records
+        ),
         "links": records,
     }
 
@@ -1133,7 +1182,18 @@ def main():
     write_csv(
         output / "link-statistics.csv",
         routers["links"],
-        ["component", "port", "bits", "packets", "stalls", "utilization"],
+        [
+            "component",
+            "port",
+            "bits",
+            "packets",
+            "stalls",
+            "output_credit_stall_cycles",
+            "switch_arbitration_stall_cycles",
+            "input_buffer_full_cycles",
+            "output_link_busy_cycles",
+            "utilization",
+        ],
     )
     write_csv(
         output / "tasks.csv",
@@ -1203,7 +1263,7 @@ def main():
         0,
     )
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "timebase_ps": args.timebase_ps,
         "finish_tick": finish_tick,
         "finish_tick_reconstructed": finish_tick_reconstructed,
@@ -1225,6 +1285,15 @@ def main():
                 "physical_link_bits"
             ],
             "router_stalls": routers["router_stalls"],
+            "output_credit_stall_cycles": routers[
+                "output_credit_stall_cycles"
+            ],
+            "switch_arbitration_stall_cycles": routers[
+                "switch_arbitration_stall_cycles"
+            ],
+            "input_buffer_full_cycles": routers[
+                "input_buffer_full_cycles"
+            ],
             "routes": len(routes),
             "packet_detail_available": bool(network),
         },

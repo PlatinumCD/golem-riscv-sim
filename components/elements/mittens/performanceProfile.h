@@ -102,6 +102,14 @@ class PerformanceProfile final
                       std::uint64_t transmitBlockedEvents,
                       std::uint64_t transmitBlockedRetries,
                       std::uint64_t transmitMaximumQueueOccupancy,
+                      std::uint64_t maximumOutstandingMemoryRequests,
+                      std::uint64_t maximumOutstandingMemoryReads,
+                      std::uint64_t maximumStoreBufferOccupancy,
+                      std::uint64_t storeBufferFullEvents,
+                      std::uint64_t vectorMemoryRequestGroups,
+                      std::uint64_t vectorMemoryGroupRequests,
+                      std::uint64_t scalarMemoryRequestGroups,
+                      std::uint64_t scalarMemoryGroupRequests,
                       const std::uint64_t* waitTicks,
                       const char* const* waitReasonNames,
                       std::size_t waitTickCount);
@@ -122,6 +130,7 @@ class PerformanceProfile final
     std::ofstream analogStream_;
     std::ofstream memoryStream_;
     std::ofstream transmitBlockedStream_;
+    std::uint64_t clockRegressionCount_ = 0;
 };
 
 } // namespace Mittens

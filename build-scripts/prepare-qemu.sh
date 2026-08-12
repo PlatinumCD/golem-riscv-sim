@@ -93,6 +93,12 @@ apply_qemu_patch_once \
 apply_qemu_patch_once \
     "${PATCH_DIR}/0010-attribute-memory-accesses-to-guest-pc.patch" \
     "mittens_sync_guest_pc"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0011-synchronize-riscv-memory-fence.patch" \
+    "gen_helper_mittens_sync_memory_fence"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0012-report-riscv-load-register-dependencies.patch" \
+    "gen_helper_mittens_sync_memory_instruction"
 
 git -C "${SOURCE}" diff --check
 echo "prepared QEMU source: ${SOURCE}"

@@ -15,6 +15,7 @@ LINK_LATENCY = "10ns"
 WORD_BYTES = 4
 WORD_BITS = WORD_BYTES * 8
 MEMORY_BACKENDS = ("native", "memhierarchy")
+MESH_ROUTER_BACKENDS = ("merlin", "mittens")
 GUEST_RAM_BASE = 0x80000000
 DEFAULT_MEMORY_HIERARCHY = {
     "topology": "private_l1",
@@ -22,6 +23,8 @@ DEFAULT_MEMORY_HIERARCHY = {
     "l1_associativity": 4,
     "cache_line_size": 64,
     "l1_access_latency_cycles": 2,
+    "l1_max_requests_per_cycle": 1,
+    "l1_banks": 1,
     "l1_clock": "1GHz",
     "cpu_l1_latency": "1ns",
     "l1_memory_latency": "1ns",
@@ -137,11 +140,34 @@ def _make_router(x, y, width, height, flit_size, buffer_size,
     return router
 
 
-def _connect_routers(name, first, first_port, second, second_port):
+def _make_wormhole_router(x, y, width, height, clock,
+                          link_width_bits, input_buffer_flits,
+                          pipeline_cycles):
+    router_id = tile_id(x, y, width)
+    router = sst.Component(
+        f"router_{x}_{y}",
+        "mittens.wormholeRouter",
+    )
+    router.addParams(
+        {
+            "id": router_id,
+            "mesh_width": width,
+            "mesh_height": height,
+            "clock": clock,
+            "link_width_bits": link_width_bits,
+            "input_buffer_flits": input_buffer_flits,
+            "pipeline_cycles": pipeline_cycles,
+        }
+    )
+    return router
+
+
+def _connect_routers(name, first, first_port, second, second_port,
+                     latency=LINK_LATENCY):
     link = sst.Link(name)
     link.connect(
-        (first, f"port{first_port}", LINK_LATENCY),
-        (second, f"port{second_port}", LINK_LATENCY),
+        (first, f"port{first_port}", latency),
+        (second, f"port{second_port}", latency),
     )
 
 
@@ -174,6 +200,10 @@ def _memory_hierarchy_configuration(overrides):
         )
     if configuration["cache_line_size"] <= 0:
         raise ValueError("cache line size must be positive")
+    if configuration["l1_max_requests_per_cycle"] <= 0:
+        raise ValueError("L1 requests per cycle must be positive")
+    if configuration["l1_banks"] <= 0:
+        raise ValueError("L1 bank count must be positive")
     if configuration["l2_banks"] <= 0:
         raise ValueError("L2 bank count must be positive")
     return configuration
@@ -204,6 +234,9 @@ def _attach_private_l1(tile, node_id, tile_memory, configuration):
             "associativity": configuration["l1_associativity"],
             "cache_line_size": configuration["cache_line_size"],
             "cache_size": configuration["l1_size"],
+            "max_requests_per_cycle":
+                configuration["l1_max_requests_per_cycle"],
+            "banks": configuration["l1_banks"],
             "L1": 1,
         }
     )
@@ -412,6 +445,9 @@ def _attach_shared_l1(tile, node_id, configuration, network):
             "associativity": configuration["l1_associativity"],
             "cache_line_size": configuration["cache_line_size"],
             "cache_size": configuration["l1_size"],
+            "max_requests_per_cycle":
+                configuration["l1_max_requests_per_cycle"],
+            "banks": configuration["l1_banks"],
             "L1": 1,
         }
     )
@@ -436,7 +472,10 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
                  mesh_width, mesh_height, verbosity, tile_params,
                  buffer_size, link_bandwidth, mesh_link_width_bits,
                  mesh_link_clock, network_packet_words, memory_backend,
-                 memory_hierarchy,
+                 memory_hierarchy, mesh_router_backend,
+                 wormhole_input_buffer_flits,
+                 wormhole_injection_buffer_flits,
+                 mesh_link_latency,
                  shared_memory_fabric=None, tile_memory_stride=0):
     tile = sst.Component(f"tile{node_id}", "mittens.tile")
     params = {
@@ -456,6 +495,9 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
     params["mesh_link_width_bits"] = mesh_link_width_bits
     params["mesh_link_clock"] = mesh_link_clock
     params["network_packet_words"] = network_packet_words
+    params["network_tail_delivery"] = (
+        mesh_router_backend == "mittens"
+    )
     params["memory_backend"] = memory_backend
     if shared_memory_fabric is not None:
         params["memory_guest_base"] = GUEST_RAM_BASE
@@ -475,19 +517,42 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
                 tile, node_id, memory_hierarchy, shared_memory_fabric
             )
 
-    network = tile.setSubComponent("networkIF", "merlin.linkcontrol")
-    network.addParams(
-        {
-            "link_bw": link_bandwidth,
-            "input_buf_size": buffer_size,
-            "output_buf_size": buffer_size,
-        }
-    )
+    if mesh_router_backend == "merlin":
+        network = tile.setSubComponent(
+            "networkIF",
+            "merlin.linkcontrol",
+        )
+        network.addParams(
+            {
+                "link_bw": link_bandwidth,
+                "input_buf_size": buffer_size,
+                "output_buf_size": buffer_size,
+            }
+        )
+        network_port = "rtr_port"
+    else:
+        network = tile.setSubComponent(
+            "networkIF",
+            "mittens.wormholeNIC",
+        )
+        network.addParams(
+            {
+                "endpoint_id": node_id,
+                "network_size": network_size,
+                "clock": mesh_link_clock,
+                "link_width_bits": mesh_link_width_bits,
+                "router_buffer_flits":
+                    wormhole_input_buffer_flits,
+                "injection_buffer_flits":
+                    wormhole_injection_buffer_flits,
+            }
+        )
+        network_port = "router_port"
 
     link = sst.Link(f"tile{node_id}_local_link")
     link.connect(
-        (network, "rtr_port", LINK_LATENCY),
-        (router, f"port{LOCAL_PORT}", LINK_LATENCY),
+        (network, network_port, mesh_link_latency),
+        (router, f"port{LOCAL_PORT}", mesh_link_latency),
     )
     link.setNoCut()
 
@@ -496,24 +561,61 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                verbosity=2, tile_params=None, network_cell_words=1,
                network_buffer_cells=16, mesh_link_width_bits=32,
                mesh_link_clock="1GHz", network_packet_words=None,
+               mesh_link_latency=LINK_LATENCY,
+               mesh_router_backend="merlin",
+               wormhole_input_buffer_flits=32,
+               wormhole_injection_buffer_flits=64,
+               wormhole_pipeline_cycles=3,
                memory_backend="native",
-               memory_hierarchy=None):
+               memory_hierarchy=None, active_tiles=None):
     """Build a mesh whose physical links carry fixed 32-bit words.
 
     ``mesh_link_width_bits`` controls how many of those words a link can move
     per ``mesh_link_clock`` cycle. Timing cells are padded to a complete
     physical beat; neither setting changes the guest-visible NIC word size.
+    ``active_tiles`` limits QEMU-backed endpoints; every physical router and
+    cardinal link remains available for transit traffic.
     """
     network_size = width * height
     if memory_backend not in MEMORY_BACKENDS:
         raise ValueError(
             "memory_backend must be native or memhierarchy"
         )
+    if mesh_router_backend not in MESH_ROUTER_BACKENDS:
+        raise ValueError(
+            "mesh_router_backend must be merlin or mittens"
+        )
+    if not isinstance(mesh_link_latency, str) or not mesh_link_latency:
+        raise ValueError("mesh_link_latency must be an SST time string")
+    if (
+        wormhole_input_buffer_flits <= 0 or
+        wormhole_injection_buffer_flits <= 0 or
+        wormhole_pipeline_cycles <= 0
+    ):
+        raise ValueError(
+            "wormhole router buffer and pipeline values must be positive"
+        )
     memory_hierarchy = _memory_hierarchy_configuration(memory_hierarchy)
     if len(images) != network_size:
         raise ValueError(
             f"mesh requires {network_size} images, received {len(images)}"
         )
+    if active_tiles is None:
+        active_tile_set = set(range(network_size))
+    else:
+        active_tile_list = list(active_tiles)
+        if not active_tile_list:
+            raise ValueError("active_tiles must contain at least one tile ID")
+        if any(
+            isinstance(tile, bool) or not isinstance(tile, int)
+            for tile in active_tile_list
+        ):
+            raise ValueError("active tile IDs must be integers")
+        active_tile_set = set(active_tile_list)
+        if len(active_tile_set) != len(active_tile_list):
+            raise ValueError("active tile IDs must not contain duplicates")
+        if any(tile < 0 or tile >= network_size for tile in active_tile_set):
+            raise ValueError("active tile IDs must be within the mesh")
     if tile_params is None:
         tile_params = {}
     if network_cell_words <= 0 or network_buffer_cells <= 0:
@@ -531,6 +633,20 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         raise ValueError(
             "network_packet_words must not exceed the network buffer capacity"
         )
+    if (
+        mesh_router_backend == "mittens" and
+        network_packet_words > wormhole_input_buffer_flits
+    ):
+        raise ValueError(
+            "network_packet_words must not exceed the wormhole input buffer"
+        )
+    if (
+        mesh_router_backend == "mittens" and
+        network_packet_words > wormhole_injection_buffer_flits
+    ):
+        raise ValueError(
+            "network_packet_words must not exceed the wormhole injection buffer"
+        )
     link_bandwidth, flit_size, buffer_size = _mesh_link_configuration(
         mesh_link_width_bits,
         mesh_link_clock,
@@ -545,20 +661,35 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         shared_memory_fabric, tile_memory_stride = _make_shared_l2_fabric(
             network_size, tile_memory, memory_hierarchy
         )
-
-    routers = {
-        (x, y): _make_router(
-            x,
-            y,
-            width,
-            height,
-            flit_size,
-            buffer_size,
-            link_bandwidth,
-        )
-        for y in range(height)
-        for x in range(width)
-    }
+    if mesh_router_backend == "merlin":
+        routers = {
+            (x, y): _make_router(
+                x,
+                y,
+                width,
+                height,
+                flit_size,
+                buffer_size,
+                link_bandwidth,
+            )
+            for y in range(height)
+            for x in range(width)
+        }
+    else:
+        routers = {
+            (x, y): _make_wormhole_router(
+                x,
+                y,
+                width,
+                height,
+                mesh_link_clock,
+                mesh_link_width_bits,
+                wormhole_input_buffer_flits,
+                wormhole_pipeline_cycles,
+            )
+            for y in range(height)
+            for x in range(width)
+        }
 
     for y in range(height):
         for x in range(width):
@@ -571,6 +702,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                     EAST_PORT,
                     routers[x + 1, y],
                     WEST_PORT,
+                    mesh_link_latency,
                 )
 
             if y + 1 < height:
@@ -580,9 +712,15 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                     SOUTH_PORT,
                     routers[x, y + 1],
                     NORTH_PORT,
+                    mesh_link_latency,
                 )
 
             node_id = tile_id(x, y, width)
+            # Keep the physical router in the mesh, but do not launch a QEMU
+            # guest for an idle tile.  This preserves routing while avoiding
+            # one large guest-memory allocation for every physical tile.
+            if node_id not in active_tile_set:
+                continue
             _attach_tile(
                 router,
                 node_id,
@@ -600,6 +738,10 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 network_packet_words,
                 memory_backend,
                 memory_hierarchy,
+                mesh_router_backend,
+                wormhole_input_buffer_flits,
+                wormhole_injection_buffer_flits,
+                mesh_link_latency,
                 shared_memory_fabric,
                 tile_memory_stride,
             )

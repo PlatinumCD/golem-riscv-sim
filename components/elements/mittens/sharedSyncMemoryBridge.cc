@@ -47,7 +47,7 @@ void SharedSyncMemoryBridge::create(std::uint32_t tileId)
 
     if (ftruncate(
             fileDescriptor_,
-            static_cast<off_t>(sizeof(MittensSyncBridge))) < 0) {
+            static_cast<off_t>(MITTENS_SYNC_BRIDGE_MAPPING_SIZE)) < 0) {
         const int error = errno;
         close();
         throw std::system_error(
@@ -58,7 +58,7 @@ void SharedSyncMemoryBridge::create(std::uint32_t tileId)
 
     void* const address = mmap(
         nullptr,
-        sizeof(MittensSyncBridge),
+        MITTENS_SYNC_BRIDGE_MAPPING_SIZE,
         PROT_READ | PROT_WRITE,
         MAP_SHARED,
         fileDescriptor_,
@@ -74,7 +74,7 @@ void SharedSyncMemoryBridge::create(std::uint32_t tileId)
     }
 
     mapping_ = static_cast<MittensSyncBridge*>(address);
-    std::memset(mapping_, 0, sizeof(*mapping_));
+    std::memset(mapping_, 0, MITTENS_SYNC_BRIDGE_MAPPING_SIZE);
     mapping_->magic = MITTENS_SYNC_BRIDGE_MAGIC;
     mapping_->version = MITTENS_SYNC_BRIDGE_VERSION;
     mapping_->structure_size = sizeof(MittensSyncBridge);
@@ -87,7 +87,7 @@ void SharedSyncMemoryBridge::close() noexcept
 {
     if (mapping_ != nullptr) {
         wake(&mapping_->state);
-        (void)munmap(mapping_, sizeof(MittensSyncBridge));
+        (void)munmap(mapping_, MITTENS_SYNC_BRIDGE_MAPPING_SIZE);
         mapping_ = nullptr;
     }
 
@@ -163,7 +163,7 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
     if (state == MITTENS_SYNC_STATE_EVENT &&
         mapping_->event_sequence != observedEventSequence_) {
         observedEventSequence_ = mapping_->event_sequence;
-        return QemuSyncEvent{
+        QemuSyncEvent event{
             mapping_->grant_epoch,
             mapping_->event_sequence,
             mapping_->instructions_executed,
@@ -180,7 +180,20 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             mapping_->memory_address,
             mapping_->memory_size,
             mapping_->memory_flags,
+            {},
         };
+        if (event.stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH) {
+            if (event.memorySize == 0 ||
+                event.memorySize > MITTENS_SYNC_MEMORY_BATCH_CAPACITY) {
+                setProtocolError(MITTENS_SYNC_BRIDGE_ERROR_BAD_BUDGET);
+                throw std::runtime_error(
+                    "QEMU supplied an invalid memory batch size");
+            }
+            const auto* records =
+                mittens_sync_memory_batch_const(mapping_);
+            event.memoryBatch.assign(records, records + event.memorySize);
+        }
+        return event;
     }
 
     wait(&mapping_->state, state, timeout);
@@ -194,7 +207,7 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
     }
 
     observedEventSequence_ = mapping_->event_sequence;
-    return QemuSyncEvent{
+    QemuSyncEvent event{
         mapping_->grant_epoch,
         mapping_->event_sequence,
         mapping_->instructions_executed,
@@ -211,7 +224,19 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         mapping_->memory_address,
         mapping_->memory_size,
         mapping_->memory_flags,
+        {},
     };
+    if (event.stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH) {
+        if (event.memorySize == 0 ||
+            event.memorySize > MITTENS_SYNC_MEMORY_BATCH_CAPACITY) {
+            setProtocolError(MITTENS_SYNC_BRIDGE_ERROR_BAD_BUDGET);
+            throw std::runtime_error(
+                "QEMU supplied an invalid memory batch size");
+        }
+        const auto* records = mittens_sync_memory_batch_const(mapping_);
+        event.memoryBatch.assign(records, records + event.memorySize);
+    }
+    return event;
 }
 
 void SharedSyncMemoryBridge::resume(const QemuSyncEvent& event)

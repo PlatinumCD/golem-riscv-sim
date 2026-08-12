@@ -38,7 +38,8 @@ void PerformanceProfile::recordWait(
         return;
     }
     if (finishTick < startTick) {
-        throw std::logic_error("performance profile wait time went backwards");
+        ++clockRegressionCount_;
+        finishTick = startTick;
     }
     std::ofstream& output = open(
         waitStream_,
@@ -221,8 +222,8 @@ void PerformanceProfile::recordTransmitBlocked(
         return;
     }
     if (finishTick < startTick) {
-        throw std::logic_error(
-            "performance profile transmit-block time went backwards");
+        ++clockRegressionCount_;
+        finishTick = startTick;
     }
     std::ofstream& output = open(
         transmitBlockedStream_,
@@ -261,6 +262,14 @@ void PerformanceProfile::writeSummary(
     std::uint64_t transmitBlockedEvents,
     std::uint64_t transmitBlockedRetries,
     std::uint64_t transmitMaximumQueueOccupancy,
+    std::uint64_t maximumOutstandingMemoryRequests,
+    std::uint64_t maximumOutstandingMemoryReads,
+    std::uint64_t maximumStoreBufferOccupancy,
+    std::uint64_t storeBufferFullEvents,
+    std::uint64_t vectorMemoryRequestGroups,
+    std::uint64_t vectorMemoryGroupRequests,
+    std::uint64_t scalarMemoryRequestGroups,
+    std::uint64_t scalarMemoryGroupRequests,
     const std::uint64_t* waitTicks,
     const char* const* waitReasonNames,
     std::size_t waitTickCount)
@@ -291,7 +300,25 @@ void PerformanceProfile::writeSummary(
            << "transmit_blocked_events," << transmitBlockedEvents << '\n'
            << "transmit_blocked_retries," << transmitBlockedRetries << '\n'
            << "transmit_maximum_queue_occupancy,"
-           << transmitMaximumQueueOccupancy << '\n';
+           << transmitMaximumQueueOccupancy << '\n'
+           << "memory_maximum_outstanding_requests,"
+           << maximumOutstandingMemoryRequests << '\n'
+           << "memory_maximum_outstanding_reads,"
+           << maximumOutstandingMemoryReads << '\n'
+           << "memory_maximum_store_buffer_occupancy,"
+           << maximumStoreBufferOccupancy << '\n'
+           << "memory_store_buffer_full_events,"
+           << storeBufferFullEvents << '\n'
+           << "memory_vector_request_groups,"
+           << vectorMemoryRequestGroups << '\n'
+           << "memory_vector_group_requests,"
+           << vectorMemoryGroupRequests << '\n'
+           << "memory_scalar_request_groups,"
+           << scalarMemoryRequestGroups << '\n'
+           << "memory_scalar_group_requests,"
+           << scalarMemoryGroupRequests << '\n'
+           << "profile_clock_regressions,"
+           << clockRegressionCount_ << '\n';
     for (std::size_t index = 0; index < waitTickCount; ++index) {
         output << "wait_" << waitReasonNames[index] << "_ticks,"
                << waitTicks[index] << '\n';

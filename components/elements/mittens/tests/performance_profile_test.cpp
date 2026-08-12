@@ -38,6 +38,7 @@ int main()
         assert(profile.traceEnabled());
 
         profile.recordWait(100, 125, "nic-receive-wait", 7);
+        profile.recordWait(150, 125, "shutdown-wait", 8);
         profile.recordNetwork(
             "arrive",
             9,
@@ -73,6 +74,8 @@ int main()
             5, 2, "task", 170, 190);
         profile.recordTransmitBlocked(
             14, 4, 2, 5, "frame-payload", 16, 180, 195, 3, 5);
+        profile.recordTransmitBlocked(
+            15, 6, 3, 7, "frame-payload", 16, 220, 200, 1, 2);
 
         const std::uint64_t waits[] = {0, 1, 2, 3};
         const char* const waitNames[] = {
@@ -98,6 +101,14 @@ int main()
             1,
             3,
             5,
+            8,
+            4,
+            7,
+            2,
+            3,
+            6,
+            9,
+            18,
             waits,
             waitNames,
             4);
@@ -106,6 +117,8 @@ int main()
     const std::string waitText =
         readFile(directory / "tile-3-waits.csv");
     assert(waitText.find("nic-receive-wait,100,125,25") !=
+           std::string::npos);
+    assert(waitText.find("shutdown-wait,150,150,0") !=
            std::string::npos);
 
     const std::string networkText =
@@ -122,11 +135,24 @@ int main()
            std::string::npos);
     assert(summaryText.find("transmit_blocked_ticks,15") !=
            std::string::npos);
+    assert(summaryText.find("memory_maximum_outstanding_requests,8") !=
+           std::string::npos);
+    assert(summaryText.find("memory_vector_group_requests,6") !=
+           std::string::npos);
+    assert(summaryText.find("memory_scalar_request_groups,9") !=
+           std::string::npos);
+    assert(summaryText.find("memory_scalar_group_requests,18") !=
+           std::string::npos);
+    assert(summaryText.find("profile_clock_regressions,2") !=
+           std::string::npos);
 
     const std::string transmitText =
         readFile(directory / "tile-3-transmit-blocked.csv");
     assert(transmitText.find(
                "3,14,4,2,5,frame-payload,16,180,195,15,3,5") !=
+           std::string::npos);
+    assert(transmitText.find(
+               "3,15,6,3,7,frame-payload,16,220,220,0,1,2") !=
            std::string::npos);
 
     std::error_code error;

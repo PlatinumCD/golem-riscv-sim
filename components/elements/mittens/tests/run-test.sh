@@ -17,6 +17,7 @@ readonly RECEIVE_DMA_ENGINE_TEST="${HOST_TEST_DIR}/receive-dma-engine-test"
 readonly SCRATCHPAD_TIMING_MODEL_TEST="${HOST_TEST_DIR}/scratchpad-timing-model-test"
 readonly PERFORMANCE_PROFILE_TEST="${HOST_TEST_DIR}/performance-profile-test"
 readonly SYNC_BRIDGE_TEST="${HOST_TEST_DIR}/sync-bridge-test"
+readonly MEMORY_ACCESS_COALESCER_TEST="${HOST_TEST_DIR}/memory-access-coalescer-test"
 readonly CROSSSIM_TEST="${HOST_TEST_DIR}/crosssim-backend-test"
 readonly CROSSSIM_PYTHON="${CROSSSIM_PYTHON:-/usr/bin/python3}"
 readonly CROSSSIM_PYTHON_CONFIG="${CROSSSIM_PYTHON_CONFIG:-/usr/bin/python3-config}"
@@ -25,6 +26,12 @@ readonly PROFILE_ANALYZER="${PROJECT_ROOT}/scripts/analyze-performance-profile.p
 readonly PROFILE_TEST_RAW_DIRECTORY="${HOST_TEST_DIR}/performance-profile-raw"
 readonly PROFILE_TEST_OUTPUT_DIRECTORY="${HOST_TEST_DIR}/performance-profile"
 readonly PROFILE_TEST_STATS="${HOST_TEST_DIR}/performance-profile-router-statistics.csv"
+readonly WORMHOLE_TEST_OUTPUT="${HOST_TEST_DIR}/wormhole-network.csv"
+readonly WORMHOLE_TEST_STATS="${HOST_TEST_DIR}/wormhole-router-statistics.csv"
+readonly WORMHOLE_PARALLEL_OUTPUT="${HOST_TEST_DIR}/wormhole-network-parallel.csv"
+readonly WORMHOLE_PARALLEL_STATS="${HOST_TEST_DIR}/wormhole-router-statistics-parallel.csv"
+readonly WORMHOLE_WIDE_OUTPUT="${HOST_TEST_DIR}/wormhole-network-wide.csv"
+readonly WORMHOLE_WIDE_STATS="${HOST_TEST_DIR}/wormhole-router-statistics-wide.csv"
 
 if [[ ! -x "${SST}" || ! -x "${QEMU}" ]] ||
    [[ ! -x "${CROSSSIM_PYTHON}" || ! -x "${CROSSSIM_PYTHON_CONFIG}" ]] ||
@@ -123,6 +130,18 @@ mkdir -p -- "${HOST_TEST_DIR}"
     -o "${SYNC_BRIDGE_TEST}"
 "${SYNC_BRIDGE_TEST}"
 
+"${HOST_CXX}" \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Wpedantic \
+    -Werror \
+    -I"${PROJECT_ROOT}/bridge/include" \
+    -I"${PROJECT_ROOT}/components/elements/mittens" \
+    "${TEST_DIR}/memory_access_coalescer_test.cpp" \
+    -o "${MEMORY_ACCESS_COALESCER_TEST}"
+"${MEMORY_ACCESS_COALESCER_TEST}"
+
 read -r -a python_cppflags <<< "$("${CROSSSIM_PYTHON_CONFIG}" --includes)"
 read -r -a python_ldflags <<< "$("${CROSSSIM_PYTHON_CONFIG}" --embed --ldflags)"
 "${HOST_CXX}" \
@@ -155,6 +174,57 @@ export PYTHONPATH="${CROSSSIM_SITE_PACKAGES}${PYTHONPATH:+:${PYTHONPATH}}"
 "${SST}" "${TEST_DIR}/qemu_boot.py"
 MITTENS_TEST_TILES=4 "${SST}" "${TEST_DIR}/multi_tile_boot.py"
 "${SST}" "${TEST_DIR}/two_tile_bridge.py"
+
+rm -f -- "${WORMHOLE_TEST_OUTPUT}" "${WORMHOLE_TEST_STATS}"
+MITTENS_WORMHOLE_OUTPUT="${WORMHOLE_TEST_OUTPUT}" \
+MITTENS_WORMHOLE_STATS="${WORMHOLE_TEST_STATS}" \
+    "${SST}" "${TEST_DIR}/wormhole_network.py"
+if [[ "$(wc -l <"${WORMHOLE_TEST_OUTPUT}")" -ne 3 ]]; then
+    echo "wormhole network test did not record two packets" >&2
+    exit 1
+fi
+if ! grep -q 'flits_forwarded' "${WORMHOLE_TEST_STATS}"; then
+    echo "wormhole network test did not record router statistics" >&2
+    exit 1
+fi
+python3 - "${WORMHOLE_TEST_STATS}" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8", newline="") as source:
+    rows = csv.DictReader(source)
+    stalls = sum(
+        int(row["Sum.u64"])
+        for row in rows
+        if row["StatisticName"] == "switch_arbitration_stall_cycles"
+    )
+assert stalls == 16, stalls
+PY
+
+rm -f -- "${WORMHOLE_PARALLEL_OUTPUT}" "${WORMHOLE_PARALLEL_STATS}"
+MITTENS_WORMHOLE_OUTPUT="${WORMHOLE_PARALLEL_OUTPUT}" \
+MITTENS_WORMHOLE_STATS="${WORMHOLE_PARALLEL_STATS}" \
+    "${SST}" -n 2 "${TEST_DIR}/wormhole_network.py"
+cmp "${WORMHOLE_TEST_OUTPUT}" "${WORMHOLE_PARALLEL_OUTPUT}"
+
+rm -f -- "${WORMHOLE_WIDE_OUTPUT}" "${WORMHOLE_WIDE_STATS}"
+MITTENS_WORMHOLE_OUTPUT="${WORMHOLE_WIDE_OUTPUT}" \
+MITTENS_WORMHOLE_STATS="${WORMHOLE_WIDE_STATS}" \
+MITTENS_WORMHOLE_LINK_WIDTH_BITS=64 \
+    "${SST}" "${TEST_DIR}/wormhole_network.py"
+python3 - "${WORMHOLE_WIDE_STATS}" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8", newline="") as source:
+    rows = csv.DictReader(source)
+    stalls = sum(
+        int(row["Sum.u64"])
+        for row in rows
+        if row["StatisticName"] == "switch_arbitration_stall_cycles"
+    )
+assert stalls == 8, stalls
+PY
 
 mkdir -p -- \
     "${PROFILE_TEST_RAW_DIRECTORY}" \

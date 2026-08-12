@@ -201,6 +201,36 @@ struct CrossSimAnalogBackend::Implementation
         return arrays[arrayId];
     }
 
+    Array& ensureArray(std::uint32_t arrayId)
+    {
+        Array& state = array(arrayId);
+        if (state.core != nullptr) {
+            return state;
+        }
+
+        PyRef core(PyObject_Call(analogCoreClass, coreArguments, coreKeywords));
+        requirePythonSuccess(
+            core.get() != nullptr,
+            "cannot construct CrossSim AnalogCore for array " +
+                std::to_string(arrayId));
+
+        PyRef setMatrix(PyObject_GetAttrString(core.get(), "set_matrix"));
+        requirePythonSuccess(
+            setMatrix.get() != nullptr,
+            "CrossSim AnalogCore does not provide set_matrix");
+        PyRef matvec(PyObject_GetAttrString(core.get(), "matvec"));
+        requirePythonSuccess(
+            matvec.get() != nullptr,
+            "CrossSim AnalogCore does not provide matvec");
+
+        state.input.resize(columns);
+        state.output.resize(rows);
+        state.core = core.release();
+        state.setMatrix = setMatrix.release();
+        state.matvec = matvec.release();
+        return state;
+    }
+
     PyRef asFloat32Array(PyObject* values) const
     {
         PyRef args(PyTuple_Pack(1, values));
@@ -306,35 +336,10 @@ struct CrossSimAnalogBackend::Implementation
                 coreKeywords.get(), "empty_matrix", Py_True) == 0,
             "cannot defer CrossSim matrix programming");
 
-        arrays.reserve(arrayCount);
-        for (std::uint32_t index = 0; index < arrayCount; ++index) {
-            Array state;
-            PyRef core(PyObject_Call(
-                analogCoreClass.get(),
-                coreArguments.get(),
-                coreKeywords.get()));
-            requirePythonSuccess(
-                core.get() != nullptr,
-                "cannot construct CrossSim AnalogCore for array " +
-                    std::to_string(index));
-
-            PyRef setMatrix(
-                PyObject_GetAttrString(core.get(), "set_matrix"));
-            requirePythonSuccess(
-                setMatrix.get() != nullptr,
-                "CrossSim AnalogCore does not provide set_matrix");
-            PyRef matvec(PyObject_GetAttrString(core.get(), "matvec"));
-            requirePythonSuccess(
-                matvec.get() != nullptr,
-                "CrossSim AnalogCore does not provide matvec");
-
-            state.input.resize(columns);
-            state.output.resize(rows);
-            state.core = core.release();
-            state.setMatrix = setMatrix.release();
-            state.matvec = matvec.release();
-            arrays.push_back(std::move(state));
-        }
+        this->analogCoreClass = analogCoreClass.release();
+        this->coreArguments = coreArguments.release();
+        this->coreKeywords = coreKeywords.release();
+        arrays.resize(arrayCount);
     }
 
     void releasePythonObjects() noexcept
@@ -349,6 +354,9 @@ struct CrossSimAnalogBackend::Implementation
         }
         arrays.clear();
 
+        Py_XDECREF(coreKeywords);
+        Py_XDECREF(coreArguments);
+        Py_XDECREF(analogCoreClass);
         Py_XDECREF(parameters);
         Py_XDECREF(numpyFloat32);
         Py_XDECREF(numpyAsArray);
@@ -359,6 +367,9 @@ struct CrossSimAnalogBackend::Implementation
         numpyAsArray = nullptr;
         numpyModule = nullptr;
         simulatorModule = nullptr;
+        coreKeywords = nullptr;
+        coreArguments = nullptr;
+        analogCoreClass = nullptr;
     }
 
     std::uint32_t rows;
@@ -367,6 +378,9 @@ struct CrossSimAnalogBackend::Implementation
     PyObject* numpyModule = nullptr;
     PyObject* numpyAsArray = nullptr;
     PyObject* numpyFloat32 = nullptr;
+    PyObject* analogCoreClass = nullptr;
+    PyObject* coreArguments = nullptr;
+    PyObject* coreKeywords = nullptr;
     PyObject* parameters = nullptr;
     std::vector<Array> arrays;
 };
@@ -414,7 +428,7 @@ void CrossSimAnalogBackend::setMatrix(
     }
 
     GilGuard gil;
-    Implementation::Array& target = implementation_->array(arrayId);
+    Implementation::Array& target = implementation_->ensureArray(arrayId);
     PyRef matrixList(makeMatrixList(matrix, arrayRows_, arrayColumns_));
     PyRef matrixArray(implementation_->asFloat32Array(matrixList.get()));
     PyRef result(PyObject_CallOneArg(target.setMatrix, matrixArray.get()));

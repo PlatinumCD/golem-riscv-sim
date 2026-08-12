@@ -94,6 +94,14 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
             (config.memoryInitializationBatching ? "on" : "off"));
         arguments.push_back("-global");
         arguments.push_back(
+            std::string("mittens-sync.memory-access-batching=") +
+            (config.memoryAccessBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.memory-access-batch-records=" +
+            std::to_string(config.memoryAccessBatchRecords));
+        arguments.push_back("-global");
+        arguments.push_back(
             std::string("mittens-sync.scratchpad-enabled=") +
             (config.scratchpadEnabled ? "on" : "off"));
         arguments.push_back("-global");

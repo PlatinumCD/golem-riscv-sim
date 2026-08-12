@@ -31,4 +31,9 @@ build_mesh(
     qemu_path=required_path("MITTENS_TEST_QEMU"),
     images=images,
     statistics_path=required_path("MITTENS_MESH_STATS"),
+    mesh_router_backend=os.environ.get(
+        "MITTENS_MESH_ROUTER_BACKEND",
+        "merlin",
+    ),
+    active_tiles=[0, 8],
 )

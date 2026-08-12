@@ -21,7 +21,8 @@ require_file "${INSTALL_ROOT}/sst-elements/lib/sst-elements-library/libmemHierar
 "${PROJECT_ROOT}/build-scripts/build-platform.sh" memory-timing-validation
 
 case_specs=()
-for name in conflict capacity; do
+for name in conflict capacity store-buffer vector-group \
+    scalar-independent scalar-dependent; do
     trial="${OUTPUT_ROOT}/${name}"
     profile="${trial}/profile"
     log="${trial}/simulation.log"
@@ -34,9 +35,19 @@ for name in conflict capacity; do
         "${log}"
 
     echo "[private L1 timing] case=${name}"
+    store_buffer_entries=1
+    access_batching=0
+    if [[ "${name}" == store-buffer || "${name}" == vector-group ||
+          "${name}" == scalar-* ]]; then
+        store_buffer_entries=8
+        access_batching=1
+    fi
+
     MITTENS_TEST_QEMU="${QEMU}" \
     MITTENS_TEST_ELF="${elf}" \
     MITTENS_MEMORY_PROFILE="${profile}" \
+    MITTENS_MEMORY_STORE_BUFFER_ENTRIES="${store_buffer_entries}" \
+    MITTENS_MEMORY_ACCESS_BATCHING="${access_batching}" \
     SST_LIB_PATH="${ELEMENT_LIBRARY}${SST_LIB_PATH:+:${SST_LIB_PATH}}" \
         "${SST}" "${TEST_DIR}/simulation.py" 2>&1 | tee "${log}"
 
@@ -49,4 +60,4 @@ for name in conflict capacity; do
 done
 
 "${ANALYZER}" "${RESULTS}" "${case_specs[@]}"
-echo "private-L1 hit, miss, conflict, eviction, write, and capacity timing: PASS"
+echo "private-L1 timing, load concurrency, and store ordering: PASS"

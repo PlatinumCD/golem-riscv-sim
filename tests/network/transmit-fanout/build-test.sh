@@ -9,6 +9,8 @@ readonly LLVM="${INSTALL_ROOT}/llvm"
 readonly OUTPUT_DIR="${BUILD_ROOT}/tests/transmit-fanout"
 readonly RUNTIME_INCLUDE="${INSTALL_ROOT}/runtime/include"
 readonly RUNTIME_LIBRARY="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
+readonly TAIL_STRESS_WAVES="${MITTENS_TAIL_STRESS_WAVES:-4}"
+readonly TAIL_STRESS_WORDS="${MITTENS_TAIL_STRESS_WORDS:-64}"
 
 GOLEM_RUNTIME_ENABLE_PROFILE=1 \
     "${PROJECT_ROOT}/build-scripts/build-runtime.sh"
@@ -49,6 +51,61 @@ for source in uart platform-exit freestanding-memory; do
     "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
         -c "${PROJECT_ROOT}/platform/${source}.cpp" \
         -o "${OUTPUT_DIR}/${source}.o"
+done
+
+for tile_id in $(seq 0 31); do
+    object="${OUTPUT_DIR}/tail-bidirectional-32-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/tail-bidirectional-32-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=2 \
+        -DMITTENS_FANOUT_ELEMENT_COUNT=768 \
+        -DMITTENS_FANOUT_SOURCE_COUNT=32 \
+        -DMITTENS_FANOUT_SHARED_RESOURCE_ID=1 \
+        -DMITTENS_FANOUT_BIDIRECTIONAL=1 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
+done
+
+for tile_id in $(seq 0 31); do
+    object="${OUTPUT_DIR}/tail-sustained-${TAIL_STRESS_WAVES}-${TAIL_STRESS_WORDS}-32-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/tail-sustained-${TAIL_STRESS_WAVES}-${TAIL_STRESS_WORDS}-32-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=2 \
+        "-DMITTENS_FANOUT_ELEMENT_COUNT=${TAIL_STRESS_WORDS}" \
+        -DMITTENS_FANOUT_SOURCE_COUNT=32 \
+        -DMITTENS_FANOUT_SHARED_RESOURCE_ID=1 \
+        -DMITTENS_FANOUT_BIDIRECTIONAL=1 \
+        "-DMITTENS_FANOUT_WAVES=${TAIL_STRESS_WAVES}" \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
 done
 
 for fanout in 1 2 4 8 16 24; do
@@ -107,6 +164,65 @@ for fanout in 1 2 4 8 16 24; do
                 -o "${elf}"
         done
     done
+done
+
+# Reproduce the GPT-2 route-tail failure with two 768-word routes from one
+# source task.  Keep these ELFs separate from the original 512-word sweep.
+for tile_id in 0 1; do
+    object="${OUTPUT_DIR}/tail-regression-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/tail-regression-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=2 \
+        -DMITTENS_FANOUT_ELEMENT_COUNT=768 \
+        -DMITTENS_FANOUT_SHARED_RESOURCE_ID=1 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
+done
+
+tail_contention_sources="${MITTENS_TAIL_CONTENTION_SOURCES:-8}"
+if [[ ! "${tail_contention_sources}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MITTENS_TAIL_CONTENTION_SOURCES must be positive" >&2
+    exit 2
+fi
+for tile_id in $(seq 0 "${tail_contention_sources}"); do
+    object="${OUTPUT_DIR}/tail-contention-${tail_contention_sources}-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/tail-contention-${tail_contention_sources}-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=2 \
+        -DMITTENS_FANOUT_ELEMENT_COUNT=768 \
+        "-DMITTENS_FANOUT_SOURCE_COUNT=${tail_contention_sources}" \
+        "-DMITTENS_FANOUT_DESTINATION_TILE=${tail_contention_sources}" \
+        -DMITTENS_FANOUT_SHARED_RESOURCE_ID=1 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
 done
 
 echo "built transmit fan-out ELFs in ${OUTPUT_DIR}"

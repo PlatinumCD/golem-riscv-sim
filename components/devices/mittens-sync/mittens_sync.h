@@ -12,6 +12,11 @@
 DeviceState *mittens_sync_create(void);
 
 void helper_mittens_sync_vector_instruction(void);
+void helper_mittens_sync_memory_instruction(
+    uint32_t source_register_mask,
+    uint32_t destination_register_mask,
+    uint32_t instruction_length,
+    uint64_t program_counter);
 
 bool mittens_sync_available(void);
 bool mittens_sync_memory_timing_enabled(void);
@@ -47,5 +52,11 @@ void mittens_sync_yield_memory(
     bool write,
     uint64_t program_counter,
     uint64_t return_address);
+void mittens_sync_yield_memory_atomic(
+    uint64_t physical_address,
+    uint32_t size,
+    uint64_t program_counter,
+    uint64_t return_address);
+void helper_mittens_sync_memory_fence(void);
 
 #endif

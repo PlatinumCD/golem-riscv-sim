@@ -1,0 +1,96 @@
+diff --git a/target/riscv/helper.h b/target/riscv/helper.h
+--- a/target/riscv/helper.h
++++ b/target/riscv/helper.h
+@@ -6,6 +6,8 @@ DEF_HELPER_4(golem_analog, tl, env, i32, tl, tl)
+ 
+ /* Mittens dynamic vector-instruction accounting */
+ DEF_HELPER_0(mittens_sync_vector_instruction, void)
++/* Mittens scalar-load dependency accounting */
++DEF_HELPER_4(mittens_sync_memory_instruction, void, i32, i32, i32, tl)
+ 
+ /* Mittens timed-memory ordering boundary */
+ DEF_HELPER_0(mittens_sync_memory_fence, void)
+diff --git a/target/riscv/insn_trans/trans_rvi.c.inc b/target/riscv/insn_trans/trans_rvi.c.inc
+--- a/target/riscv/insn_trans/trans_rvi.c.inc
++++ b/target/riscv/insn_trans/trans_rvi.c.inc
+@@ -229,6 +229,16 @@ static bool gen_load_tl(DisasContext *ctx, arg_lb *a, MemOp memop)
+ {
+     TCGv dest = dest_gpr(ctx, a->rd);
+     TCGv addr = get_address(ctx, a->rs1, a->imm);
++    const uint32_t source_mask =
++        a->rs1 == 0 ? 0 : UINT32_C(1) << a->rs1;
++    const uint32_t destination_mask =
++        a->rd == 0 ? 0 : UINT32_C(1) << a->rd;
++
++    gen_helper_mittens_sync_memory_instruction(
++        tcg_constant_i32(source_mask),
++        tcg_constant_i32(destination_mask),
++        tcg_constant_i32(ctx->cur_insn_len),
++        tcg_constant_tl(ctx->base.pc_next));
+ 
+     tcg_gen_qemu_ld_tl(dest, addr, ctx->mem_idx, memop);
+     gen_set_gpr(ctx, a->rd, dest);
+diff --git a/target/riscv/insn_trans/trans_rvf.c.inc b/target/riscv/insn_trans/trans_rvf.c.inc
+--- a/target/riscv/insn_trans/trans_rvf.c.inc
++++ b/target/riscv/insn_trans/trans_rvf.c.inc
+@@ -49,6 +49,17 @@ static bool trans_flw(DisasContext *ctx, arg_flw *a)
+     decode_save_opc(ctx);
+     addr = get_address(ctx, a->rs1, a->imm);
+     dest = cpu_fpr[a->rd];
++    const uint32_t source_mask =
++        a->rs1 == 0 ? 0 : UINT32_C(1) << a->rs1;
++    const uint32_t destination_mask =
++        ctx->cfg_ptr->ext_zfinx && a->rd != 0
++            ? UINT32_C(1) << a->rd
++            : 0;
++    gen_helper_mittens_sync_memory_instruction(
++        tcg_constant_i32(source_mask),
++        tcg_constant_i32(destination_mask),
++        tcg_constant_i32(ctx->cur_insn_len),
++        tcg_constant_tl(ctx->base.pc_next));
+     tcg_gen_qemu_ld_i64(dest, addr, ctx->mem_idx, MO_TEUL);
+     gen_nanbox_s(dest, dest);
+ 
+diff --git a/target/riscv/insn_trans/trans_rvd.c.inc b/target/riscv/insn_trans/trans_rvd.c.inc
+--- a/target/riscv/insn_trans/trans_rvd.c.inc
++++ b/target/riscv/insn_trans/trans_rvd.c.inc
+@@ -48,6 +48,17 @@ static bool trans_fld(DisasContext *ctx, arg_fld *a)
+ 
+     decode_save_opc(ctx);
+     addr = get_address(ctx, a->rs1, a->imm);
++    const uint32_t source_mask =
++        a->rs1 == 0 ? 0 : UINT32_C(1) << a->rs1;
++    const uint32_t destination_mask =
++        ctx->cfg_ptr->ext_zdinx && a->rd != 0
++            ? UINT32_C(1) << a->rd
++            : 0;
++    gen_helper_mittens_sync_memory_instruction(
++        tcg_constant_i32(source_mask),
++        tcg_constant_i32(destination_mask),
++        tcg_constant_i32(ctx->cur_insn_len),
++        tcg_constant_tl(ctx->base.pc_next));
+     tcg_gen_qemu_ld_i64(cpu_fpr[a->rd], addr, ctx->mem_idx, MO_TEUQ);
+ 
+     mark_fs_dirty(ctx);
+diff --git a/target/riscv/insn_trans/trans_rvzfh.c.inc b/target/riscv/insn_trans/trans_rvzfh.c.inc
+--- a/target/riscv/insn_trans/trans_rvzfh.c.inc
++++ b/target/riscv/insn_trans/trans_rvzfh.c.inc
+@@ -58,6 +58,17 @@ static bool trans_flh(DisasContext *ctx, arg_flh *a)
+         t0 = temp;
+     }
+ 
+     dest = cpu_fpr[a->rd];
++    const uint32_t source_mask =
++        a->rs1 == 0 ? 0 : UINT32_C(1) << a->rs1;
++    const uint32_t destination_mask =
++        ctx->cfg_ptr->ext_zhinx && a->rd != 0
++            ? UINT32_C(1) << a->rd
++            : 0;
++    gen_helper_mittens_sync_memory_instruction(
++        tcg_constant_i32(source_mask),
++        tcg_constant_i32(destination_mask),
++        tcg_constant_i32(ctx->cur_insn_len),
++        tcg_constant_tl(ctx->base.pc_next));
+     tcg_gen_qemu_ld_i64(dest, t0, ctx->mem_idx, MO_TEUW);
+     gen_nanbox_h(dest, dest);
+ 

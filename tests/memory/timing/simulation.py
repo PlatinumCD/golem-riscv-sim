@@ -21,7 +21,16 @@ tile.addParams(
         "memory_store_buffer_entries": int(
             os.environ.get("MITTENS_MEMORY_STORE_BUFFER_ENTRIES", "1")
         ),
+        "memory_load_queue_entries": int(
+            os.environ.get("MITTENS_MEMORY_LOAD_QUEUE_ENTRIES", "8")
+        ),
         "memory_init_batching": True,
+        "memory_access_batching": (
+            os.environ.get("MITTENS_MEMORY_ACCESS_BATCHING", "0") == "1"
+        ),
+        "memory_access_batch_records": int(
+            os.environ.get("MITTENS_MEMORY_ACCESS_BATCH_RECORDS", "16")
+        ),
         "memory_init_bytes_per_cycle": 32,
         "memory_init_latency_cycles": 2,
         "launch_mode": "managed",
@@ -48,6 +57,8 @@ l1.addParams(
         "associativity": 4,
         "cache_line_size": 64,
         "cache_size": "32KiB",
+        "max_requests_per_cycle": 1,
+        "banks": 1,
         "L1": 1,
     }
 )

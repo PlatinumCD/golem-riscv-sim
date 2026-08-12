@@ -35,10 +35,18 @@ typedef struct MittensSyncDeviceState {
     MittensSyncBridge *bridge;
     uint64_t accounted_executed;
     uint64_t vector_instructions_executed;
+    uint64_t memory_instruction_program_counter;
+    uint32_t memory_instruction_source_register_mask;
+    uint32_t memory_instruction_destination_register_mask;
+    uint32_t memory_instruction_length;
     int64_t accounted_remaining;
     bool terminal_event_published;
     bool memory_timing;
     bool memory_init_batching;
+    bool memory_access_batching;
+    uint32_t memory_access_batch_records;
+    MittensSyncMemoryAccess *memory_batch;
+    uint32_t memory_batch_count;
     bool memory_init_active;
     uint64_t memory_init_accesses;
     uint64_t memory_init_read_bytes;
@@ -76,6 +84,24 @@ void helper_mittens_sync_vector_instruction(void)
     if (s != NULL && s->bridge != NULL) {
         ++s->vector_instructions_executed;
     }
+}
+
+void helper_mittens_sync_memory_instruction(
+    uint32_t source_register_mask,
+    uint32_t destination_register_mask,
+    uint32_t instruction_length,
+    uint64_t program_counter)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+
+    if (s == NULL || s->bridge == NULL) {
+        return;
+    }
+    s->memory_instruction_source_register_mask = source_register_mask;
+    s->memory_instruction_destination_register_mask =
+        destination_register_mask;
+    s->memory_instruction_length = instruction_length;
+    s->memory_instruction_program_counter = program_counter;
 }
 
 static void mittens_sync_wake(uint32_t *state)
@@ -133,7 +159,7 @@ static void mittens_sync_set_error(
     qemu_log_mask(LOG_GUEST_ERROR, "mittens-sync: %s\n", message);
 }
 
-static void mittens_sync_publish_event(
+static void mittens_sync_publish_event_raw(
     uint32_t reason,
     uint32_t flags,
     uint32_t array_id,
@@ -213,6 +239,60 @@ static void mittens_sync_publish_event(
         mittens_sync_wait_while(
             &bridge->state, MITTENS_SYNC_STATE_EVENT);
     }
+}
+
+static bool mittens_sync_flush_memory_batch(bool quantum_end)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+    uint32_t count;
+
+    if (s == NULL || s->bridge == NULL ||
+        s->memory_batch_count == 0) {
+        return false;
+    }
+    count = s->memory_batch_count;
+    mittens_sync_publish_event_raw(
+        MITTENS_SYNC_STOP_MEMORY_BATCH,
+        quantum_end ? MITTENS_SYNC_EVENT_FLAG_QUANTUM_END
+                    : MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
+        0,
+        count,
+        MITTENS_SYNC_MEMORY_FLAG_NONE,
+        mittens_sync_current_executed(),
+        !quantum_end);
+    s->memory_batch_count = 0;
+    return true;
+}
+
+static void mittens_sync_publish_event(
+    uint32_t reason,
+    uint32_t flags,
+    uint32_t array_id,
+    uint64_t analog_sequence,
+    uint32_t task_id,
+    uint64_t execution_id,
+    uint32_t rx_dma_source,
+    uint32_t rx_dma_route_id,
+    uint32_t rx_dma_word_count,
+    uint64_t memory_address,
+    uint32_t memory_size,
+    uint32_t memory_flags,
+    uint64_t instructions_executed,
+    bool wait_for_resume)
+{
+    (void)mittens_sync_flush_memory_batch(false);
+    mittens_sync_publish_event_raw(
+        reason, flags, array_id, analog_sequence, task_id,
+        execution_id, rx_dma_source, rx_dma_route_id,
+        rx_dma_word_count, memory_address, memory_size,
+        memory_flags, instructions_executed, wait_for_resume);
 }
 
 bool mittens_sync_available(void)
@@ -330,7 +410,10 @@ void mittens_sync_quantum_end(void)
         s->terminal_event_published) {
         return;
     }
-    mittens_sync_publish_event(
+    if (mittens_sync_flush_memory_batch(true)) {
+        return;
+    }
+    mittens_sync_publish_event_raw(
         MITTENS_SYNC_STOP_QUANTUM_END,
         MITTENS_SYNC_EVENT_FLAG_NONE,
         UINT32_MAX,
@@ -543,6 +626,42 @@ void mittens_sync_yield_memory(
         }
         return;
     }
+    if (!scratchpad && s->memory_access_batching) {
+        MittensSyncMemoryAccess *access;
+
+        if (s->memory_batch_count ==
+            s->memory_access_batch_records) {
+            (void)mittens_sync_flush_memory_batch(false);
+        }
+        access = &s->memory_batch[s->memory_batch_count++];
+        access->instructions_executed =
+            mittens_sync_current_executed();
+        access->vector_instructions_executed =
+            s->vector_instructions_executed;
+        access->address = physical_address;
+        access->program_counter = program_counter;
+        access->return_address = return_address;
+        access->size = size;
+        access->flags = write
+            ? MITTENS_SYNC_MEMORY_FLAG_WRITE
+            : MITTENS_SYNC_MEMORY_FLAG_NONE;
+        if (s->memory_instruction_program_counter == program_counter) {
+            access->flags |=
+                MITTENS_SYNC_MEMORY_FLAG_REGISTER_DEPS;
+            access->source_register_mask =
+                s->memory_instruction_source_register_mask;
+            access->destination_register_mask =
+                s->memory_instruction_destination_register_mask;
+            access->instruction_length =
+                s->memory_instruction_length;
+        } else {
+            access->source_register_mask = 0;
+            access->destination_register_mask = 0;
+            access->instruction_length = 0;
+        }
+        access->reserved = 0;
+        return;
+    }
     mittens_sync_publish_event(
         MITTENS_SYNC_STOP_MEMORY_ACCESS,
         MITTENS_SYNC_EVENT_FLAG_NONE,
@@ -557,6 +676,51 @@ void mittens_sync_yield_memory(
         size,
         (write ? MITTENS_SYNC_MEMORY_FLAG_WRITE : 0) |
         (scratchpad ? MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD : 0),
+        mittens_sync_current_executed(),
+        true);
+}
+
+void mittens_sync_yield_memory_atomic(
+    uint64_t physical_address,
+    uint32_t size,
+    uint64_t program_counter,
+    uint64_t return_address)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+    bool batching;
+
+    if (s == NULL) {
+        return;
+    }
+    /* Atomic accesses are ordering boundaries and remain synchronous. */
+    batching = s->memory_access_batching;
+    s->memory_access_batching = false;
+    mittens_sync_yield_memory(
+        physical_address, size, true,
+        program_counter, return_address);
+    s->memory_access_batching = batching;
+}
+
+void helper_mittens_sync_memory_fence(void)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+
+    if (s == NULL || s->bridge == NULL || !s->memory_timing) {
+        return;
+    }
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_MEMORY_FENCE,
+        MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        0,
+        UINT32_MAX,
+        UINT32_MAX,
+        0,
+        0,
+        0,
+        MITTENS_SYNC_MEMORY_FLAG_NONE,
         mittens_sync_current_executed(),
         true);
 }
@@ -834,7 +998,7 @@ static void mittens_sync_realize(DeviceState *device, Error **errp)
             errp, errno, "mittens-sync cannot stat bridge fd");
         return;
     }
-    if (bridge_stat.st_size != sizeof(MittensSyncBridge)) {
+    if (bridge_stat.st_size != MITTENS_SYNC_BRIDGE_MAPPING_SIZE) {
         error_setg(
             errp,
             "mittens-sync bridge has invalid size: %jd bytes",
@@ -844,7 +1008,7 @@ static void mittens_sync_realize(DeviceState *device, Error **errp)
 
     s->bridge = mmap(
         NULL,
-        sizeof(MittensSyncBridge),
+        MITTENS_SYNC_BRIDGE_MAPPING_SIZE,
         PROT_READ | PROT_WRITE,
         MAP_SHARED,
         s->bridge_fd,
@@ -861,11 +1025,23 @@ static void mittens_sync_realize(DeviceState *device, Error **errp)
     if (s->bridge->magic != MITTENS_SYNC_BRIDGE_MAGIC ||
         s->bridge->version != MITTENS_SYNC_BRIDGE_VERSION ||
         s->bridge->structure_size != sizeof(MittensSyncBridge)) {
-        munmap(s->bridge, sizeof(MittensSyncBridge));
+        munmap(s->bridge, MITTENS_SYNC_BRIDGE_MAPPING_SIZE);
         s->bridge = NULL;
         error_setg(errp, "mittens-sync bridge header is incompatible");
         return;
     }
+    if (s->memory_access_batch_records == 0 ||
+        s->memory_access_batch_records >
+            MITTENS_SYNC_MEMORY_BATCH_CAPACITY) {
+        munmap(s->bridge, MITTENS_SYNC_BRIDGE_MAPPING_SIZE);
+        s->bridge = NULL;
+        error_setg(
+            errp,
+            "mittens-sync memory access batch size is invalid");
+        return;
+    }
+    s->memory_batch = mittens_sync_memory_batch(s->bridge);
+    s->memory_batch_count = 0;
     s->memory_init_active =
         s->memory_timing && s->memory_init_batching;
 }
@@ -890,8 +1066,10 @@ static void mittens_sync_unrealize(DeviceState *device)
 
     if (s->bridge != NULL) {
         mittens_sync_wake(&s->bridge->state);
-        munmap(s->bridge, sizeof(MittensSyncBridge));
+        munmap(s->bridge, MITTENS_SYNC_BRIDGE_MAPPING_SIZE);
         s->bridge = NULL;
+        s->memory_batch = NULL;
+        s->memory_batch_count = 0;
     }
     if (s->bridge_fd >= 0) {
         close(s->bridge_fd);
@@ -912,6 +1090,16 @@ static Property mittens_sync_properties[] = {
         MittensSyncDeviceState,
         memory_init_batching,
         false),
+    DEFINE_PROP_BOOL(
+        "memory-access-batching",
+        MittensSyncDeviceState,
+        memory_access_batching,
+        false),
+    DEFINE_PROP_UINT32(
+        "memory-access-batch-records",
+        MittensSyncDeviceState,
+        memory_access_batch_records,
+        16),
     DEFINE_PROP_BOOL(
         "scratchpad-enabled",
         MittensSyncDeviceState,

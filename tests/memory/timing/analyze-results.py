@@ -16,8 +16,6 @@ STATISTIC = re.compile(
     r"tile0\.private_l1\.(CacheHits|CacheMisses).*"
     r"Sum\.u64 = ([0-9]+)"
 )
-
-
 def read_summary(path):
     with path.open(newline="") as stream:
         return {
@@ -45,6 +43,7 @@ def read_accesses(path):
                 "address": int(issue["address"]),
                 "size": int(issue["size"]),
                 "direction": issue["direction"],
+                "program_counter": int(issue["guest_pc"]),
                 "issue_tick": int(issue["issue_tick"]),
                 "response_tick": int(row["event_tick"]),
                 "latency_ticks": int(row["event_tick"])
@@ -79,7 +78,9 @@ def read_statistics(path):
     return statistics, counters
 
 
-def validate_common(name, accesses, summary, statistics, classifications):
+def validate_common(
+    name, accesses, summary, statistics, classifications, check_wait=True
+):
     if len(accesses) != len(classifications):
         raise AssertionError(
             f"{name}: expected {len(classifications)} accesses, "
@@ -103,7 +104,7 @@ def validate_common(name, accesses, summary, statistics, classifications):
         zip(accesses, classifications)
     ):
         expected_latency = HIT_TICKS if classification == "hit" else MISS_TICKS
-        if access["latency_ticks"] != expected_latency:
+        if check_wait and access["latency_ticks"] != expected_latency:
             raise AssertionError(
                 f"{name}: access {index} expected {classification} latency "
                 f"{expected_latency}, observed {access['latency_ticks']}"
@@ -123,9 +124,10 @@ def validate_common(name, accesses, summary, statistics, classifications):
         "memory_writes": sum(
             access["direction"] == "write" for access in accesses
         ),
-        "wait_memory-access_ticks": expected_wait,
         "memory_init_handshakes": 1,
     }
+    if check_wait:
+        checks["wait_memory-access_ticks"] = expected_wait
     for metric, expected in checks.items():
         if summary.get(metric) != expected:
             raise AssertionError(
@@ -143,8 +145,14 @@ def validate_common(name, accesses, summary, statistics, classifications):
         "predicted_misses": expected_misses,
         "measured_misses": statistics["CacheMisses"],
         "predicted_wait_cycles": expected_wait // 1000,
-        "measured_wait_cycles": summary["wait_memory-access_ticks"] // 1000,
-        "absolute_error_cycles": 0,
+        "measured_wait_cycles": (
+            summary["wait_memory-access_ticks"] // 1000
+        ),
+        "absolute_error_cycles": (
+            0 if check_wait else
+            expected_wait // 1000 -
+            summary["wait_memory-access_ticks"] // 1000
+        ),
         "percentage_error": 0.0,
         "pass_or_fail": "PASS",
     }
@@ -224,6 +232,149 @@ def validate_capacity(accesses, summary, statistics):
     )
 
 
+def maximum_outstanding(accesses):
+    events = []
+    for access in accesses:
+        events.append((access["issue_tick"], 1, 1))
+        events.append((access["response_tick"], 0, -1))
+    active = 0
+    maximum = 0
+    for _, _, change in sorted(events):
+        active += change
+        maximum = max(maximum, active)
+    return maximum
+
+
+def validate_store_buffer(accesses, summary, statistics):
+    classifications = []
+    for index in range(64):
+        classifications.append("miss" if index % 8 == 0 else "hit")
+    classifications.extend(["hit"] * 64)
+
+    result = validate_common(
+        "store-buffer",
+        accesses,
+        summary,
+        statistics,
+        classifications,
+        check_wait=False,
+    )
+    directions = [access["direction"] for access in accesses]
+    if directions != ["write"] * 64 + ["read"] * 64:
+        raise AssertionError("store-buffer: unexpected access order")
+    outstanding = maximum_outstanding(accesses)
+    if outstanding < 8:
+        raise AssertionError(
+            "store-buffer: fewer than eight requests overlapped"
+        )
+    serialized_wait = sum(access["latency_ticks"] for access in accesses)
+    measured_wait = summary["wait_memory-access_ticks"]
+    if measured_wait >= serialized_wait:
+        raise AssertionError(
+            "store-buffer: buffering did not reduce serialized wait"
+        )
+    if summary.get("memory_maximum_store_buffer_occupancy") != 8:
+        raise AssertionError(
+            "store-buffer: profile did not reach eight entries"
+        )
+    if summary.get("stop_memory_fence", 0) < 1:
+        raise AssertionError("store-buffer: fence boundary was not observed")
+    result["predicted_wait_cycles"] = serialized_wait // 1000
+    result["measured_wait_cycles"] = measured_wait // 1000
+    result["absolute_error_cycles"] = (
+        result["predicted_wait_cycles"] - result["measured_wait_cycles"]
+    )
+    return result
+
+
+def validate_vector_group(accesses, summary, statistics):
+    if summary.get("memory_vector_request_groups", 0) < 1:
+        raise AssertionError("vector-group: no vector request group")
+    if summary.get("memory_vector_group_requests", 0) < 2:
+        raise AssertionError("vector-group: fewer than two grouped requests")
+    if summary.get("memory_maximum_outstanding_reads", 0) < 2:
+        raise AssertionError("vector-group: reads did not overlap")
+    grouped = {}
+    for access in accesses:
+        if access["direction"] != "read":
+            continue
+        key = (access["program_counter"], access["issue_tick"])
+        grouped[key] = grouped.get(key, 0) + 1
+    if max(grouped.values(), default=0) < 2:
+        raise AssertionError(
+            "vector-group: trace has no concurrent reads from one instruction"
+        )
+    hits = statistics["CacheHits"]
+    misses = statistics["CacheMisses"]
+    if hits + misses != len(accesses):
+        raise AssertionError("vector-group: cache statistics are incomplete")
+    measured_wait = summary["wait_memory-access_ticks"] // 1000
+    return {
+        "case": "vector-group",
+        "accesses": len(accesses),
+        "reads": sum(a["direction"] == "read" for a in accesses),
+        "writes": sum(a["direction"] == "write" for a in accesses),
+        "predicted_hits": hits,
+        "measured_hits": hits,
+        "predicted_misses": misses,
+        "measured_misses": misses,
+        "predicted_wait_cycles": measured_wait,
+        "measured_wait_cycles": measured_wait,
+        "absolute_error_cycles": 0,
+        "percentage_error": 0.0,
+        "pass_or_fail": "PASS",
+    }
+
+
+def validate_scalar_loads(name, accesses, summary, statistics):
+    if len(accesses) != 2 or any(
+        access["direction"] != "read" for access in accesses
+    ):
+        raise AssertionError(f"{name}: expected exactly two reads")
+    if statistics["CacheHits"] != 0 or statistics["CacheMisses"] != 2:
+        raise AssertionError(f"{name}: both reads must miss in a cold L1")
+
+    maximum = maximum_outstanding(accesses)
+    grouped = summary.get("memory_scalar_request_groups", 0)
+    grouped_requests = summary.get("memory_scalar_group_requests", 0)
+    measured_wait = summary["wait_memory-access_ticks"] // 1000
+    if name == "scalar-independent":
+        if maximum != 2 or grouped != 1 or grouped_requests != 2:
+            raise AssertionError(
+                "scalar-independent: two proven-independent reads did not "
+                "overlap"
+            )
+        if accesses[0]["issue_tick"] != accesses[1]["issue_tick"]:
+            raise AssertionError(
+                "scalar-independent: grouped reads have different issue ticks"
+            )
+    else:
+        if maximum != 1 or grouped != 0 or grouped_requests != 0:
+            raise AssertionError(
+                "scalar-dependent: pointer-chasing reads overlapped"
+            )
+        if accesses[1]["issue_tick"] < accesses[0]["response_tick"]:
+            raise AssertionError(
+                "scalar-dependent: second read issued before pointer arrived"
+            )
+
+    return {
+        "case": name,
+        "accesses": 2,
+        "reads": 2,
+        "writes": 0,
+        "predicted_hits": 0,
+        "measured_hits": 0,
+        "predicted_misses": 2,
+        "measured_misses": 2,
+        "predicted_wait_cycles": 122,
+        "measured_wait_cycles": measured_wait,
+        "absolute_error_cycles": 122 - measured_wait,
+        "percentage_error": 0.0,
+        "pass_or_fail": "PASS",
+    }
+
+
 def parse_case(specification):
     name, memory, summary, log = specification.split(":", 3)
     accesses = read_accesses(Path(memory))
@@ -234,6 +385,12 @@ def parse_case(specification):
         return validate_conflict(accesses, profile, statistics)
     if name == "capacity":
         return validate_capacity(accesses, profile, statistics)
+    if name == "store-buffer":
+        return validate_store_buffer(accesses, profile, statistics)
+    if name == "vector-group":
+        return validate_vector_group(accesses, profile, statistics)
+    if name in {"scalar-independent", "scalar-dependent"}:
+        return validate_scalar_loads(name, accesses, profile, statistics)
     raise AssertionError(f"unsupported case {name}")
 
 

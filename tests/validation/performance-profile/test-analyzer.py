@@ -480,7 +480,49 @@ builtin.module attributes {
                     "ComponentName": "router_0",
                     "StatisticName": "output_port_stalls",
                     "StatisticSubId": "port1",
-                    "Sum.u64": 3,
+                    "Sum.u64": 3000,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "flits_forwarded",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 10,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "packets_forwarded",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 2,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "output_credit_stall_cycles",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 7,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "switch_arbitration_stall_cycles",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 11,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "input_buffer_full_cycles",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 5,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "output_link_busy_cycles",
+                    "StatisticSubId": "west",
+                    "Sum.u64": 10,
+                },
+                {
+                    "ComponentName": "router_1_0",
+                    "StatisticName": "flits_forwarded",
+                    "StatisticSubId": "local",
+                    "Sum.u64": 1000,
                 },
             ],
         )
@@ -510,8 +552,13 @@ builtin.module attributes {
         assert summary["network"]["injected_words"] == 9
         assert summary["network"]["payload_words"] == 4
         assert summary["network"]["directional_word_hops"] == 9
-        assert summary["network"]["physical_router_link_bits"] == 288
-        assert summary["network"]["router_stalls"] == 3
+        assert summary["network"]["physical_router_link_bits"] == 608
+        assert summary["network"]["router_stalls"] == 24
+        assert summary["network"]["output_credit_stall_cycles"] == 13
+        assert summary["network"][
+            "switch_arbitration_stall_cycles"
+        ] == 11
+        assert summary["network"]["input_buffer_full_cycles"] == 5
         assert summary["receive_dma"]["transfers"] == 1
         assert summary["analog"]["operations"] == 1
         assert summary["memory"]["modeled_requests"] == 1

@@ -51,9 +51,10 @@ index ae91bcf..d893790 100644
 @@ -1984,6 +2013,8 @@ static void *atomic_mmu_lookup(CPUState *cpu, vaddr addr, MemOpIdx oi,
          const hwaddr physical_address =
              full->phys_addr + (addr & ~TARGET_PAGE_MASK);
-         mittens_sync_yield_memory(
+-        mittens_sync_yield_memory(
 -            physical_address, size, true);
-+            physical_address, size, true,
++        mittens_sync_yield_memory_atomic(
++            physical_address, size,
 +            mittens_sync_guest_pc(cpu, retaddr),
 +            mittens_sync_guest_return_address(cpu));
      }

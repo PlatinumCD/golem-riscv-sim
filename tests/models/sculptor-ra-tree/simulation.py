@@ -31,6 +31,21 @@ def boolean(name):
     raise ValueError(f"{name} must be true or false")
 
 
+def active_tiles():
+    value = os.environ.get("MITTENS_SCULPTOR_ACTIVE_CORES", "")
+    if not value.strip():
+        return None
+    result = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item or not item.isdigit():
+            raise ValueError(
+                "MITTENS_SCULPTOR_ACTIVE_CORES must be comma-separated IDs"
+            )
+        result.append(int(item))
+    return result
+
+
 packet_words = os.environ.get("MITTENS_SCULPTOR_NETWORK_PACKET_WORDS", "")
 memory_backend = os.environ.get("MITTENS_SCULPTOR_MEMORY_BACKEND", "native")
 
@@ -73,6 +88,19 @@ build_mesh(
             memory_backend == "memhierarchy" and
             boolean("MITTENS_SCULPTOR_MEMORY_INIT_BATCHING")
         ),
+        "memory_access_batching": (
+            memory_backend == "memhierarchy" and
+            boolean("MITTENS_SCULPTOR_MEMORY_ACCESS_BATCHING")
+        ),
+        "memory_access_batch_records": integer(
+            "MITTENS_SCULPTOR_MEMORY_ACCESS_BATCH_RECORDS"
+        ),
+        "memory_store_buffer_entries": integer(
+            "MITTENS_SCULPTOR_MEMORY_STORE_BUFFER_ENTRIES"
+        ),
+        "memory_load_queue_entries": integer(
+            "MITTENS_SCULPTOR_MEMORY_LOAD_QUEUE_ENTRIES"
+        ),
         "memory_init_bytes_per_cycle": integer(
             "MITTENS_SCULPTOR_MEMORY_INIT_BYTES_PER_CYCLE"
         ),
@@ -83,6 +111,19 @@ build_mesh(
     memory_backend=memory_backend,
     mesh_link_width_bits=integer("MITTENS_SCULPTOR_MESH_LINK_WIDTH_BITS"),
     mesh_link_clock=environment("MITTENS_SCULPTOR_MESH_LINK_CLOCK"),
+    mesh_link_latency=environment("MITTENS_SCULPTOR_MESH_LINK_LATENCY"),
+    mesh_router_backend=environment(
+        "MITTENS_SCULPTOR_MESH_ROUTER_BACKEND"
+    ),
+    wormhole_input_buffer_flits=integer(
+        "MITTENS_SCULPTOR_WORMHOLE_INPUT_BUFFER_FLITS"
+    ),
+    wormhole_injection_buffer_flits=integer(
+        "MITTENS_SCULPTOR_WORMHOLE_INJECTION_BUFFER_FLITS"
+    ),
+    wormhole_pipeline_cycles=integer(
+        "MITTENS_SCULPTOR_WORMHOLE_PIPELINE_CYCLES"
+    ),
     network_cell_words=integer("MITTENS_SCULPTOR_NETWORK_CELL_WORDS"),
     network_buffer_cells=integer("MITTENS_SCULPTOR_NETWORK_BUFFER_CELLS"),
     network_packet_words=int(packet_words) if packet_words else None,
@@ -91,8 +132,13 @@ build_mesh(
         "l1_associativity": integer("MITTENS_SCULPTOR_L1_ASSOCIATIVITY"),
         "cache_line_size": integer("MITTENS_SCULPTOR_CACHE_LINE_SIZE"),
         "l1_access_latency_cycles": integer("MITTENS_SCULPTOR_L1_ACCESS_LATENCY_CYCLES"),
+        "l1_max_requests_per_cycle": integer(
+            "MITTENS_SCULPTOR_L1_MAX_REQUESTS_PER_CYCLE"
+        ),
+        "l1_banks": integer("MITTENS_SCULPTOR_L1_BANKS"),
         "l1_clock": environment("MITTENS_SCULPTOR_L1_CLOCK"),
         "lower_memory_clock": environment("MITTENS_SCULPTOR_LOWER_MEMORY_CLOCK"),
         "lower_memory_access_time": environment("MITTENS_SCULPTOR_LOWER_MEMORY_ACCESS_TIME"),
     },
+    active_tiles=active_tiles(),
 )

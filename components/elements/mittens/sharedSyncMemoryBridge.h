@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace SST {
 namespace Mittens {
@@ -27,6 +28,7 @@ struct QemuSyncEvent {
     std::uint64_t memoryAddress;
     std::uint32_t memorySize;
     std::uint32_t memoryFlags;
+    std::vector<MittensSyncMemoryAccess> memoryBatch;
     std::uint64_t memoryProgramCounter() const noexcept
     {
         return analogSequence;

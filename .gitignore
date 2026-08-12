@@ -1,6 +1,8 @@
 /build/
 /install/
 /results/sweep-archives/
+/config-temp/
+/config.log
 __pycache__/
 *.py[cod]
 

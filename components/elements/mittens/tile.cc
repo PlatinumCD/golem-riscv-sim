@@ -4,6 +4,7 @@
 
 #include "analog/crossSimAnalogBackend.h"
 #include "analog/nativeAnalogBackend.h"
+#include "memoryAccessCoalescer.h"
 #include "packetEvent.h"
 
 #include <algorithm>
@@ -65,6 +66,10 @@ const char* syncStopReasonName(std::uint32_t reason)
         return "scratchpad-dma-submit";
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT:
         return "scratchpad-dma-wait";
+    case MITTENS_SYNC_STOP_MEMORY_BATCH:
+        return "memory-batch";
+    case MITTENS_SYNC_STOP_MEMORY_FENCE:
+        return "memory-fence";
     default:
         return "unknown";
     }
@@ -82,6 +87,7 @@ Tile::Configuration Tile::readConfiguration(SST::Params& params)
         params.find<std::string>("mesh_link_clock", "1GHz"),
         params.find<std::uint32_t>("mesh_link_width_bits", 32),
         params.find<std::uint32_t>("network_packet_words", 16),
+        params.find<bool>("network_tail_delivery", false),
         params.find<std::string>("qemu_path", "qemu-system-riscv64"),
         params.find<std::string>("elf", ""),
         params.find<std::string>("memory", "16M"),
@@ -89,9 +95,12 @@ Tile::Configuration Tile::readConfiguration(SST::Params& params)
         params.find<std::uint64_t>("memory_guest_base", 0),
         params.find<std::uint64_t>("memory_tile_stride", 0),
         params.find<std::uint32_t>("memory_cache_line_size", 64),
+        params.find<std::uint32_t>("memory_load_queue_entries", 8),
         params.find<std::uint32_t>(
             "memory_store_buffer_entries", 1),
         params.find<bool>("memory_init_batching", false),
+        params.find<bool>("memory_access_batching", false),
+        params.find<std::uint32_t>("memory_access_batch_records", 16),
         params.find<std::uint32_t>(
             "memory_init_bytes_per_cycle", 32),
         params.find<std::uint64_t>(
@@ -324,13 +333,15 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params) :
         CALL_INFO,
         1,
         0,
-        "configured tile %u (qemu=%s, elf=%s, memory=%s, memory_backend=%s/init-batch-%s/%uB-cycle/setup-%llu, launch=%s, cpu_clock=%s, issue_width=%u, sync_quantum=%llu, rvv=%s/vlen-%u/elen-%u, network=%s, network_size=%u, mesh_link=%s/%u-bit/packet-%u-words, rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
+        "configured tile %u (qemu=%s, elf=%s, memory=%s, memory_backend=%s/init-batch-%s/access-batch-%s-%u/%uB-cycle/setup-%llu, launch=%s, cpu_clock=%s, issue_width=%u, sync_quantum=%llu, rvv=%s/vlen-%u/elen-%u, network=%s, network_size=%u, mesh_link=%s/%u-bit/packet-%u-words, rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
         static_cast<unsigned>(config_.tileId),
         config_.qemuPath.c_str(),
         config_.elfPath.empty() ? "<unset>" : config_.elfPath.c_str(),
         config_.memory.c_str(),
         config_.memoryBackend.c_str(),
         config_.memoryInitializationBatching ? "on" : "off",
+        config_.memoryAccessBatching ? "on" : "off",
+        static_cast<unsigned>(config_.memoryAccessBatchRecords),
         static_cast<unsigned>(
             config_.memoryInitializationBytesPerCycle),
         static_cast<unsigned long long>(
@@ -467,6 +478,24 @@ void Tile::validateConfiguration() const
             "memory_init_batching is enabled\n",
             static_cast<unsigned>(config_.tileId));
     }
+    if (config_.memoryAccessBatching &&
+        config_.memoryBackend != "memhierarchy") {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u requires memory_backend=memhierarchy when "
+            "memory_access_batching is enabled\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.memoryAccessBatchRecords == 0 ||
+        config_.memoryAccessBatchRecords >
+            MITTENS_SYNC_MEMORY_BATCH_CAPACITY) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u requires memory_access_batch_records in [1, %u]\n",
+            static_cast<unsigned>(config_.tileId),
+            static_cast<unsigned>(MITTENS_SYNC_MEMORY_BATCH_CAPACITY));
+    }
     if (config_.memoryCacheLineSize == 0 ||
         (config_.memoryCacheLineSize &
          (config_.memoryCacheLineSize - 1)) != 0) {
@@ -483,6 +512,14 @@ void Tile::validateConfiguration() const
             CALL_INFO,
             -1,
             "tile %u requires memory_store_buffer_entries in [1, 64]\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    if (config_.memoryLoadQueueEntries == 0 ||
+        config_.memoryLoadQueueEntries > 64) {
+        output_.fatal(
+            CALL_INFO,
+            -1,
+            "tile %u requires memory_load_queue_entries in [1, 64]\n",
             static_cast<unsigned>(config_.tileId));
     }
     if (config_.memoryInitializationBytesPerCycle == 0) {
@@ -751,6 +788,8 @@ void Tile::setup()
                 config_.riscvVectorElementBits,
                 config_.memoryBackend == "memhierarchy",
                 config_.memoryInitializationBatching,
+                config_.memoryAccessBatching,
+                config_.memoryAccessBatchRecords,
                 config_.scratchpadEnabled,
                 UINT64_C(0x90000000),
                 config_.scratchpadBytes,
@@ -907,6 +946,7 @@ void Tile::authorizeReceiveDMA(ReceiveDMATransfer& transfer)
             getCurrentSimTime(receiveDMAClockTimeBase_)));
 
     resumeReceiveWaitIfReady();
+    resumeTransmitWaitIfReady();
 }
 
 void Tile::grantAndCaptureQemu()
@@ -1010,61 +1050,13 @@ void Tile::captureQemuEvent()
                     config_.syncInstructionQuantum));
         }
 
-        const std::uint64_t instructions =
-            event->instructionsExecuted - lastGrantInstruction_;
-        const std::uint64_t vectorInstructions =
-            event->vectorInstructionsExecuted -
-            lastGrantVectorInstruction_;
-        if (instructions > UINT64_MAX - cpuRunInstructions_ ||
-            vectorInstructions >
-                UINT64_MAX - cpuRunVectorInstructions_) {
-            output_.fatal(
-                CALL_INFO,
-                -1,
-                "tile %u CPU run accounting overflowed\n",
-                static_cast<unsigned>(config_.tileId));
+        if (event->stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH) {
+            beginMemoryBatch(*event);
+            return;
         }
-        cpuRunInstructions_ += instructions;
-        cpuRunVectorInstructions_ += vectorInstructions;
-        const std::uint64_t nextCpuRunCycles = std::max(
-            divideRoundUp(
-                cpuRunInstructions_, config_.cpuIssueWidth),
-            cpuRunVectorInstructions_);
-        if (nextCpuRunCycles < cpuRunCycles_) {
-            output_.fatal(
-                CALL_INFO,
-                -1,
-                "tile %u CPU run cycles went backwards\n",
-                static_cast<unsigned>(config_.tileId));
-        }
-        const std::uint64_t instructionCycles =
-            nextCpuRunCycles - cpuRunCycles_;
-        cpuRunCycles_ = nextCpuRunCycles;
-        lastGrantInstruction_ = event->instructionsExecuted;
-        lastGrantVectorInstruction_ =
-            event->vectorInstructionsExecuted;
-        synchronizedInstructions_ += instructions;
-        synchronizedVectorInstructions_ += vectorInstructions;
-        synchronizedCpuCycles_ += instructionCycles;
-        if (instructionCycles >
-            UINT64_MAX - scratchpadTimingCycle_) {
-            output_.fatal(
-                CALL_INFO, -1,
-                "tile %u scratchpad time overflowed\n",
-                static_cast<unsigned>(config_.tileId));
-        }
-        scratchpadTimingCycle_ += instructionCycles;
-        if (event->stopReason != MITTENS_SYNC_STOP_QUANTUM_END) {
-            /*
-             * A host quantum split is not an architectural boundary, so
-             * retain partially filled scalar issue slots and vector issue
-             * occupancy across it. A real fd-41 device/task/exit boundary
-             * closes the current contiguous CPU interval.
-             */
-            cpuRunInstructions_ = 0;
-            cpuRunVectorInstructions_ = 0;
-            cpuRunCycles_ = 0;
-        }
+        const std::uint64_t instructionCycles = accountCpuTo(
+            *event,
+            event->stopReason != MITTENS_SYNC_STOP_QUANTUM_END);
         ++synchronizationEvents_;
         if (event->stopReason < synchronizationStopCounts_.size()) {
             ++synchronizationStopCounts_[event->stopReason];
@@ -1092,6 +1084,203 @@ void Tile::captureQemuEvent()
     }
 }
 
+std::uint64_t Tile::accountCpuTo(
+    const QemuSyncEvent& event,
+    bool architecturalBoundary)
+{
+    if (event.instructionsExecuted < lastGrantInstruction_ ||
+        event.vectorInstructionsExecuted < lastGrantVectorInstruction_) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u CPU accounting target went backwards\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    const std::uint64_t instructions =
+        event.instructionsExecuted - lastGrantInstruction_;
+    const std::uint64_t vectorInstructions =
+        event.vectorInstructionsExecuted - lastGrantVectorInstruction_;
+    if (instructions > UINT64_MAX - cpuRunInstructions_ ||
+        vectorInstructions > UINT64_MAX - cpuRunVectorInstructions_) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u CPU run accounting overflowed\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    cpuRunInstructions_ += instructions;
+    cpuRunVectorInstructions_ += vectorInstructions;
+    const std::uint64_t nextCpuRunCycles = std::max(
+        divideRoundUp(cpuRunInstructions_, config_.cpuIssueWidth),
+        cpuRunVectorInstructions_);
+    if (nextCpuRunCycles < cpuRunCycles_) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u CPU run cycles went backwards\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    const std::uint64_t instructionCycles =
+        nextCpuRunCycles - cpuRunCycles_;
+    cpuRunCycles_ = nextCpuRunCycles;
+    lastGrantInstruction_ = event.instructionsExecuted;
+    lastGrantVectorInstruction_ = event.vectorInstructionsExecuted;
+    synchronizedInstructions_ += instructions;
+    synchronizedVectorInstructions_ += vectorInstructions;
+    synchronizedCpuCycles_ += instructionCycles;
+    if (instructionCycles > UINT64_MAX - scratchpadTimingCycle_) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u scratchpad time overflowed\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    scratchpadTimingCycle_ += instructionCycles;
+    if (architecturalBoundary) {
+        cpuRunInstructions_ = 0;
+        cpuRunVectorInstructions_ = 0;
+        cpuRunCycles_ = 0;
+    }
+    return instructionCycles;
+}
+
+void Tile::beginMemoryBatch(const QemuSyncEvent& event)
+{
+    if (memoryBatchEnvelope_.has_value() || event.memoryBatch.empty()) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u received an invalid or nested memory batch\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    std::uint64_t previousInstructions = lastGrantInstruction_;
+    std::uint64_t previousVectors = lastGrantVectorInstruction_;
+    for (const MittensSyncMemoryAccess& access : event.memoryBatch) {
+        if (access.instructions_executed < previousInstructions ||
+            access.instructions_executed > event.instructionsExecuted ||
+            access.vector_instructions_executed < previousVectors ||
+            access.vector_instructions_executed >
+                access.instructions_executed ||
+            access.vector_instructions_executed >
+                event.vectorInstructionsExecuted ||
+            access.size == 0 || access.size > 16 ||
+            (access.flags &
+             ~(MITTENS_SYNC_MEMORY_FLAG_WRITE |
+               MITTENS_SYNC_MEMORY_FLAG_REGISTER_DEPS)) != 0) {
+            output_.fatal(
+                CALL_INFO, -1,
+                "tile %u received an invalid memory batch record\n",
+                static_cast<unsigned>(config_.tileId));
+        }
+        previousInstructions = access.instructions_executed;
+        previousVectors = access.vector_instructions_executed;
+    }
+    memoryBatchEnvelope_ = event;
+    memoryBatchRecords_ = coalesceMemoryAccesses(
+        event.memoryBatch,
+        config_.memoryCacheLineSize);
+    memoryBatchIndex_ = 0;
+    memoryBatchGroupEndIndex_ = 0;
+    memoryBatchGroupRequestIds_.clear();
+    ++synchronizationEvents_;
+    ++synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_BATCH];
+    scheduleNextMemoryBatchStep();
+}
+
+void Tile::scheduleNextMemoryBatchStep()
+{
+    if (!memoryBatchEnvelope_.has_value()) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u attempted to advance an inactive memory batch\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    if (memoryBatchIndex_ < memoryBatchRecords_.size()) {
+        const MittensSyncMemoryAccess& access =
+            memoryBatchRecords_[memoryBatchIndex_];
+        memoryBatchGroupEndIndex_ = memoryBatchIndex_ + 1;
+        if ((access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE) == 0) {
+            std::uint32_t producedRegisterMask =
+                access.destination_register_mask;
+            while (memoryBatchGroupEndIndex_ <
+                       memoryBatchRecords_.size() &&
+                   memoryBatchGroupEndIndex_ - memoryBatchIndex_ <
+                       config_.memoryLoadQueueEntries) {
+                const MittensSyncMemoryAccess& previous =
+                    memoryBatchRecords_[memoryBatchGroupEndIndex_ - 1];
+                const MittensSyncMemoryAccess& next =
+                    memoryBatchRecords_[memoryBatchGroupEndIndex_];
+                const bool vectorFragment =
+                    sameDynamicMemoryInstruction(access, next);
+                const bool independentScalar =
+                    canExtendScalarLoadGroup(
+                        previous, next, producedRegisterMask);
+                if (!vectorFragment && !independentScalar) {
+                    break;
+                }
+                producedRegisterMask |=
+                    next.destination_register_mask;
+                ++memoryBatchGroupEndIndex_;
+            }
+        }
+        QemuSyncEvent event = *memoryBatchEnvelope_;
+        event.instructionsExecuted = access.instructions_executed;
+        event.vectorInstructionsExecuted =
+            access.vector_instructions_executed;
+        event.stopReason = MITTENS_SYNC_STOP_MEMORY_ACCESS;
+        event.flags = MITTENS_SYNC_EVENT_FLAG_NONE;
+        event.analogSequence = access.program_counter;
+        event.executionId = access.return_address;
+        event.memoryAddress = access.address;
+        event.memorySize = access.size;
+        event.memoryFlags =
+            access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE;
+        event.memoryBatch.clear();
+        const std::uint64_t cycles = accountCpuTo(event, true);
+        ++synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_ACCESS];
+        pendingSyncEvent_ = std::move(event);
+        scheduleCpuSyncEvent(cycles);
+        return;
+    }
+
+    QemuSyncEvent event = *memoryBatchEnvelope_;
+    event.memoryBatch.clear();
+    const std::uint64_t cycles = accountCpuTo(event, false);
+    pendingSyncEvent_ = std::move(event);
+    scheduleCpuSyncEvent(cycles);
+}
+
+void Tile::advanceMemoryBatchAccess()
+{
+    if (!memoryBatchEnvelope_.has_value() ||
+        memoryBatchIndex_ >= memoryBatchRecords_.size()) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u completed an access outside a memory batch\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    completeWait();
+    pendingSyncEvent_.reset();
+    blockingMemoryRequestId_.reset();
+    ++memoryBatchIndex_;
+    memoryBatchGroupEndIndex_ = 0;
+    scheduleNextMemoryBatchStep();
+}
+
+void Tile::advanceMemoryBatchGroup()
+{
+    if (!memoryBatchEnvelope_.has_value() ||
+        memoryBatchGroupEndIndex_ <= memoryBatchIndex_ ||
+        memoryBatchGroupEndIndex_ > memoryBatchRecords_.size() ||
+        !memoryBatchGroupRequestIds_.empty()) {
+        output_.fatal(
+            CALL_INFO, -1,
+            "tile %u completed an invalid memory request group\n",
+            static_cast<unsigned>(config_.tileId));
+    }
+    completeWait();
+    pendingSyncEvent_.reset();
+    blockingMemoryRequestId_.reset();
+    memoryBatchIndex_ = memoryBatchGroupEndIndex_;
+    memoryBatchGroupEndIndex_ = 0;
+    scheduleNextMemoryBatchStep();
+}
+
 bool Tile::processPendingSyncEvent()
 {
     if (!pendingSyncEvent_.has_value()) {
@@ -1110,11 +1299,33 @@ bool Tile::processPendingSyncEvent()
         reason == MITTENS_SYNC_STOP_ANALOG_SUBMIT ||
         reason == MITTENS_SYNC_STOP_ANALOG_WAIT ||
         reason == MITTENS_SYNC_STOP_TASK_FINISH ||
+        reason == MITTENS_SYNC_STOP_MEMORY_FENCE ||
         reason == MITTENS_SYNC_STOP_GUEST_EXIT;
     if (drainStores && outstandingMemoryWrites_ != 0) {
         return false;
     }
     switch (reason) {
+    case MITTENS_SYNC_STOP_MEMORY_BATCH: {
+        const bool quantumEnd =
+            (pendingSyncEvent_->flags &
+             MITTENS_SYNC_EVENT_FLAG_QUANTUM_END) != 0;
+        memoryBatchEnvelope_.reset();
+        memoryBatchRecords_.clear();
+        memoryBatchIndex_ = 0;
+        memoryBatchGroupEndIndex_ = 0;
+        memoryBatchGroupRequestIds_.clear();
+        if (quantumEnd) {
+            serviceBridge();
+            pendingSyncEvent_.reset();
+            if (!observeQemuExit()) {
+                grantAndCaptureQemu();
+            }
+        } else {
+            resumeAndCaptureQemu();
+        }
+        return true;
+    }
+
     case MITTENS_SYNC_STOP_QUANTUM_END:
         serviceBridge();
         pendingSyncEvent_.reset();
@@ -1124,18 +1335,26 @@ bool Tile::processPendingSyncEvent()
         grantAndCaptureQemu();
         return true;
 
+    case MITTENS_SYNC_STOP_MEMORY_FENCE:
+        resumeAndCaptureQemu();
+        return true;
+
     case MITTENS_SYNC_STOP_NIC_TRANSMIT:
         serviceBridge();
-        if (transmitReadyForGuest(*pendingSyncEvent_)) {
-            resumeAndCaptureQemu();
-            return true;
-        }
-        transmitWaitArmed_ = true;
-        return false;
+        /*
+         * The descriptor that caused this doorbell is already committed to
+         * the bridge.  Do not turn a successful submission into a wait for
+         * the next queue slot.  Guest software must return to its event loop
+         * so that it can consume receive work before attempting another
+         * transmit.
+         */
+        resumeAndCaptureQemu();
+        return true;
 
     case MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT:
         serviceBridge();
-        if (transmitReadyForGuest(*pendingSyncEvent_)) {
+        if (transmitReadyForGuest(*pendingSyncEvent_) ||
+            receiveReadyForGuest()) {
             resumeAndCaptureQemu();
             return true;
         }
@@ -1222,6 +1441,53 @@ bool Tile::processPendingSyncEvent()
         if ((pendingSyncEvent_->memoryFlags &
              MITTENS_SYNC_MEMORY_FLAG_WRITE) == 0 &&
             memoryReadHasPendingWriteHazard(*pendingSyncEvent_)) {
+            return false;
+        }
+        if (memoryBatchEnvelope_.has_value() &&
+            memoryBatchGroupEndIndex_ > memoryBatchIndex_ + 1) {
+            if (!memoryBatchGroupRequestIds_.empty()) {
+                return false;
+            }
+            for (std::size_t index = memoryBatchIndex_;
+                 index < memoryBatchGroupEndIndex_; ++index) {
+                const MittensSyncMemoryAccess& access =
+                    memoryBatchRecords_[index];
+                QemuSyncEvent groupEvent = *pendingSyncEvent_;
+                groupEvent.analogSequence = access.program_counter;
+                groupEvent.executionId = access.return_address;
+                groupEvent.memoryAddress = access.address;
+                groupEvent.memorySize = access.size;
+                groupEvent.memoryFlags =
+                    access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE;
+                if (memoryReadHasPendingWriteHazard(groupEvent)) {
+                    return false;
+                }
+            }
+            for (std::size_t index = memoryBatchIndex_;
+                 index < memoryBatchGroupEndIndex_; ++index) {
+                const MittensSyncMemoryAccess& access =
+                    memoryBatchRecords_[index];
+                QemuSyncEvent groupEvent = *pendingSyncEvent_;
+                groupEvent.analogSequence = access.program_counter;
+                groupEvent.executionId = access.return_address;
+                groupEvent.memoryAddress = access.address;
+                groupEvent.memorySize = access.size;
+                groupEvent.memoryFlags =
+                    access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE;
+                memoryBatchGroupRequestIds_.insert(
+                    sendMemoryRequest(groupEvent));
+            }
+            const std::uint64_t groupSize =
+                memoryBatchGroupEndIndex_ - memoryBatchIndex_;
+            if (sameDynamicMemoryInstruction(
+                    memoryBatchRecords_[memoryBatchIndex_],
+                    memoryBatchRecords_[memoryBatchIndex_ + 1])) {
+                ++vectorMemoryRequestGroups_;
+                vectorMemoryGroupRequests_ += groupSize;
+            } else {
+                ++scalarMemoryRequestGroups_;
+                scalarMemoryGroupRequests_ += groupSize;
+            }
             return false;
         }
         if (!blockingMemoryRequestId_.has_value()) {
@@ -1431,10 +1697,15 @@ bool Tile::memoryReadHasPendingWriteHazard(
     return false;
 }
 
-void Tile::issueMemoryRequest(const QemuSyncEvent& event)
+SST::Interfaces::StandardMem::Request::id_t
+Tile::sendMemoryRequest(const QemuSyncEvent& event)
 {
+    const std::uint32_t maximumAccessSize =
+        memoryBatchEnvelope_.has_value()
+            ? config_.memoryCacheLineSize
+            : 16;
     if (event.memorySize == 0 ||
-        event.memorySize > 16 ||
+        event.memorySize > maximumAccessSize ||
         (event.memoryFlags & ~MITTENS_SYNC_MEMORY_FLAG_WRITE) != 0) {
         output_.fatal(
             CALL_INFO,
@@ -1509,6 +1780,15 @@ void Tile::issueMemoryRequest(const QemuSyncEvent& event)
             static_cast<unsigned>(config_.tileId),
             static_cast<unsigned long long>(request->getID()));
     }
+    maximumOutstandingMemoryRequests_ = std::max(
+        maximumOutstandingMemoryRequests_,
+        static_cast<std::uint64_t>(pendingMemoryRequests_.size()));
+    if (!write) {
+        ++outstandingMemoryReads_;
+        maximumOutstandingMemoryReads_ = std::max(
+            maximumOutstandingMemoryReads_,
+            static_cast<std::uint64_t>(outstandingMemoryReads_));
+    }
     ++memoryRequests_;
     performanceProfile_.recordMemory(
         "issue",
@@ -1526,15 +1806,29 @@ void Tile::issueMemoryRequest(const QemuSyncEvent& event)
         pending.issueTick);
     memoryInterface_->send(request);
 
+    return request->getID();
+}
+
+void Tile::issueMemoryRequest(const QemuSyncEvent& event)
+{
+    const bool write =
+        (event.memoryFlags & MITTENS_SYNC_MEMORY_FLAG_WRITE) != 0;
+    const SST::Interfaces::StandardMem::Request::id_t requestId =
+        sendMemoryRequest(event);
+
     if (!write) {
-        blockingMemoryRequestId_ = request->getID();
+        blockingMemoryRequestId_ = requestId;
         return;
     }
 
     ++outstandingMemoryWrites_;
+    maximumStoreBufferOccupancy_ = std::max(
+        maximumStoreBufferOccupancy_,
+        static_cast<std::uint64_t>(outstandingMemoryWrites_));
     if (outstandingMemoryWrites_ >=
         config_.memoryStoreBufferEntries) {
-        blockingMemoryRequestId_ = request->getID();
+        ++memoryStoreBufferFullEvents_;
+        blockingMemoryRequestId_ = requestId;
         return;
     }
 
@@ -1544,7 +1838,11 @@ void Tile::issueMemoryRequest(const QemuSyncEvent& event)
      * buffer entry.  Reads remain blocking because the bridge does not yet
      * carry register-dependency information.
      */
-    resumeAndCaptureQemu();
+    if (memoryBatchEnvelope_.has_value()) {
+        advanceMemoryBatchAccess();
+    } else {
+        resumeAndCaptureQemu();
+    }
 }
 
 void Tile::handleMemoryResponse(
@@ -1620,10 +1918,11 @@ void Tile::handleMemoryResponse(
         metadata.phase.c_str(),
         metadata.issueTick,
         getCurrentSimCycle());
-    const bool blockingLoadCompleted =
-        !metadata.write &&
+    const bool blockingRequestCompleted =
         blockingMemoryRequestId_.has_value() &&
         *blockingMemoryRequestId_ == request->getID();
+    const bool groupedRequestCompleted =
+        memoryBatchGroupRequestIds_.erase(request->getID()) != 0;
     if (metadata.write) {
         if (outstandingMemoryWrites_ == 0) {
             output_.fatal(
@@ -1633,14 +1932,33 @@ void Tile::handleMemoryResponse(
                 static_cast<unsigned>(config_.tileId));
         }
         --outstandingMemoryWrites_;
+    } else {
+        if (outstandingMemoryReads_ == 0) {
+            output_.fatal(
+                CALL_INFO, -1,
+                "tile %u completed a load with no outstanding loads\n",
+                static_cast<unsigned>(config_.tileId));
+        }
+        --outstandingMemoryReads_;
     }
     pendingMemoryRequests_.erase(pending);
     delete request;
     ++memoryResponses_;
 
-    if (blockingLoadCompleted) {
+    if (groupedRequestCompleted) {
+        if (memoryBatchGroupRequestIds_.empty()) {
+            advanceMemoryBatchGroup();
+        }
+        return;
+    }
+
+    if (blockingRequestCompleted) {
         blockingMemoryRequestId_.reset();
-        resumeAndCaptureQemu();
+        if (memoryBatchEnvelope_.has_value()) {
+            advanceMemoryBatchAccess();
+        } else {
+            resumeAndCaptureQemu();
+        }
         return;
     }
 
@@ -1653,7 +1971,11 @@ void Tile::handleMemoryResponse(
         outstandingMemoryWrites_ <
             config_.memoryStoreBufferEntries) {
         blockingMemoryRequestId_.reset();
-        resumeAndCaptureQemu();
+        if (memoryBatchEnvelope_.has_value()) {
+            advanceMemoryBatchAccess();
+        } else {
+            resumeAndCaptureQemu();
+        }
         return;
     }
 
@@ -1772,6 +2094,7 @@ void Tile::handleNetworkCompletionEvent(SST::Event* event)
     scheduleReceiveDMABursts();
     checkBridgeError();
     resumeReceiveWaitIfReady();
+    resumeTransmitWaitIfReady();
     signalExitedTileIfDrained();
 }
 
@@ -1842,6 +2165,7 @@ bool Tile::handleNetworkReceive(int)
         scheduleReceiveDMABursts();
         checkBridgeError();
         resumeReceiveWaitIfReady();
+        resumeTransmitWaitIfReady();
     }
     return true;
 }
@@ -2358,7 +2682,9 @@ void Tile::serviceIncomingPackets()
 {
     constexpr int kVirtualNetwork = 0;
 
+    flushReadyReceiveBursts();
     while (bridge_.receiveHasBurstSpace() &&
+           readyReceiveBursts_.empty() &&
            bridge_.receiveBurstCount() +
                    pendingNetworkReceives_.size() <
                config_.receiveDMAQueueDepth &&
@@ -2406,9 +2732,12 @@ void Tile::serviceIncomingPackets()
                 "tile %u network burst size overflowed\n",
                 static_cast<unsigned>(config_.tileId));
         }
-        const std::uint64_t transferCycles = divideRoundUp(
-            static_cast<std::uint64_t>(payload.size()) * 32,
-            config_.meshLinkWidthBits);
+        const std::uint64_t transferCycles =
+            config_.networkTailDelivery
+                ? 0
+                : divideRoundUp(
+                      static_cast<std::uint64_t>(payload.size()) * 32,
+                      config_.meshLinkWidthBits);
         const std::uint64_t linkPeriod =
             networkClockTimeBase_.getFactor();
         if (transferCycles >
@@ -2422,9 +2751,12 @@ void Tile::serviceIncomingPackets()
         }
         const std::uint64_t transferTicks =
             transferCycles * linkPeriod;
-        const std::uint64_t startTick = std::max(
-            headArrivalTick,
-            networkReceiveNextAvailableTick_);
+        const std::uint64_t startTick =
+            config_.networkTailDelivery
+                ? headArrivalTick
+                : std::max(
+                      headArrivalTick,
+                      networkReceiveNextAvailableTick_);
         if (startTick >
             std::numeric_limits<std::uint64_t>::max() -
                 transferTicks) {
@@ -2437,7 +2769,9 @@ void Tile::serviceIncomingPackets()
         networkReceiveNextAvailableTick_ =
             startTick + transferTicks;
         const std::uint64_t completionTick =
-            networkReceiveNextAvailableTick_ - linkPeriod;
+            config_.networkTailDelivery
+                ? headArrivalTick
+                : networkReceiveNextAvailableTick_ - linkPeriod;
         const std::uint64_t completionDelayCycles =
             divideRoundUp(
                 completionTick - headArrivalTick,
@@ -2476,15 +2810,91 @@ void Tile::completeReadyNetworkReceives()
 void Tile::completeNetworkReceive(PendingNetworkReceive receive)
 {
     const std::size_t words = receive.payload.size();
-    if (!bridge_.pushReceiveBurst(receive.source, receive.payload)) {
-        output_.fatal(
-            CALL_INFO,
-            -1,
-            "tile %u bridge burst RX queue rejected %zu words at "
-            "packet completion\n",
-            static_cast<unsigned>(config_.tileId),
-            words);
+    const bool frameHeader =
+        receive.metadata.protocolWords != 0 &&
+        receive.payload.size() == kDeploymentFrameHeaderWords &&
+        receive.payload[0] == kDeploymentFrameMagic;
+    const bool framePayload =
+        receive.metadata.routeId != PacketEvent::InvalidRouteId &&
+        receive.metadata.payloadWords != 0;
+
+    if (frameHeader) {
+        if (receive.payload[4] == 0 ||
+            incomingFrameAssemblies_.find(receive.source) !=
+                incomingFrameAssemblies_.end()) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u received an invalid or overlapping frame "
+                "header from tile %u\n",
+                static_cast<unsigned>(config_.tileId),
+                static_cast<unsigned>(receive.source));
+        }
+        IncomingFrameAssembly assembly{
+            receive.metadata.routeId,
+            receive.metadata.executionId,
+            receive.payload[4],
+            {},
+        };
+        assembly.payload.reserve(assembly.expectedWords);
+        incomingFrameAssemblies_.emplace(
+            receive.source,
+            std::move(assembly));
+        readyReceiveBursts_.push_back(ReadyReceiveBurst{
+            receive.source,
+            std::move(receive.payload),
+        });
+    } else if (framePayload) {
+        const auto found = incomingFrameAssemblies_.find(
+            receive.source);
+        if (found == incomingFrameAssemblies_.end() ||
+            found->second.routeId != receive.metadata.routeId ||
+            found->second.executionId !=
+                receive.metadata.executionId ||
+            receive.payload.size() >
+                found->second.expectedWords -
+                    found->second.payload.size()) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u received an invalid frame payload from "
+                "tile %u (route=%u, words=%zu)\n",
+                static_cast<unsigned>(config_.tileId),
+                static_cast<unsigned>(receive.source),
+                static_cast<unsigned>(receive.metadata.routeId),
+                receive.payload.size());
+        }
+        found->second.payload.insert(
+            found->second.payload.end(),
+            receive.payload.begin(),
+            receive.payload.end());
+        if (found->second.payload.size() ==
+            found->second.expectedWords) {
+            std::vector<std::uint32_t> payload =
+                std::move(found->second.payload);
+            incomingFrameAssemblies_.erase(found);
+            for (std::size_t offset = 0;
+                 offset < payload.size();
+                 offset += MITTENS_BRIDGE_BURST_WORD_CAPACITY) {
+                const std::size_t count = std::min(
+                    payload.size() - offset,
+                    static_cast<std::size_t>(
+                        MITTENS_BRIDGE_BURST_WORD_CAPACITY));
+                readyReceiveBursts_.push_back(ReadyReceiveBurst{
+                    receive.source,
+                    std::vector<std::uint32_t>(
+                        payload.begin() + offset,
+                        payload.begin() + offset + count),
+                });
+            }
+        }
+    } else {
+        readyReceiveBursts_.push_back(ReadyReceiveBurst{
+            receive.source,
+            std::move(receive.payload),
+        });
     }
+    flushReadyReceiveBursts();
 
     ++networkReceivePackets_;
     networkReceiveWords_ += words;
@@ -2529,6 +2939,27 @@ void Tile::completeNetworkReceive(PendingNetworkReceive receive)
         static_cast<unsigned>(config_.tileId),
         words,
         static_cast<unsigned>(receive.source));
+}
+
+void Tile::flushReadyReceiveBursts()
+{
+    while (!readyReceiveBursts_.empty() &&
+           bridge_.receiveHasBurstSpace()) {
+        ReadyReceiveBurst& receive = readyReceiveBursts_.front();
+        if (!bridge_.pushReceiveBurst(
+                receive.source,
+                receive.payload)) {
+            output_.fatal(
+                CALL_INFO,
+                -1,
+                "tile %u bridge rejected a reassembled %zu-word "
+                "receive burst from tile %u\n",
+                static_cast<unsigned>(config_.tileId),
+                receive.payload.size(),
+                static_cast<unsigned>(receive.source));
+        }
+        readyReceiveBursts_.pop_front();
+    }
 }
 
 void Tile::registerReceiveDMA(const QemuSyncEvent& event)
@@ -2821,16 +3252,15 @@ bool Tile::pendingTransmitWait() const noexcept
 {
     return transmitWaitArmed_ &&
            pendingSyncEvent_.has_value() &&
-           (pendingSyncEvent_->stopReason ==
-                MITTENS_SYNC_STOP_NIC_TRANSMIT ||
-            pendingSyncEvent_->stopReason ==
-                MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT);
+           pendingSyncEvent_->stopReason ==
+               MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT;
 }
 
 void Tile::resumeTransmitWaitIfReady()
 {
     if (pendingTransmitWait() &&
-        transmitReadyForGuest(*pendingSyncEvent_)) {
+        (transmitReadyForGuest(*pendingSyncEvent_) ||
+         receiveReadyForGuest())) {
         resumeAndCaptureQemu();
     }
 }
@@ -3088,7 +3518,8 @@ void Tile::reportProfile() const
         "stop_nic_rx_dma_submit=%llu "
         "stop_analog_submit=%llu stop_analog_wait=%llu "
         "stop_task_start=%llu stop_task_finish=%llu "
-        "stop_memory=%llu stop_memory_init=%llu "
+        "stop_memory=%llu stop_memory_init=%llu stop_memory_batch=%llu "
+        "stop_memory_fence=%llu "
         "memory_requests=%llu "
         "memory_responses=%llu memory_reads=%llu memory_writes=%llu "
         "memory_init_handshakes=%llu memory_init_accesses=%llu "
@@ -3132,6 +3563,10 @@ void Tile::reportProfile() const
         static_cast<unsigned long long>(
             synchronizationStopCounts_[
                 MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_BATCH]),
+        static_cast<unsigned long long>(
+            synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_FENCE]),
         static_cast<unsigned long long>(memoryRequests_),
         static_cast<unsigned long long>(memoryResponses_),
         static_cast<unsigned long long>(memoryReads_),
@@ -3173,6 +3608,28 @@ void Tile::reportProfile() const
             analogOperationCounts_[MITTENS_ANALOG_OPERATION_MOVE_VECTOR]),
         static_cast<unsigned long long>(analogInputWords_),
         static_cast<unsigned long long>(analogOutputWords_));
+
+    output_.verbose(
+        CALL_INFO,
+        1,
+        0,
+        "MITTENS_MEMORY_CONCURRENCY tile=%u load_queue_entries=%u "
+        "store_buffer_entries=%u "
+        "max_store_buffer_occupancy=%llu store_buffer_full_events=%llu "
+        "max_outstanding_requests=%llu max_outstanding_reads=%llu "
+        "vector_request_groups=%llu vector_group_requests=%llu "
+        "scalar_request_groups=%llu scalar_group_requests=%llu\n",
+        static_cast<unsigned>(config_.tileId),
+        static_cast<unsigned>(config_.memoryLoadQueueEntries),
+        static_cast<unsigned>(config_.memoryStoreBufferEntries),
+        static_cast<unsigned long long>(maximumStoreBufferOccupancy_),
+        static_cast<unsigned long long>(memoryStoreBufferFullEvents_),
+        static_cast<unsigned long long>(maximumOutstandingMemoryRequests_),
+        static_cast<unsigned long long>(maximumOutstandingMemoryReads_),
+        static_cast<unsigned long long>(vectorMemoryRequestGroups_),
+        static_cast<unsigned long long>(vectorMemoryGroupRequests_),
+        static_cast<unsigned long long>(scalarMemoryRequestGroups_),
+        static_cast<unsigned long long>(scalarMemoryGroupRequests_));
 
     const ScratchpadTimingStatistics scratchpad =
         scratchpadTimingModel_ == nullptr
@@ -3243,7 +3700,7 @@ void Tile::writePerformanceSummary()
 {
     std::array<
         const char*,
-        MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT + 1>
+        MITTENS_SYNC_STOP_MEMORY_FENCE + 1>
         waitReasonNames{};
     for (std::size_t index = 0;
          index < waitReasonNames.size();
@@ -3272,6 +3729,14 @@ void Tile::writePerformanceSummary()
         transmitBlockedEvents_,
         transmitBlockedRetries_,
         transmitMaximumQueueOccupancy_,
+        maximumOutstandingMemoryRequests_,
+        maximumOutstandingMemoryReads_,
+        maximumStoreBufferOccupancy_,
+        memoryStoreBufferFullEvents_,
+        vectorMemoryRequestGroups_,
+        vectorMemoryGroupRequests_,
+        scalarMemoryRequestGroups_,
+        scalarMemoryGroupRequests_,
         waitTicks_.data(),
         waitReasonNames.data(),
         waitTicks_.size());

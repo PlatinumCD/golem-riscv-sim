@@ -33,9 +33,7 @@ readonly RX_DMA_EXPECTED_CYCLES=$((
     (ROUTE_WORDS + RX_DMA_WORDS_PER_CYCLE - 1) / RX_DMA_WORDS_PER_CYCLE +
     RX_DMA_SETUP_CYCLES
 ))
-readonly RX_DMA_EXPECTED_TRANSFERS=$((
-    (ROUTE_WORDS + NETWORK_PACKET_WORDS - 1) / NETWORK_PACKET_WORDS
-))
+readonly RX_DMA_EXPECTED_TRANSFERS=1
 
 for executable in \
     "${LLVM}/bin/clang" \
@@ -144,27 +142,39 @@ if [[ "${MITTENS_DEPLOYMENT_MEMORY_TOPOLOGY:-private_l1}" != \
     )"
     if [[ "${dma_observation}" != \
           "${RX_DMA_EXPECTED_TRANSFERS},${RX_DMA_EXPECTED_CYCLES}" ]]; then
-        echo "fragmented RX DMA did not retain one setup charge and ${RX_DMA_EXPECTED_CYCLES} total cycles" >&2
+        echo "reassembled RX DMA did not retain one setup charge and ${RX_DMA_EXPECTED_CYCLES} total cycles" >&2
         exit 1
     fi
 fi
-awk -F, '
-    $1 == "router_1_0" &&
-    $2 == "send_packet_count" &&
-    $3 == "port4" {
-        packets = $7
-    }
-    $1 == "router_1_0" &&
-    $2 == "send_bit_count" &&
-    $3 == "port4" {
-        bits = $7
-    }
-    END {
-        exit !(packets == 20 && bits == 9760)
-    }
-' "${STATISTICS}" || {
+if [[ "${MITTENS_DEPLOYMENT_MESH_ROUTER_BACKEND:-merlin}" == \
+      "mittens" ]]; then
+    statistics_valid="$(
+        awk -F, '
+            $1 == "router_1_0" &&
+            $2 == "packets_forwarded" &&
+            $3 == "local" { packets = $7 }
+            $1 == "router_1_0" &&
+            $2 == "flits_forwarded" &&
+            $3 == "local" { flits = $7 }
+            END { print (packets == 20 && flits == 305) ? 1 : 0 }
+        ' "${STATISTICS}"
+    )"
+else
+    statistics_valid="$(
+        awk -F, '
+            $1 == "router_1_0" &&
+            $2 == "send_packet_count" &&
+            $3 == "port4" { packets = $7 }
+            $1 == "router_1_0" &&
+            $2 == "send_bit_count" &&
+            $3 == "port4" { bits = $7 }
+            END { print (packets == 20 && bits == 9760) ? 1 : 0 }
+        ' "${STATISTICS}"
+    )"
+fi
+if [[ "${statistics_valid}" != 1 ]]; then
     echo "expected one header packet and 19 bounded payload packets (9760 bits)" >&2
     exit 1
-}
+fi
 
 echo "timed 300-word DeploymentRuntime RX DMA over QEMU + SST: PASS (${RX_DMA_EXPECTED_CYCLES} cycles)"

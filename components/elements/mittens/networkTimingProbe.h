@@ -36,6 +36,7 @@ class NetworkTimingProbe final : public SST::Component
         {"clock", "Probe clock used for simultaneous injection and timeout", "1GHz"},
         {"link_clock", "Clock defining one physical mesh transfer cycle", "1GHz"},
         {"link_width_bits", "Physical mesh link width in bits per link cycle", "32"},
+        {"tail_delivery", "The network delivers requests only after the tail flit arrives", "false"},
         {"timeout_cycles", "Fatal timeout measured in probe-clock cycles", "100000"},
         {"verbose", "Diagnostic verbosity", "0"})
 
@@ -80,6 +81,7 @@ class NetworkTimingProbe final : public SST::Component
     std::uint32_t expectedReceives_;
     std::string outputPath_;
     std::uint32_t linkWidthBits_;
+    bool tailDelivery_;
     std::uint64_t timeoutCycles_;
     SST::Output output_;
     SST::Interfaces::SimpleNetwork* network_ = nullptr;

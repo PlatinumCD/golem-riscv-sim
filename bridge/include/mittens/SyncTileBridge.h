@@ -8,7 +8,8 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(10)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(14)
+#define MITTENS_SYNC_MEMORY_BATCH_CAPACITY UINT32_C(1024)
 
 enum MittensSyncBridgeState {
     MITTENS_SYNC_STATE_IDLE = 0,
@@ -34,18 +35,22 @@ enum MittensSyncStopReason {
     MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT = 12,
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT = 13,
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT = 14,
+    MITTENS_SYNC_STOP_MEMORY_BATCH = 15,
+    MITTENS_SYNC_STOP_MEMORY_FENCE = 16,
 };
 
 enum MittensSyncEventFlags {
     MITTENS_SYNC_EVENT_FLAG_NONE = 0,
     MITTENS_SYNC_EVENT_FLAG_WAIT_FOR_COMPLETION = 1U << 0,
     MITTENS_SYNC_EVENT_FLAG_NIC_BURST = 1U << 1,
+    MITTENS_SYNC_EVENT_FLAG_QUANTUM_END = 1U << 2,
 };
 
 enum MittensSyncMemoryFlags {
     MITTENS_SYNC_MEMORY_FLAG_NONE = 0,
     MITTENS_SYNC_MEMORY_FLAG_WRITE = 1U << 0,
     MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD = 1U << 1,
+    MITTENS_SYNC_MEMORY_FLAG_REGISTER_DEPS = 1U << 2,
 };
 
 enum MittensSyncBridgeError {
@@ -97,6 +102,39 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t memory_flags;
 } MittensSyncBridge;
 
+typedef struct MittensSyncMemoryAccess {
+    uint64_t instructions_executed;
+    uint64_t vector_instructions_executed;
+    uint64_t address;
+    uint64_t program_counter;
+    uint64_t return_address;
+    uint32_t size;
+    uint32_t flags;
+    uint32_t source_register_mask;
+    uint32_t destination_register_mask;
+    uint32_t instruction_length;
+    uint32_t reserved;
+} MittensSyncMemoryAccess;
+
+#define MITTENS_SYNC_BRIDGE_MAPPING_SIZE \
+    (sizeof(MittensSyncBridge) + \
+     sizeof(MittensSyncMemoryAccess) * \
+         MITTENS_SYNC_MEMORY_BATCH_CAPACITY)
+
+static inline MittensSyncMemoryAccess* mittens_sync_memory_batch(
+    MittensSyncBridge* bridge)
+{
+    return (MittensSyncMemoryAccess*)((uint8_t*)bridge +
+                                      sizeof(MittensSyncBridge));
+}
+
+static inline const MittensSyncMemoryAccess*
+mittens_sync_memory_batch_const(const MittensSyncBridge* bridge)
+{
+    return (const MittensSyncMemoryAccess*)((const uint8_t*)bridge +
+                                            sizeof(MittensSyncBridge));
+}
+
 static inline uint32_t mittens_sync_load_acquire(
     const uint32_t* value)
 {
@@ -140,9 +178,12 @@ static inline void mittens_sync_store_u64_relaxed(
 }
 
 static_assert(sizeof(MittensSyncBridge) == 128);
+static_assert(sizeof(MittensSyncMemoryAccess) == 64);
 #else
 _Static_assert(sizeof(MittensSyncBridge) == 128,
                "MittensSyncBridge ABI changed");
+_Static_assert(sizeof(MittensSyncMemoryAccess) == 64,
+               "MittensSyncMemoryAccess ABI changed");
 #endif
 
 #endif

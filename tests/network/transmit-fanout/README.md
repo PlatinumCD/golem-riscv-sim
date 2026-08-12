@@ -28,3 +28,39 @@ MITTENS_FANOUT_QUANTA="1000000 10000" \
 Each trial preserves its UART log, route manifest, router statistics, raw
 per-tile profile, joined report, and summary under
 `build/tests/transmit-fanout/results/`.
+
+## Route-tail regression
+
+The focused regression uses the GPT-2 failure conditions: one source task,
+two 768-word routes, 16 network-buffer cells, RX-DMA queue depth 4, a 1,000
+instruction synchronization quantum, and the private-L1 memhierarchy backend.
+It requires all 773 frame words and one reassembled payload DMA burst for both routes.
+
+```bash
+./tests/network/transmit-fanout/run-tail-regression.sh
+```
+
+The contended variant launches eight simultaneous producers on a 9x1 mesh.
+All 16 routes converge on the final link into tile 8.
+
+```bash
+./tests/network/transmit-fanout/run-tail-contention-regression.sh
+```
+
+The bidirectional variant maps 32 tiles onto an 8x4 mesh. Each tile sends two
+768-word routes to its mirrored peer while receiving two routes in return.
+
+```bash
+./tests/network/transmit-fanout/run-tail-bidirectional-regression.sh
+```
+
+This regression uses 16 SST threads by default. Set
+`MITTENS_TAIL_SST_THREADS` to test a different thread count.
+
+The sustained regression repeats 64-word transfers for four task waves. It
+checks 256 routes and 16,384 payload words. Set `MITTENS_TAIL_STRESS_WAVES`
+or `MITTENS_TAIL_STRESS_WORDS` to increase the traffic scale:
+
+```bash
+./tests/network/transmit-fanout/run-tail-sustained-regression.sh
+```

@@ -20,6 +20,8 @@ struct QemuConfiguration {
     std::uint32_t riscvVectorElementBits = 64;
     bool memoryTimingEnabled = false;
     bool memoryInitializationBatching = false;
+    bool memoryAccessBatching = false;
+    std::uint32_t memoryAccessBatchRecords = 16;
     bool scratchpadEnabled = false;
     std::uint64_t scratchpadBase = UINT64_C(0x90000000);
     std::uint64_t scratchpadBytes = UINT64_C(256) * 1024;

@@ -1,0 +1,65 @@
+import os
+import sys
+from pathlib import Path
+
+import sst
+
+
+TEST_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(TEST_DIR.parents[1] / "support"))
+
+from mesh import build_mesh
+
+
+def required(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} must be set")
+    return value
+
+
+sst.setProgramOption("timebase", "1ps")
+
+build_mesh(
+    width=2,
+    height=1,
+    qemu_path=required("MITTENS_TEST_QEMU"),
+    images=[
+        required("MITTENS_FANOUT_TILE0_ELF"),
+        required("MITTENS_FANOUT_TILE1_ELF"),
+    ],
+    statistics_path=required("MITTENS_FANOUT_STATS"),
+    verbosity=0,
+    tile_params={
+        # platform/tile.ld links the stack against a 16 MiB RAM map.  QEMU
+        # must expose the same map or the initial stack is outside guest RAM.
+        "memory": "16M",
+        "cpu_clock": "1GHz",
+        "cpu_issue_width": 2,
+        "sync_instruction_quantum": 1000,
+        "profile_mode": "trace",
+        "profile_output_directory": required("MITTENS_FANOUT_PROFILE"),
+        "task_trace_directory": required("MITTENS_FANOUT_TASK_TRACE"),
+        "rx_dma_width_bits": 256,
+        "rx_dma_setup_cycles": 8,
+        "rx_dma_queue_depth": 4,
+        "memory_init_batching": True,
+        "memory_init_bytes_per_cycle": 32,
+        "memory_init_latency_cycles": 2,
+    },
+    memory_backend="memhierarchy",
+    network_cell_words=1,
+    network_buffer_cells=16,
+    network_packet_words=16,
+    mesh_link_width_bits=32,
+    mesh_link_clock="1GHz",
+    memory_hierarchy={
+        "l1_size": "32KiB",
+        "l1_associativity": 4,
+        "cache_line_size": 64,
+        "l1_access_latency_cycles": 2,
+        "l1_clock": "1GHz",
+        "lower_memory_clock": "1GHz",
+        "lower_memory_access_time": "50ns",
+    },
+)

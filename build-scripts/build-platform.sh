@@ -165,6 +165,21 @@ build_memory_timing_validation() {
         memory-store-buffer \
         "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
         -DMITTENS_MEMORY_TEST_STORE_BUFFER=1
+    build_tile \
+        "${output_dir}" \
+        memory-vector-group \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
+        -DMITTENS_MEMORY_TEST_VECTOR_GROUP=1
+    build_tile \
+        "${output_dir}" \
+        memory-scalar-independent \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
+        -DMITTENS_MEMORY_TEST_SCALAR_INDEPENDENT=1
+    build_tile \
+        "${output_dir}" \
+        memory-scalar-dependent \
+        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
+        -DMITTENS_MEMORY_TEST_SCALAR_DEPENDENT=1
 }
 
 build_analog_instructions() {

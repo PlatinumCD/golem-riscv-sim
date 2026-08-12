@@ -1,7 +1,7 @@
 # System architecture
 
 This document describes how the compiler, bare-metal tile software, QEMU,
-Mittens, and SST Merlin form the current Platform v0.1 system.
+Mittens, and SST form the current Platform v0.1 system.
 
 ## Architecture diagrams
 
@@ -12,7 +12,7 @@ implementation-level views:
   runtime, QEMU devices, fd bridges, SST component, receive DMA, and analog
   backend; and
 - [the routed tile mesh](diagrams/mesh-topology.svg), including each local
-  Merlin endpoint, five-port router, physical links, and an example Manhattan
+  endpoint, five-port router, physical links, and an example Manhattan
   route.
 
 ## End-to-end system
@@ -40,7 +40,7 @@ simulated mesh.
 
 Each simulated tile is one independent QEMU system-emulation process with one
 RISC-V hart and 16 MiB of private guest RAM. An SST `mittens.tile` component
-owns that process and connects it to one endpoint of the Merlin network.
+owns that process and connects it to one endpoint of the mesh network.
 
 ```text
 bare-metal RISC-V ELF
@@ -62,10 +62,10 @@ SST mittens.tile
    |                         |
    | StandardMem (optional)  | SST::Interfaces::SimpleNetwork
    v                         v
-private memHierarchy L1      merlin.linkcontrol
+private memHierarchy L1      mittens.wormholeNIC
    |                         |
    v                         v
-timing memory controller     merlin.hr_router <----> neighboring routers
+timing memory controller     mittens.wormholeRouter <----> neighboring routers
 ```
 
 The guest-visible platform contract is defined in
@@ -83,7 +83,8 @@ detail documented in [`../bridge/README.md`](../bridge/README.md).
 | `mittens-sync` | QEMU side of instruction grants, device-boundary yields, and task markers | CPU timing policy |
 | `mittens.tile` | QEMU lifecycle, fd 41 control, NIC, analog, and optional StandardMem bridges, CPU, memory, and analog timing, optional task timestamps | RISC-V instruction semantics or guest data values |
 | SST memHierarchy | Optional private L1 and lower-memory access timing | Functional guest RAM contents |
-| Merlin | Router topology, buffering, link bandwidth, latency, backpressure | Guest instruction timing |
+| Mittens wormhole network | XY routing, flits, credits, switch arbitration, buffers, and physical-link timing | Guest instruction timing |
+| Merlin compatibility network | Legacy packet routing and existing timing regressions | New wormhole-router experiments |
 | SST Core | Discrete-event schedule, component lifecycle, and QEMU execution authority | RISC-V instruction semantics |
 
 Guest RAM is never shared between tiles. A tile can affect another tile only
@@ -172,7 +173,8 @@ sequence:
 7. Grant instruction quanta and schedule returned instruction counts on
    `cpu_clock`.
 8. When `memory_backend=memhierarchy`, convert each RAM data access into one
-   StandardMem request and hold QEMU until the private L1 path responds.
+   StandardMem request. The reference mode holds QEMU until each response.
+   The optional batch mode replays bounded groups while QEMU waits.
 9. Process NIC, analog, and optional task-marker boundaries only after their
    fd 41 yield reaches its scheduled SST cycle.
 10. Arbitrate one shared analog-link beat and advance every active array
@@ -193,6 +195,8 @@ qemu-system-riscv64 \
   -icount shift=0,sleep=off \
   -global mittens-sync.bridge-fd=41 \
   -global mittens-sync.memory-timing=<on|off> \
+  -global mittens-sync.memory-access-batching=<on|off> \
+  -global mittens-sync.memory-access-batch-records=16 \
   -global mittens-nic.bridge-fd=42 \
   -global mittens-analog.bridge-fd=43
 ```
@@ -229,10 +233,10 @@ A guest transmission follows this sequence:
 7. It creates one 32-bit SST network request for every bridge entry. Each
    request carries endpoint IDs and a `PacketEvent` containing one 32-bit
    payload.
-8. Merlin selects router ports, applies buffering and link timing, and delivers
-   the request to the destination endpoint.
+8. The selected network routes each flit and applies buffer, link, and
+   arbitration timing.
 9. The destination `mittens.tile` places `{source, payload}` in its fd 42
-   receive ring when Merlin delivers the request.
+   receive ring when the network delivers the request tail.
 10. If the destination hart is stopped on `RX_WAIT`, Mittens resumes it
     through fd 41 at that delivery time. QEMU's wait operation rechecks the
     receive rings, so a packet arriving between `RX_VALID` and `RX_WAIT`
@@ -248,9 +252,9 @@ Deployment frames take a bounded bulk path instead. The runtime submits the
 five-word frame header and tensor payload in chunks of at most 4096 words.
 QEMU snapshots each chunk into fd 42 and yields a zero-wait fd-41 descriptor
 doorbell. Mittens services the descriptor at that exact simulated CPU
-timestamp and creates one multi-flit Merlin request. If no burst slot was
+timestamp and creates one multi-flit network request. If no burst slot was
 available, the runtime writes `TX_WAIT`; QEMU rechecks the ring in the same
-MMIO operation, then SST holds the hart only until a slot is free. Merlin
+MMIO operation, then SST holds the hart only until a slot is free. The network
 carries ordered 32-bit words at the physical width configured by the SST
 topology. At the destination, guest software consumes the
 five-word frame header through `RX_SOURCE`/`RX_DATA`, validates it, and
@@ -508,30 +512,95 @@ Endpoint IDs are zero-based and row-major:
 tile_id = y * mesh_width + x
 ```
 
-Each router stores its own coordinates when the SST graph is constructed.
-Merlin derives destination coordinates when a packet enters the mesh, then
-uses deterministic X-then-Y routing. Intermediate QEMU processes and tile
-programs never receive transit packets; only their local routers forward them.
+Each router stores its coordinates when SST constructs the graph. The Mittens
+router uses deterministic X-then-Y routing for each packet head.
+
+The router reserves an output until the packet tail departs. Each output uses
+round-robin arbitration when multiple packet heads request that output.
+
+Each input has a finite flit buffer. A credit returns after the next router
+removes a flit from that buffer.
+
+The router sends body flits without a new route calculation. Intermediate
+QEMU processes and tile programs do not receive transit flits.
 
 The reusable test topology is implemented in
 [`../tests/support/mesh.py`](../tests/support/mesh.py).
+
+## Memory concurrency contract
+
+The memory model uses the following baseline parameters:
+
+| Parameter | Baseline value | Purpose |
+|---|---:|---|
+| CPU issue width | 2 instructions per cycle | Limits scalar instruction issue. |
+| Load queue | 8 entries | Limits outstanding timed loads. |
+| Store buffer | 8 entries | Holds retired stores until memory completes them. |
+| L1 request rate | 1 request per cycle | Limits requests accepted by each private L1. |
+| L1 intrinsic latency | 2 cycles | Models an uncontended L1 lookup. |
+| L1 banks | 1 | Models one private L1 service bank. |
+| Cache line | 64 bytes | Defines cache fills and vector access fragments. |
+| Lower-memory latency | 50 ns | Models an access below the private L1. |
+| Retirement policy | In order | Prevents retirement past an unresolved dependency. |
+
+All listed parameters are implemented and available to experiments. The load
+queue limits vector fragments and proven-independent scalar loads.
+
+QEMU reports the source register, destination register, instruction length,
+and program counter for each standard scalar load. Mittens can group
+consecutive loads when no later address uses an earlier load result. A store,
+an atomic operation, a fence, a control transfer, or an unreported dependency
+closes the group. This rule is conservative. It does not model general
+out-of-order execution across arithmetic instructions.
+
+One vector memory instruction can touch several cache lines. The bridge keeps
+those fragments under one dynamic instruction identity. SST can issue those
+independent line requests together and wait for the complete group.
+
+The timing model must preserve the following rules:
+
+1. A dependent instruction cannot issue before its source load completes.
+2. An independent load can remain outstanding while later work proceeds.
+3. A store can retire when the store buffer accepts it.
+4. A full store buffer blocks the issuing hart.
+5. A load must observe an older store to the same address.
+6. A synchronization boundary must drain the required stores.
+7. MemHierarchy determines cache hits, cache misses, and lower-memory timing.
+8. QEMU determines functional values and architectural instruction order.
+
+The experiment controls are:
+
+```text
+GOLEM_MODEL_MEMORY_STORE_BUFFER_ENTRIES
+GOLEM_MODEL_MEMORY_LOAD_QUEUE_ENTRIES
+GOLEM_MODEL_L1_MAX_REQUESTS_PER_CYCLE
+GOLEM_MODEL_L1_BANKS
+GOLEM_MODEL_L1_ACCESS_LATENCY_CYCLES
+GOLEM_MODEL_LOWER_MEMORY_ACCESS_TIME
+```
 
 ## Current architectural limits
 
 - Platform v0.1 uses an explicit `RX_WAIT` doorbell rather than NIC
   interrupts. A waiting hart resumes when delivered data becomes visible.
 - The legacy NIC path carries one payload per transaction. The deployment path
-  supports bounded 4096-word host transactions, but Merlin serializes them as
-  one-word physical timing cells. At the default 32-bit, 1 GHz mesh width,
-  each cell costs one cycle while the independent router buffer retains
-  64 KiB of capacity.
+  supports bounded 4096-word host transactions.
+- The Mittens network uses 32-bit flits. A 32-bit, 1 GHz physical link sends
+  one flit per cycle.
+- The default Mittens input buffer holds 32 flits per port. The default
+  injection buffer holds 64 flits per tile.
+- The default route and switch pipeline costs three cycles for each packet
+  head. Body flits can then use the reserved output each cycle.
+- The Merlin network remains available for compatibility tests. New model
+  experiments select the Mittens network by default.
 - There is no operating system, dynamic loader, pthread runtime, or OpenMP
   runtime in a tile.
-- The CPU issue model supports scalar widths 1, 2, and 4 while preserving at
-  most one vector issue per cycle. Pipeline dependencies, instruction-cache
-  timing, TLB timing, cache/DMA coherence, nonblocking memory accesses, and
-  vector operation latency are not yet modeled. The optional memHierarchy
-  backend currently provides a blocking private data-L1 path only.
+- The CPU issue model supports scalar widths 1, 2, and 4. It permits at most
+  one vector issue per cycle. Pipeline dependencies, instruction-cache timing,
+  TLB timing, cache/DMA coherence, general out-of-order execution, and vector
+  operation latency are not yet modeled. The memHierarchy backend supports a
+  private data L1, consecutive independent loads, asynchronous stores, and
+  batched memory records.
 - UART output is functional and is not assigned detailed device latency.
 
 These limits determine which timing measurements are meaningful. See

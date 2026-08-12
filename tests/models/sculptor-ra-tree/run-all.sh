@@ -29,7 +29,7 @@ if [[ "$#" -ne 0 ]] ||
     exit 2
 fi
 readonly RESULTS_ROOT="${BUILD_ROOT}/tests/sculptor-ra-tree-model-suite/${MEMORY_BACKEND}"
-readonly RUN_TAG="mesh-${GOLEM_MODEL_MESH_ROWS}x${GOLEM_MODEL_MESH_COLS}-dw${GOLEM_MODEL_DIGITAL_WORKERS}-balance${GOLEM_MODEL_BALANCE_DIGITAL_WORK}-sst${GOLEM_MODEL_SST_THREADS}"
+readonly RUN_TAG="mesh-${GOLEM_MODEL_MESH_ROWS}x${GOLEM_MODEL_MESH_COLS}-dw${GOLEM_MODEL_DIGITAL_WORKERS}-balance${GOLEM_MODEL_BALANCE_DIGITAL_WORK}-router${GOLEM_MODEL_MESH_ROUTER_BACKEND}-sst${GOLEM_MODEL_SST_THREADS}"
 
 readonly TORCH_MLIR_PYTHON="${INSTALL_ROOT}/torch-mlir/python_packages/torch_mlir"
 mapfile -t CASES < <(

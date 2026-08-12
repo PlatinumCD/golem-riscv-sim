@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -102,6 +103,28 @@ int main()
            MITTENS_ANALOG_LINK_WIDTH_BITS);
     assert(mapping->tile_id == 7);
 
+    for (std::uint32_t arrayId = 0;
+         arrayId < mapping->array_count;
+         ++arrayId) {
+        const MittensAnalogBridgeChannel* const channel =
+            mittens_analog_channel_const(mapping, arrayId);
+        assert(channel->write_index == 0);
+        assert(channel->accept_index == 0);
+        for (std::uint32_t sequence = 0;
+             sequence < MITTENS_ANALOG_QUEUE_CAPACITY;
+             ++sequence) {
+            const MittensAnalogBridgeSlot* const slot =
+                mittens_analog_slot_const(
+                    mapping, arrayId, sequence);
+            assert(slot->state == MITTENS_ANALOG_SLOT_FREE);
+            assert(slot->input_word_count == 0);
+            assert(slot->output_word_count == 0);
+            assert(slot->sequence == 0);
+            assert(slot->status == MITTENS_ANALOG_STATUS_SUCCESS);
+            assert(mittens_analog_slot_words_const(slot)[0] == 0);
+        }
+    }
+
     const MittensAnalogCommand load{
         MITTENS_ANALOG_OPERATION_LOAD_VECTOR,
         0,
@@ -164,5 +187,46 @@ int main()
     assert(munmap(address, bridge.mappingSize()) == 0);
     bridge.close();
     assert(!bridge.open());
+
+    // Creating a production-sized bridge must touch control pages, not every
+    // matrix payload page.  A full-mapping memset would make all pages
+    // resident and fail this regression.
+    SharedAnalogMemoryBridge sparseBridge;
+    sparseBridge.create(8, 4, 1024, 512);
+    void* const sparseAddress = mmap(
+        nullptr,
+        sparseBridge.mappingSize(),
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        sparseBridge.fileDescriptor(),
+        0);
+    assert(sparseAddress != MAP_FAILED);
+
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    assert(pageSize > 0);
+    const std::size_t pageCount =
+        (sparseBridge.mappingSize() +
+         static_cast<std::size_t>(pageSize) - 1) /
+        static_cast<std::size_t>(pageSize);
+    std::vector<unsigned char> residency(pageCount, 0);
+    assert(mincore(
+               sparseAddress,
+               sparseBridge.mappingSize(),
+               residency.data()) == 0);
+    const std::size_t residentPages =
+        static_cast<std::size_t>(std::count_if(
+            residency.begin(),
+            residency.end(),
+            [](unsigned char state) {
+                return (state & 1U) != 0;
+            }));
+    const std::size_t maximumControlPages =
+        1 + 4 * (1 + MITTENS_ANALOG_QUEUE_CAPACITY);
+    assert(residentPages <= maximumControlPages);
+
+    assert(munmap(
+               sparseAddress,
+               sparseBridge.mappingSize()) == 0);
+    sparseBridge.close();
     return 0;
 }

@@ -12,12 +12,31 @@
 #error "MITTENS_FANOUT must be defined"
 #endif
 
+#ifndef MITTENS_FANOUT_ELEMENT_COUNT
+#define MITTENS_FANOUT_ELEMENT_COUNT 512
+#endif
+
+#ifndef MITTENS_FANOUT_SOURCE_COUNT
+#define MITTENS_FANOUT_SOURCE_COUNT 1
+#endif
+
+#ifndef MITTENS_FANOUT_DESTINATION_TILE
+#define MITTENS_FANOUT_DESTINATION_TILE 1
+#endif
+
+#ifndef MITTENS_FANOUT_WAVES
+#define MITTENS_FANOUT_WAVES 1
+#endif
+
 namespace {
 
 using namespace golem::runtime;
 
-constexpr uint32_t kElementCount = 512;
+constexpr uint32_t kElementCount = MITTENS_FANOUT_ELEMENT_COUNT;
 constexpr uint32_t kFanout = MITTENS_FANOUT;
+constexpr uint32_t kSourceCount = MITTENS_FANOUT_SOURCE_COUNT;
+constexpr uint32_t kDestinationTile = MITTENS_FANOUT_DESTINATION_TILE;
+[[maybe_unused]] constexpr uint32_t kWaves = MITTENS_FANOUT_WAVES;
 constexpr uint32_t kSourceTaskId = 11;
 constexpr uint32_t kFirstDestinationTaskId = 100;
 constexpr uint32_t kFirstRouteId = 1000;
@@ -25,14 +44,45 @@ constexpr uint64_t kTensorBytes =
     static_cast<uint64_t>(kElementCount) * sizeof(float);
 
 static_assert(kFanout >= 1 && kFanout <= 24);
+static_assert(kSourceCount >= 1);
+#if !defined(MITTENS_FANOUT_BIDIRECTIONAL)
+static_assert(kDestinationTile >= kSourceCount);
+#endif
 
-constexpr uint32_t sourceTaskId(uint32_t index)
+constexpr uint32_t sourceTaskId(
+    uint32_t source,
+    uint32_t index)
 {
+    const uint32_t base = kSourceTaskId + source * kFanout;
 #if defined(MITTENS_FANOUT_INDEPENDENT_TASKS)
-    return kSourceTaskId + index;
+    return base + index;
 #else
     (void)index;
-    return kSourceTaskId;
+    return base;
+#endif
+}
+
+constexpr uint32_t routeId(uint32_t source, uint32_t index)
+{
+    return kFirstRouteId + source * kFanout + index;
+}
+
+constexpr uint32_t destinationTaskId(
+    uint32_t source,
+    uint32_t index)
+{
+    return kFirstDestinationTaskId + source * kFanout + index;
+}
+
+constexpr uint32_t routeResourceId(
+    uint32_t source,
+    uint32_t index)
+{
+#if defined(MITTENS_FANOUT_SHARED_RESOURCE_ID)
+    (void)index;
+    return 10000 + source;
+#else
+    return 10000 + source * kFanout + index;
 #endif
 }
 
@@ -197,25 +247,25 @@ void printProfile(const DeploymentProfile& profile)
 [[maybe_unused]] int runSource()
 {
     const Task tasks[] = {
-        {kSourceTaskId, copyVector, 1, 1},
+        {sourceTaskId(MITTENS_TILE_ID, 0), copyVector, 1, 1},
     };
     Route outgoing[kFanout]{};
     for (uint32_t index = 0; index < kFanout; ++index) {
         outgoing[index] = {
-            kFirstRouteId + index,
+            routeId(MITTENS_TILE_ID, index),
+            MITTENS_TILE_ID,
+            sourceTaskId(MITTENS_TILE_ID, 0),
             0,
-            kSourceTaskId,
+            kDestinationTile,
+            destinationTaskId(MITTENS_TILE_ID, index),
             0,
-            1,
-            kFirstDestinationTaskId + index,
-            0,
-            10000 + index,
+            routeResourceId(MITTENS_TILE_ID, index),
             1,
             kTensorBytes,
         };
     }
     const ModelIO inputs[] = {
-        {0, 0, 1, 0, kTensorBytes},
+        {0, MITTENS_TILE_ID, 1, 0, kTensorBytes},
     };
     const int64_t dimensions[] = {kElementCount};
     const Resource resources[] = {
@@ -232,8 +282,8 @@ void printProfile(const DeploymentProfile& profile)
             0,
         },
         {
-            10000,
-            kFirstRouteId,
+            routeResourceId(MITTENS_TILE_ID, 0),
+            routeId(MITTENS_TILE_ID, 0),
             1,
             ResourceKind::RouteOutput,
             ElementType::Float32,
@@ -246,10 +296,10 @@ void printProfile(const DeploymentProfile& profile)
     };
     const uint32_t bindingData[] = {0, 1};
     const TaskBinding bindings[] = {
-        {kSourceTaskId, 0, 1, 1, 1, 2, 0, 0},
+        {sourceTaskId(MITTENS_TILE_ID, 0), 0, 1, 1, 1, 2, 0, 0},
     };
     const TileABI abi{
-        0,
+        MITTENS_TILE_ID,
         nullptr,
         0,
         {tasks, 1},
@@ -328,24 +378,24 @@ void printProfile(const DeploymentProfile& profile)
         0,
     };
     for (uint32_t index = 0; index < kFanout; ++index) {
-        const uint32_t taskId = sourceTaskId(index);
-        const uint32_t routeId = kFirstRouteId + index;
+        const uint32_t taskId = sourceTaskId(MITTENS_TILE_ID, index);
+        const uint32_t currentRouteId = routeId(MITTENS_TILE_ID, index);
         tasks[index] = {taskId, copyVector, 1, 1};
         outgoing[index] = {
-            routeId,
-            0,
+            currentRouteId,
+            MITTENS_TILE_ID,
             taskId,
             0,
-            1,
-            kFirstDestinationTaskId + index,
+            kDestinationTile,
+            destinationTaskId(MITTENS_TILE_ID, index),
             0,
-            10000 + index,
+            routeResourceId(MITTENS_TILE_ID, index),
             1 + index,
             kTensorBytes,
         };
         resources[1 + index] = {
-            10000 + index,
-            routeId,
+            routeResourceId(MITTENS_TILE_ID, index),
+            currentRouteId,
             1 + index,
             ResourceKind::RouteOutput,
             ElementType::Float32,
@@ -369,7 +419,7 @@ void printProfile(const DeploymentProfile& profile)
         };
     }
     const TileABI abi{
-        0,
+        MITTENS_TILE_ID,
         nullptr,
         0,
         {tasks, kFanout},
@@ -436,60 +486,62 @@ void printProfile(const DeploymentProfile& profile)
 
 [[maybe_unused]] int runDestination()
 {
-    Task tasks[kFanout]{};
-    Route incoming[kFanout]{};
-    Resource resources[kFanout]{};
-    TaskBinding bindings[kFanout]{};
-    uint32_t bindingData[kFanout]{};
+    constexpr uint32_t kIncomingCount = kSourceCount * kFanout;
+    Task tasks[kIncomingCount]{};
+    Route incoming[kIncomingCount]{};
+    Resource resources[kIncomingCount]{};
+    TaskBinding bindings[kIncomingCount]{};
+    uint32_t bindingData[kIncomingCount]{};
     const int64_t dimensions[] = {kElementCount};
-    for (uint32_t index = 0; index < kFanout; ++index) {
-        const uint32_t taskId =
-            kFirstDestinationTaskId + index;
-        const uint32_t routeId = kFirstRouteId + index;
-        tasks[index] = {taskId, consumeVector, 1, 0};
-        incoming[index] = {
-            routeId,
+    for (uint32_t flat = 0; flat < kIncomingCount; ++flat) {
+        const uint32_t source = flat / kFanout;
+        const uint32_t index = flat % kFanout;
+        const uint32_t taskId = destinationTaskId(source, index);
+        const uint32_t currentRouteId = routeId(source, index);
+        tasks[flat] = {taskId, consumeVector, 1, 0};
+        incoming[flat] = {
+            currentRouteId,
+            source,
+            sourceTaskId(source, index),
             0,
-            sourceTaskId(index),
-            0,
-            1,
+            kDestinationTile,
             taskId,
             0,
-            10000 + index,
-            index,
+            routeResourceId(source, index),
+            flat,
             kTensorBytes,
         };
-        resources[index] = {
-            10000 + index,
-            routeId,
-            index,
+        resources[flat] = {
+            routeResourceId(source, index),
+            currentRouteId,
+            flat,
             ResourceKind::RouteInput,
             ElementType::Float32,
             1,
             0,
             ResourceWorkspace,
             kTensorBytes,
-            static_cast<uint64_t>(index) * kTensorBytes,
+            static_cast<uint64_t>(flat) * kTensorBytes,
         };
-        bindingData[index] = index;
-        bindings[index] = {
+        bindingData[flat] = flat;
+        bindings[flat] = {
             taskId,
-            index,
+            flat,
             1,
-            kFanout,
+            kIncomingCount,
             0,
-            kFanout,
+            kIncomingCount,
             0,
             0,
         };
     }
     const TileABI abi{
-        1,
+        kDestinationTile,
         nullptr,
         0,
-        {tasks, kFanout},
+        {tasks, kIncomingCount},
         incoming,
-        kFanout,
+        kIncomingCount,
         nullptr,
         0,
         nullptr,
@@ -497,14 +549,14 @@ void printProfile(const DeploymentProfile& profile)
         nullptr,
         0,
         resources,
-        kFanout,
+        kIncomingCount,
         dimensions,
         1,
-        kFanout * kTensorBytes,
+        kIncomingCount * kTensorBytes,
         bindings,
-        kFanout,
+        kIncomingCount,
         bindingData,
-        kFanout,
+        kIncomingCount,
     };
 
     DeploymentProfile profile{nullptr, readCycle};
@@ -534,16 +586,209 @@ void printProfile(const DeploymentProfile& profile)
     return 0;
 }
 
+#if defined(MITTENS_FANOUT_BIDIRECTIONAL)
+int runBidirectional()
+{
+    static_assert(kSourceCount >= 2 && kSourceCount % 2 == 0);
+    static_assert(kWaves >= 1);
+    constexpr uint32_t kRouteCount = kWaves * kFanout;
+    constexpr uint32_t kTaskCount = kWaves + kRouteCount;
+    constexpr uint32_t kResourceCount = 1 + kWaves + kRouteCount;
+    constexpr uint32_t kBindingDataCount = 2 * kWaves + kRouteCount;
+    const uint32_t tile = MITTENS_TILE_ID;
+    const uint32_t peer = kSourceCount - 1 - tile;
+    const auto bidirectionalSourceTaskId = [](uint32_t source, uint32_t wave) {
+        return UINT32_C(10000) + source * kWaves + wave;
+    };
+    const auto bidirectionalRouteId = [](uint32_t source,
+                                         uint32_t wave,
+                                         uint32_t index) {
+        return UINT32_C(1000000) +
+               (source * kWaves + wave) * kFanout + index;
+    };
+    const auto bidirectionalDestinationTaskId = [](uint32_t source,
+                                                   uint32_t wave,
+                                                   uint32_t index) {
+        return UINT32_C(100000) +
+               (source * kWaves + wave) * kFanout + index;
+    };
+    const auto bidirectionalResourceId = [](uint32_t source,
+                                            uint32_t wave) {
+        return UINT32_C(300000) + source * kWaves + wave;
+    };
+    Task tasks[kTaskCount]{};
+    Route outgoing[kRouteCount]{};
+    Route incoming[kRouteCount]{};
+    Resource resources[kResourceCount]{};
+    TaskBinding bindings[kTaskCount]{};
+    uint32_t bindingData[kBindingDataCount]{};
+    const ModelIO inputs[] = {
+        {0, tile, 1, 0, kTensorBytes},
+    };
+    const int64_t dimensions[] = {kElementCount};
+    resources[0] = {
+        1, 0, 0, ResourceKind::ModelInput, ElementType::Float32,
+        1, 0, ResourceExternal, kTensorBytes, 0,
+    };
+    for (uint32_t wave = 0; wave < kWaves; ++wave) {
+        const uint32_t taskId = bidirectionalSourceTaskId(tile, wave);
+        const uint32_t peerTaskId =
+            bidirectionalSourceTaskId(peer, wave);
+        const uint32_t outputSlot = 1 + wave;
+        tasks[wave] = {taskId, copyVector, 1, 1};
+        resources[outputSlot] = {
+            bidirectionalResourceId(tile, wave),
+            bidirectionalRouteId(tile, wave, 0),
+            outputSlot,
+            ResourceKind::RouteOutput,
+            ElementType::Float32,
+            1,
+            0,
+            ResourceWorkspace,
+            kTensorBytes,
+            static_cast<uint64_t>(wave) * kTensorBytes,
+        };
+        bindingData[2 * wave] = 0;
+        bindingData[2 * wave + 1] = outputSlot;
+        bindings[wave] = {
+            taskId,
+            2 * wave,
+            1,
+            2 * wave + 1,
+            1,
+            kBindingDataCount,
+            0,
+            0,
+        };
+        for (uint32_t index = 0; index < kFanout; ++index) {
+            const uint32_t routeIndex = wave * kFanout + index;
+            const uint32_t inputSlot = 1 + kWaves + routeIndex;
+            const uint32_t destinationTask =
+                bidirectionalDestinationTaskId(peer, wave, index);
+            outgoing[routeIndex] = {
+                bidirectionalRouteId(tile, wave, index),
+                tile,
+                taskId,
+                0,
+                peer,
+                bidirectionalDestinationTaskId(tile, wave, index),
+                0,
+                bidirectionalResourceId(tile, wave),
+                outputSlot,
+                kTensorBytes,
+            };
+            incoming[routeIndex] = {
+                bidirectionalRouteId(peer, wave, index),
+                peer,
+                peerTaskId,
+                0,
+                tile,
+                destinationTask,
+                0,
+                bidirectionalResourceId(peer, wave),
+                inputSlot,
+                kTensorBytes,
+            };
+            resources[inputSlot] = {
+                bidirectionalResourceId(peer, wave),
+                bidirectionalRouteId(peer, wave, index),
+                inputSlot,
+                ResourceKind::RouteInput,
+                ElementType::Float32,
+                1,
+                0,
+                ResourceWorkspace,
+                kTensorBytes,
+                static_cast<uint64_t>(kWaves + routeIndex) *
+                    kTensorBytes,
+            };
+            const uint32_t taskIndex = kWaves + routeIndex;
+            tasks[taskIndex] = {destinationTask, consumeVector, 1, 0};
+            const uint32_t bindingOffset = 2 * kWaves + routeIndex;
+            bindingData[bindingOffset] = inputSlot;
+            bindings[taskIndex] = {
+                destinationTask,
+                bindingOffset,
+                1,
+                kBindingDataCount,
+                0,
+                kBindingDataCount,
+                0,
+                0,
+            };
+        }
+    }
+    const TileABI abi{
+        tile,
+        nullptr,
+        0,
+        {tasks, kTaskCount},
+        incoming,
+        kRouteCount,
+        outgoing,
+        kRouteCount,
+        inputs,
+        1,
+        nullptr,
+        0,
+        resources,
+        kResourceCount,
+        dimensions,
+        1,
+        static_cast<uint64_t>(kWaves + kRouteCount) * kTensorBytes,
+        bindings,
+        kTaskCount,
+        bindingData,
+        kBindingDataCount,
+    };
+
+    alignas(64) float modelInput[kElementCount];
+    for (uint32_t index = 0; index < kElementCount; ++index) {
+        modelInput[index] = static_cast<float>(index + 1);
+    }
+    DeploymentTrace trace{nullptr, emitTaskTrace};
+    DeploymentRuntime runtime{abi, kTransport, nullptr, &trace};
+    if (!runtime.bindModelInput(0, modelInput)) {
+        return 1;
+    }
+    mesh_nic::complete_memory_initialization();
+    while (!runtime.complete() && !runtime.failed()) {
+        const DeploymentStep step = runtime.step();
+        if (step == DeploymentStep::WaitForReceive) {
+            mesh_nic::wait_for_receive();
+        } else if (step == DeploymentStep::WaitForTransmit) {
+            mesh_nic::wait_for_transmit();
+        }
+    }
+    if (runtime.failed()) {
+        return 2;
+    }
+    uart_puts("FANOUT_BIDIRECTIONAL_PASS tile=");
+    printUnsigned(tile);
+    uart_puts(" waves=");
+    printUnsigned(kWaves);
+    uart_putc('\n');
+    return 0;
+}
+#endif
+
 } // namespace
 
 extern "C" int tile_main()
 {
-    if constexpr (MITTENS_TILE_ID == 0) {
+#if defined(MITTENS_FANOUT_BIDIRECTIONAL)
+    return runBidirectional();
+#else
+    if constexpr (MITTENS_TILE_ID < kSourceCount) {
 #if defined(MITTENS_FANOUT_INDEPENDENT_TASKS)
         return runIndependentSource();
 #else
         return runSource();
 #endif
     }
-    return runDestination();
+    if constexpr (MITTENS_TILE_ID == kDestinationTile) {
+        return runDestination();
+    }
+    return 1;
+#endif
 }

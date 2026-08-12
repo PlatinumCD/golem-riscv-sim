@@ -107,7 +107,12 @@ void SharedAnalogMemoryBridge::create(
     }
 
     mapping_ = static_cast<MittensAnalogBridgeHeader*>(address);
-    std::memset(mapping_, 0, mappingSize_);
+    // ftruncate() guarantees that a newly extended memfd reads as zero.  Do
+    // not fault every matrix-sized payload page into memory merely to write
+    // those zeroes again.  Only control structures need eager, explicit
+    // initialization; producers overwrite the declared payload words before
+    // publishing a slot.
+    std::memset(mapping_, 0, sizeof(*mapping_));
     mapping_->magic = MITTENS_ANALOG_BRIDGE_MAGIC;
     mapping_->version = MITTENS_ANALOG_BRIDGE_VERSION;
     mapping_->structure_size = mappingSize_;
@@ -123,6 +128,24 @@ void SharedAnalogMemoryBridge::create(
     mapping_->slot_stride =
         mittens_analog_slot_stride(arrayRows, arrayColumns);
     mapping_->tile_id = tileId;
+
+    for (std::uint32_t arrayId = 0;
+         arrayId < arrayCount;
+         ++arrayId) {
+        MittensAnalogBridgeChannel* const channel =
+            mittens_analog_channel(mapping_, arrayId);
+        std::memset(channel, 0, sizeof(*channel));
+
+        for (std::uint32_t sequence = 0;
+             sequence < MITTENS_ANALOG_QUEUE_CAPACITY;
+             ++sequence) {
+            MittensAnalogBridgeSlot* const slot =
+                mittens_analog_slot(mapping_, arrayId, sequence);
+            std::memset(slot, 0, sizeof(*slot));
+            slot->state = MITTENS_ANALOG_SLOT_FREE;
+            slot->status = MITTENS_ANALOG_STATUS_SUCCESS;
+        }
+    }
 }
 
 void SharedAnalogMemoryBridge::close() noexcept

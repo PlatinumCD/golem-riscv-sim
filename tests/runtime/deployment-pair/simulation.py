@@ -67,6 +67,24 @@ build_mesh(
     mesh_link_clock=os.environ.get(
         "MITTENS_DEPLOYMENT_MESH_LINK_CLOCK", "1GHz"
     ),
+    mesh_router_backend=os.environ.get(
+        "MITTENS_DEPLOYMENT_MESH_ROUTER_BACKEND", "merlin"
+    ),
+    wormhole_input_buffer_flits=int(
+        os.environ.get(
+            "MITTENS_DEPLOYMENT_WORMHOLE_INPUT_BUFFER_FLITS", "32"
+        )
+    ),
+    wormhole_injection_buffer_flits=int(
+        os.environ.get(
+            "MITTENS_DEPLOYMENT_WORMHOLE_INJECTION_BUFFER_FLITS", "64"
+        )
+    ),
+    wormhole_pipeline_cycles=int(
+        os.environ.get(
+            "MITTENS_DEPLOYMENT_WORMHOLE_PIPELINE_CYCLES", "3"
+        )
+    ),
     memory_backend=memory_backend,
     memory_hierarchy={
         "topology": os.environ.get(

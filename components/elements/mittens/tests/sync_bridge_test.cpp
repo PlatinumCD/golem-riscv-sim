@@ -91,7 +91,7 @@ int main()
 
     void* const address = mmap(
         nullptr,
-        sizeof(MittensSyncBridge),
+        MITTENS_SYNC_BRIDGE_MAPPING_SIZE,
         PROT_READ | PROT_WRITE,
         MAP_SHARED,
         bridge.fileDescriptor(),
@@ -103,6 +103,11 @@ int main()
     assert(mapping->magic == MITTENS_SYNC_BRIDGE_MAGIC);
     assert(mapping->version == MITTENS_SYNC_BRIDGE_VERSION);
     assert(mapping->tile_id == 9);
+    assert(
+        reinterpret_cast<std::uint8_t*>(
+            mittens_sync_memory_batch(mapping)) ==
+        reinterpret_cast<std::uint8_t*>(mapping) +
+            sizeof(MittensSyncBridge));
 
     std::thread qemu([mapping]() {
         waitWhile(&mapping->state, MITTENS_SYNC_STATE_IDLE);
@@ -171,6 +176,42 @@ int main()
             UINT64_C(0x80001234),
             4,
             MITTENS_SYNC_MEMORY_FLAG_WRITE);
+
+        waitWhile(&mapping->state, MITTENS_SYNC_STATE_EVENT);
+        assert(
+            mittens_sync_load_acquire(&mapping->state) ==
+            MITTENS_SYNC_STATE_RESUME);
+        mittens_sync_store_release(
+            &mapping->state, MITTENS_SYNC_STATE_RUNNING);
+        wake(&mapping->state);
+
+        auto* const batch = mittens_sync_memory_batch(mapping);
+        batch[0] = MittensSyncMemoryAccess{
+            23, 3, UINT64_C(0x80002000),
+            UINT64_C(0x80000100), UINT64_C(0x80000200),
+            8, MITTENS_SYNC_MEMORY_FLAG_NONE,
+            0, 0, 0, 0};
+        batch[1] = MittensSyncMemoryAccess{
+            23, 3, UINT64_C(0x80002008),
+            UINT64_C(0x80000104), UINT64_C(0x80000200),
+            8, MITTENS_SYNC_MEMORY_FLAG_WRITE,
+            0, 0, 0, 0};
+        publish(
+            mapping,
+            MITTENS_SYNC_STOP_MEMORY_BATCH,
+            23,
+            3,
+            MITTENS_SYNC_EVENT_FLAG_NONE,
+            UINT32_MAX,
+            0,
+            UINT32_MAX,
+            0,
+            UINT32_MAX,
+            UINT32_MAX,
+            0,
+            0,
+            2,
+            MITTENS_SYNC_MEMORY_FLAG_NONE);
 
         waitWhile(&mapping->state, MITTENS_SYNC_STATE_EVENT);
         assert(
@@ -332,6 +373,26 @@ int main()
         MITTENS_SYNC_MEMORY_FLAG_WRITE);
     bridge.resume(*memory);
 
+    std::optional<QemuSyncEvent> memoryBatch;
+    do {
+        memoryBatch = bridge.waitForEvent(
+            std::chrono::milliseconds(100));
+    } while (!memoryBatch.has_value());
+    assert(
+        memoryBatch->stopReason ==
+        MITTENS_SYNC_STOP_MEMORY_BATCH);
+    assert(memoryBatch->memoryBatch.size() == 2);
+    assert(
+        memoryBatch->memoryBatch[0].address ==
+        UINT64_C(0x80002000));
+    assert(
+        memoryBatch->memoryBatch[0].program_counter ==
+        UINT64_C(0x80000100));
+    assert(
+        memoryBatch->memoryBatch[1].flags ==
+        MITTENS_SYNC_MEMORY_FLAG_WRITE);
+    bridge.resume(*memoryBatch);
+
     std::optional<QemuSyncEvent> memoryInitialization;
     do {
         memoryInitialization = bridge.waitForEvent(
@@ -409,7 +470,7 @@ int main()
         bridge.protocolError() ==
         MITTENS_SYNC_BRIDGE_ERROR_NONE);
     assert(
-        munmap(address, sizeof(MittensSyncBridge)) == 0);
+        munmap(address, MITTENS_SYNC_BRIDGE_MAPPING_SIZE) == 0);
     bridge.close();
     return 0;
 }

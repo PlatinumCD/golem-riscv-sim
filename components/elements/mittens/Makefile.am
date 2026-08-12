@@ -9,6 +9,11 @@ comp_LTLIBRARIES = libmittens.la
 
 libmittens_la_SOURCES = \
 	packetEvent.h \
+	wormholeEvents.h \
+	wormholeRouter.h \
+	wormholeRouter.cc \
+	wormholeNetworkInterface.h \
+	wormholeNetworkInterface.cc \
 	networkTimingProbe.h \
 	networkTimingProbe.cc \
 	performanceProfile.h \
@@ -19,6 +24,7 @@ libmittens_la_SOURCES = \
 	sharedMemoryBridge.cc \
 	sharedSyncMemoryBridge.h \
 	sharedSyncMemoryBridge.cc \
+	memoryAccessCoalescer.h \
 	receiveDMAEngine.h \
 	receiveDMAEngine.cc \
 	scratchpad/scratchpadTimingModel.h \
@@ -55,7 +61,9 @@ EXTRA_DIST = \
 	tests/scratchpad_timing_model_test.cpp \
 	tests/performance_profile_test.cpp \
 	tests/performance_profile.py \
+	tests/wormhole_network.py \
 	tests/sync_bridge_test.cpp \
+	tests/memory_access_coalescer_test.cpp \
 	tests/crosssim_backend_test.cpp
 
 install-exec-hook:

@@ -39,6 +39,7 @@ NetworkTimingProbe::NetworkTimingProbe(
     outputPath_(params.find<std::string>("output_path", "")),
     linkWidthBits_(
         params.find<std::uint32_t>("link_width_bits", 32)),
+    tailDelivery_(params.find<bool>("tail_delivery", false)),
     timeoutCycles_(
         params.find<std::uint64_t>("timeout_cycles", 100000)),
     output_(
@@ -298,9 +299,11 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
         }
 
         const std::uint64_t headArrivalTick = getCurrentSimCycle();
-        const std::uint64_t transferCycles = divideRoundUp(
-            static_cast<std::uint64_t>(actualWords) * kWordBits,
-            linkWidthBits_);
+        const std::uint64_t transferCycles = tailDelivery_
+            ? 0
+            : divideRoundUp(
+                  static_cast<std::uint64_t>(actualWords) * kWordBits,
+                  linkWidthBits_);
         const std::uint64_t linkPeriod =
             linkClockTimeBase_.getFactor();
         if (transferCycles >
@@ -314,9 +317,11 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
         }
         const std::uint64_t transferTicks =
             transferCycles * linkPeriod;
-        const std::uint64_t startTick = std::max(
-            headArrivalTick,
-            nextCompletionAvailableTick_);
+        const std::uint64_t startTick = tailDelivery_
+            ? headArrivalTick
+            : std::max(
+                  headArrivalTick,
+                  nextCompletionAvailableTick_);
         if (startTick >
             std::numeric_limits<std::uint64_t>::max() -
                 transferTicks) {
@@ -327,8 +332,9 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
                 static_cast<unsigned>(endpointId_));
         }
         nextCompletionAvailableTick_ = startTick + transferTicks;
-        const std::uint64_t completionTick =
-            nextCompletionAvailableTick_ - linkPeriod;
+        const std::uint64_t completionTick = tailDelivery_
+            ? headArrivalTick
+            : nextCompletionAvailableTick_ - linkPeriod;
         const std::uint64_t completionDelayCycles =
             divideRoundUp(
                 completionTick - headArrivalTick,

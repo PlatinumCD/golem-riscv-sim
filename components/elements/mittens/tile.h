@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <sst/core/component.h>
@@ -49,6 +50,7 @@ class Tile : public SST::Component
         {"mesh_link_clock", "Clock defining one physical mesh transfer cycle", "1GHz"},
         {"mesh_link_width_bits", "Physical mesh link width in bits per transfer cycle", "32"},
         {"network_packet_words", "Maximum 32-bit words in one SST network request. This value must not exceed the endpoint buffer capacity", "16"},
+        {"network_tail_delivery", "The network interface delivers a request only after its tail flit arrives", "false"},
         {"qemu_path", "Path to the QEMU system emulator", "qemu-system-riscv64"},
         {"elf", "Bare-metal ELF image loaded by QEMU", ""},
         {"memory", "Private QEMU RAM assigned to this tile", "16M"},
@@ -56,8 +58,11 @@ class Tile : public SST::Component
         {"memory_guest_base", "Guest physical base used for tile-namespaced timing addresses; zero preserves guest addresses", "0"},
         {"memory_tile_stride", "Per-tile timing-address stride; zero preserves guest addresses", "0"},
         {"memory_cache_line_size", "Cache line size used for receive-DMA invalidation", "64"},
+        {"memory_load_queue_entries", "Timed load-queue capacity for grouped nonblocking loads", "8"},
         {"memory_store_buffer_entries", "Timed CPU store-buffer capacity; one preserves blocking behavior", "1"},
         {"memory_init_batching", "Aggregate pre-runtime data accesses into one fd 41 initialization handshake", "false"},
+        {"memory_access_batching", "Batch fd 41 transport while replaying each runtime access through MemHierarchy", "false"},
+        {"memory_access_batch_records", "Maximum ordered memory records in one fd 41 batch", "16"},
         {"memory_init_bytes_per_cycle", "Aggregate initialization bandwidth in bytes per CPU cycle", "32"},
         {"memory_init_latency_cycles", "One-time aggregate initialization latency in CPU cycles", "2"},
         {"scratchpad_enabled", "Enable the private noncoherent tile scratchpad", "false"},
@@ -119,6 +124,7 @@ class Tile : public SST::Component
         std::string meshLinkClock;
         std::uint32_t meshLinkWidthBits;
         std::uint32_t networkPacketWords;
+        bool networkTailDelivery;
         std::string qemuPath;
         std::string elfPath;
         std::string memory;
@@ -126,8 +132,11 @@ class Tile : public SST::Component
         std::uint64_t memoryGuestBase;
         std::uint64_t memoryTileStride;
         std::uint32_t memoryCacheLineSize;
+        std::uint32_t memoryLoadQueueEntries;
         std::uint32_t memoryStoreBufferEntries;
         bool memoryInitializationBatching;
+        bool memoryAccessBatching;
+        std::uint32_t memoryAccessBatchRecords;
         std::uint32_t memoryInitializationBytesPerCycle;
         std::uint64_t memoryInitializationLatencyCycles;
         bool scratchpadEnabled;
@@ -204,6 +213,18 @@ class Tile : public SST::Component
         std::uint64_t completionTick;
     };
 
+    struct IncomingFrameAssembly {
+        std::uint32_t routeId;
+        std::uint64_t executionId;
+        std::uint32_t expectedWords;
+        std::vector<std::uint32_t> payload;
+    };
+
+    struct ReadyReceiveBurst {
+        std::uint32_t source;
+        std::vector<std::uint32_t> payload;
+    };
+
     struct OutgoingFrame {
         bool active = false;
         std::uint32_t destination = UINT32_MAX;
@@ -249,6 +270,13 @@ class Tile : public SST::Component
     void grantAndCaptureQemu();
     void resumeAndCaptureQemu();
     void captureQemuEvent();
+    std::uint64_t accountCpuTo(
+        const QemuSyncEvent& event,
+        bool architecturalBoundary);
+    void beginMemoryBatch(const QemuSyncEvent& event);
+    void scheduleNextMemoryBatchStep();
+    void advanceMemoryBatchAccess();
+    void advanceMemoryBatchGroup();
     bool processPendingSyncEvent();
     bool pendingAnalogEventReady() const;
     bool observeQemuExit();
@@ -273,6 +301,7 @@ class Tile : public SST::Component
     void serviceIncomingPackets();
     void completeReadyNetworkReceives();
     void completeNetworkReceive(PendingNetworkReceive receive);
+    void flushReadyReceiveBursts();
     void registerReceiveDMA(const QemuSyncEvent& event);
     void scheduleReceiveDMABursts();
     void refreshReceiveDMATransfers();
@@ -306,6 +335,8 @@ class Tile : public SST::Component
     void writePerformanceSummary();
     void reportProfile() const;
     void issueMemoryRequest(const QemuSyncEvent& event);
+    SST::Interfaces::StandardMem::Request::id_t sendMemoryRequest(
+        const QemuSyncEvent& event);
     bool memoryReadHasPendingWriteHazard(
         const QemuSyncEvent& event) const noexcept;
 
@@ -346,7 +377,7 @@ class Tile : public SST::Component
     std::uint64_t synchronizationEvents_ = 0;
     std::array<
         std::uint64_t,
-        MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT + 1>
+        MITTENS_SYNC_STOP_MEMORY_FENCE + 1>
         synchronizationStopCounts_{};
     std::array<std::uint64_t, MITTENS_ANALOG_OPERATION_MOVE_VECTOR + 1>
         analogOperationCounts_{};
@@ -380,7 +411,7 @@ class Tile : public SST::Component
     std::uint64_t activeWaitEventSequence_ = 0;
     std::array<
         std::uint64_t,
-        MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT + 1>
+        MITTENS_SYNC_STOP_MEMORY_FENCE + 1>
         waitTicks_{};
     std::unordered_map<
         std::uint64_t,
@@ -394,7 +425,22 @@ class Tile : public SST::Component
         PendingMemoryRequest> pendingMemoryRequests_;
     std::optional<SST::Interfaces::StandardMem::Request::id_t>
         blockingMemoryRequestId_;
+    std::optional<QemuSyncEvent> memoryBatchEnvelope_;
+    std::vector<MittensSyncMemoryAccess> memoryBatchRecords_;
+    std::size_t memoryBatchIndex_ = 0;
+    std::size_t memoryBatchGroupEndIndex_ = 0;
+    std::unordered_set<SST::Interfaces::StandardMem::Request::id_t>
+        memoryBatchGroupRequestIds_;
     std::uint32_t outstandingMemoryWrites_ = 0;
+    std::uint32_t outstandingMemoryReads_ = 0;
+    std::uint64_t maximumOutstandingMemoryRequests_ = 0;
+    std::uint64_t maximumOutstandingMemoryReads_ = 0;
+    std::uint64_t maximumStoreBufferOccupancy_ = 0;
+    std::uint64_t memoryStoreBufferFullEvents_ = 0;
+    std::uint64_t vectorMemoryRequestGroups_ = 0;
+    std::uint64_t vectorMemoryGroupRequests_ = 0;
+    std::uint64_t scalarMemoryRequestGroups_ = 0;
+    std::uint64_t scalarMemoryGroupRequests_ = 0;
     std::optional<std::uint32_t> activeTaskId_;
     std::uint64_t activeTaskExecutionId_ = 0;
     std::uint64_t memoryRequests_ = 0;
@@ -413,6 +459,9 @@ class Tile : public SST::Component
         SST::Interfaces::StandardMem::Request::id_t,
         std::uint32_t> receiveDMAInvalidations_;
     std::deque<PendingNetworkReceive> pendingNetworkReceives_;
+    std::unordered_map<std::uint32_t, IncomingFrameAssembly>
+        incomingFrameAssemblies_;
+    std::deque<ReadyReceiveBurst> readyReceiveBursts_;
     std::deque<ReceiveDMATransfer> receiveDMATransfersInFlight_;
     std::optional<MittensBridgePacket> pendingTransmit_;
     std::optional<MittensBridgeTxBurst> pendingTransmitBurst_;

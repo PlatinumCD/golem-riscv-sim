@@ -117,6 +117,10 @@ Every tile selects one of two data-memory backends:
 | `native` | QEMU accesses its private RAM directly; no cache or lower-memory delay is added |
 | `memhierarchy` | Each QEMU RAM data access yields through fd 41 and completes through the tile's StandardMem path |
 
+The optional `memory_access_batching` mode groups fd 41 transport events.
+SST still sends one StandardMem request for each access record. The active
+batch contains 16 records by default.
+
 `native` is the default and preserves existing simulations. In
 `memhierarchy` mode, the SST configuration must attach
 `memHierarchy.standardInterface` to the tile's `memoryIF` slot. The first
@@ -144,12 +148,35 @@ time; read payloads returned by StandardMem are intentionally ignored and
 write payloads are placeholders. Instruction fetches, MMIO, and QEMU device
 accesses do not enter this path.
 
-The current bridge permits one outstanding CPU memory access per tile because
-QEMU blocks until the StandardMem response. Different tiles still overlap,
-and every tile owns a distinct L1 instance. This establishes real cache
-hit/miss and lower-memory latency without claiming out-of-order misses,
-prefetching, instruction-cache timing, TLB timing, cache/DMA coherence, or
-scratchpad behavior.
+The current bridge permits up to eight proven-independent load requests per
+tile. It also permits eight buffered stores by default. One vector load can
+issue independent cache-line fragments together. Consecutive scalar loads can
+also issue together when their address registers have no dependency. Different
+tiles overlap, and each tile owns a private L1 instance.
+
+This model provides cache-hit, cache-miss, store-buffer, and lower-memory
+timing. It does not yet model general out-of-order misses, prefetching,
+instruction-cache timing, TLB timing, or cache and DMA coherence.
+
+Access batching adds bounded functional lookahead. QEMU can execute the active
+batch before SST replays its timing. Each record keeps its instruction count,
+vector-instruction count, guest PC, return address, address, size, and
+direction. Standard scalar load records also keep integer register dependency
+masks and the RISC-V instruction length. Mittens groups adjacent scalar loads
+only when the later address does not use an earlier load result. It groups
+cache-line fragments when every identity field matches one vector memory
+instruction.
+
+QEMU publishes every RISC-V `fence` as a protocol boundary.
+Mittens drains all older timed stores before it resumes the hart. Atomic
+accesses remain synchronous ordering boundaries.
+
+The `memory_access_batching=false` mode supplies reference timing. An
+architecture study must compare each batched result with this reference.
+
+The 16-record setting reduced a measured 4-by-4 transformer wall time from
+218.84 seconds to 41 seconds. The modeled time changed from 5.97184 ms to
+6.00519 ms in that experiment. This difference is 0.56 percent.
 
 Large deployment images perform millions of data accesses while installing
 their task and analog-array state. An optional initialization phase preserves
@@ -177,13 +204,90 @@ state, and post-marker cache hits and misses are measured independently. The
 profile reports the handshake count, access count, read and write byte counts,
 and charged initialization cycles.
 
-`tests/memory/timing` independently verifies the cache boundary.
-For the documented L1, links, and 50 ns lower-memory backend, it observes exact
-five-cycle hits and 61-cycle misses. Its conflict/LRU sequence matches four
-hits, six misses, and 386 wait cycles; its capacity sequence matches one hit,
-514 misses, and 31,359 wait cycles.
+`tests/memory/timing` independently verifies the cache boundary. For the
+documented L1, links, and 50 ns lower-memory backend, it observes exact
+five-cycle hits and 61-cycle misses.
+
+The conflict test matches four hits, six misses, and 386 wait cycles. The
+capacity test matches one hit, 514 misses, and 31,359 wait cycles. The store
+test reaches eight outstanding requests and completes with correct values.
+The vector test issues two cache-line reads from one instruction at the same
+simulation tick. Two independent scalar misses complete in 62 cycles. The
+equivalent two-load pointer chain completes in 122 cycles.
+
+The profile reports these memory-concurrency metrics:
+
+- maximum outstanding memory requests
+- maximum outstanding loads
+- maximum store-buffer occupancy
+- store-buffer full events
+- vector request-group count
+- requests issued in vector groups
+- scalar request-group count
+- requests issued in scalar groups
+
+Bridge protocol version 14 carries memory records and fence events. A standard
+scalar load record contains its source register mask, destination register
+mask, instruction length, and program counter. Mittens rejects missing data
+instead of assuming that an unknown load is independent. Atomic operations
+remain synchronous.
+
+### End-to-end validation
+
+The two-decoder GPT-2 test uses a 10 by 10 mesh, two digital workers, six
+tokens, dual issue, and the MemHierarchy backend. The original blocking model
+completed in 4.74722 ms. Store buffering and vector request groups reduced the
+time to 3.42995 ms. Scalar request groups reduced the time to 3.27415 ms.
+
+The complete change reduces simulated time by 31.0 percent. Scalar grouping
+adds a 4.5 percent reduction after the store and vector changes. The final
+trace contains 67,022 scalar request groups and 182,638 requests in those
+groups. The maximum number of outstanding reads is eight.
 
 ## Mesh timing
+
+Model experiments use `mittens.wormholeRouter` and `mittens.wormholeNIC` by
+default. Compatibility tests can select the legacy Merlin network.
+
+The Mittens network divides every request into 32-bit flits. The physical
+width controls the number of flits that each output sends in one cycle.
+
+The packet head waits for the route and switch pipeline. The default pipeline
+cost is three router cycles.
+
+An output stays reserved until the packet tail departs. Round-robin arbitration
+selects one packet when multiple heads request the same free output.
+
+Each output tracks downstream buffer credits. A router stops transmission when
+the downstream input has no free flit slot.
+
+The local endpoint returns credits when the tile removes a complete request.
+Thus, a full tile receive path can stop the local router output.
+
+The destination interface delivers the request after the tail arrives. Thus,
+the tile does not add a second packet-serialization delay.
+
+The primary network parameters are:
+
+| Parameter | Meaning | Default |
+| --- | --- | --- |
+| `GOLEM_MODEL_MESH_ROUTER_BACKEND` | Select `mittens` or `merlin` | `mittens` |
+| `GOLEM_MODEL_MESH_LINK_LATENCY` | Delay for each SST mesh or local link | `1ns` |
+| `GOLEM_MODEL_MESH_LINK_WIDTH_BITS` | Physical output width in bits per cycle | `32` |
+| `GOLEM_MODEL_WORMHOLE_INPUT_BUFFER_FLITS` | Flit slots in each router input | `32` |
+| `GOLEM_MODEL_WORMHOLE_INJECTION_BUFFER_FLITS` | Flit slots in each tile injection queue | `64` |
+| `GOLEM_MODEL_WORMHOLE_PIPELINE_CYCLES` | Pipeline cost for each packet head | `3` |
+
+The Mittens statistics separate the primary block causes:
+
+- `switch_arbitration_stall_cycles` counts ready packet heads that lose an
+  output selection or wait behind a reserved packet.
+- `output_credit_stall_cycles` counts requested outputs with no downstream
+  buffer credit.
+- `input_buffer_full_cycles` counts cycles when an input buffer is full.
+- `output_link_busy_cycles` counts cycles that transmit one or more flits.
+
+### Merlin compatibility timing
 
 The legacy `TX_DATA` path publishes one 32-bit packet in fd 42. The deployment
 runtime instead submits up to 4096 contiguous words through one DMA-style

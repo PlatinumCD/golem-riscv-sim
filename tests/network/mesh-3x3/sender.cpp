@@ -5,11 +5,9 @@
 
 namespace {
 
-constexpr uint32_t kFirstWorkerTile = 1;
 constexpr uint32_t kReceiverTile = 8;
 constexpr uint32_t kFloatThreePointTwoFive = 0x40500000U;
 constexpr uint32_t kAcknowledgment = 0xacce5501U;
-constexpr uint32_t kShutdown = 0x53544f50U;
 
 } // namespace
 
@@ -24,12 +22,6 @@ extern "C" int tile_main() {
         return 1;
     }
 
-    uart_puts("[tile 0] acknowledgment received; stopping mesh workers\n");
-    for (uint32_t destination = kFirstWorkerTile;
-         destination <= kReceiverTile;
-         ++destination) {
-        mesh_nic::send(destination, kShutdown);
-    }
-
+    uart_puts("[tile 0] acknowledgment received through router-only tiles\n");
     return 0;
 }
