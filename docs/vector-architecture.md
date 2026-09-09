@@ -1,274 +1,87 @@
-# Golem vector architecture
+# Vector architecture
 
-This document is the vector-processor contract for a conforming Golem tile. It
-fixes the architectural vector geometry and the
-boundary between the scalar CPU, standard RISC-V Vector Extension, custom
-Golem analog accelerator, QEMU functional execution, and SST timing model.
+QEMU executes RISC-V Vector Extension 1.0 instructions on each managed tile.
+SST accounts for instruction issue and memory/device completion. RVV arithmetic
+does not have a detailed pipeline timing model.
 
-The words **must**, **must not**, **should**, and **may** describe required,
-forbidden, recommended, and optional behavior respectively.
+## Implemented configuration
 
-## Fixed architectural contract
+| Property | Default tile / compiler target |
+|---|---|
+| ISA | RV64GCV with XGolemAnalog 1.0 |
+| Compiler architecture | `rv64gcv_xgolemanalog` |
+| ABI / byte order | `lp64d` / little-endian |
+| Vector registers | 32 |
+| VLEN / `vlenb` | 256 bits / 32 bytes |
+| ELEN | 64 bits |
+| CPU issue width | 1, 2, or 4; default 1 |
+| Vector issue limit | One retired vector instruction per CPU cycle |
 
-| Property | Current Golem value |
-| --- | --- |
-| Base ISA | RV64 |
-| Standard ISA | `RV64GCV` |
-| Custom ISA | `XGolemAnalog` 1.0 |
-| Compiler architecture spelling | `rv64gcv_xgolemanalog` |
-| Vector specification | RISC-V Vector Extension 1.0 |
-| `VLEN` | 256 bits |
-| `vlenb` CSR | 32 bytes |
-| `ELEN` | 64 bits |
-| Vector registers | 32 registers, 256 bits each |
-| Vector datapath | 256 bits |
-| Vector issue width | At most one vector instruction per CPU cycle |
-| Byte order | Little-endian |
-| C ABI | `lp64d` |
+At LMUL=1, a register holds 32 eight-bit, 16 sixteen-bit, eight 32-bit,
+or four 64-bit elements. Register grouping and fractional LMUL follow QEMU's
+RVV semantics. SST does not derive arithmetic latency from VL, SEW, or LMUL.
 
-A conforming tile must implement standard RVV 1.0 behavior. The custom analog
-instructions remain a separate extension and do not redefine RVV instruction
-encodings, vector CSRs, masking, tail policy, or register grouping.
-
-## Vector geometry
-
-One `LMUL=1` vector register contains:
-
-```text
-SEW=8:   32 elements
-SEW=16:  16 elements
-SEW=32:   8 elements
-SEW=64:   4 elements
-```
-
-The implementation supports the standard RVV register-group rules.
-Non-fractional groups contain:
-
-```text
-LMUL=1:   256 architectural bits
-LMUL=2:   512 architectural bits
-LMUL=4:  1024 architectural bits
-LMUL=8:  2048 architectural bits
-```
-
-`LMUL` changes the architectural register-group size; it does not widen the
-physical 256-bit datapath. The eventual timing model must therefore account
-for the number of physical datapath beats required by the active `VL`, `SEW`,
-and `LMUL`.
-
-## Scalar and vector issue
-
-The scalar front end may be configured as single-, dual-, or quad-issue. The
-vector unit has one vector issue slot:
-
-```text
-                         shared instruction front end
-                    issue width = 1, 2, or 4 instructions
-                                      |
-                 +--------------------+--------------------+
-                 |                                         |
-          scalar resources                         one vector issue slot
-       integer / FP / load-store                    per CPU cycle maximum
-```
-
-A vector instruction consumes one front-end issue slot and the vector issue
-slot. Increasing scalar issue width must not imply that two or four vector
-instructions can issue in one cycle. Independent vector operations may be
-pipelined, but operation-specific latency and resource occupancy belong to
-the Golem scheduling and SST timing models.
-
-The simulator exposes the scalar front-end width as `cpu_issue_width`, with
-supported values 1, 2, and 4. QEMU reports both total retired instructions and
-retired RVV instructions at every fd 41 synchronization boundary. SST charges:
-
-```text
-cpu cycles =
-    max(ceil(total retired instructions / cpu_issue_width),
-        retired vector instructions)
-```
-
-The second term preserves the one-vector-issue-per-cycle limit when the scalar
-front end is widened. This is an issue-throughput model, not yet a detailed
-pipeline model: dependencies, operation-specific latency, vector-length
-occupancy, and memory-system timing remain future work.
-
-## Vector execution resources
-
-The processor model must distinguish at least:
-
-- vector configuration operations such as `vsetvli`;
-- vector integer and mask arithmetic;
-- vector floating-point arithmetic;
-- vector multiply and fused multiply-add;
-- vector reductions and permutations; and
-- vector loads and stores.
-
-Exact latency, initiation interval, and load/store bandwidth are not fixed in
-this version of the contract. They must be explicit timing-model parameters
-until backed by a hardware implementation. A conforming performance result
-must not treat every RVV operation as a permanently fixed one-cycle operation.
-
-The 256-bit datapath establishes the amount of vector data processed by one
-full-width physical beat:
-
-```text
-32 x i8     16 x i16      8 x i32/f32      4 x i64/f64
-```
-
-It does not establish cache, scratchpad, or external-memory bandwidth. Those
-remain separate memory-system properties.
-
-## Analog accelerator relationship
-
-All analog arrays on one tile share one bidirectional 256-bit link. The equal
-RVV and analog-link widths are intentional:
-
-```text
-RVV datapath:            256 bits = 8 float32 values
-Shared tile analog link: 256 bits = 8 float32 words
-```
-
-This equality does not create a direct architectural connection between a
-vector register and an analog array, and it does not multiply analog
-bandwidth by the number of arrays. The platform continues to use the
-memory-based Golem analog commands:
-
-```text
-RVV load/store path:
-    private RAM <-> vector registers
-
-Analog command path:
-    private RAM -> mvm.l -> analog array
-    private RAM <- mvm.s <- analog array
-```
-
-`mvm.set`, `mvm.l`, `mvm`, `mvm.s`, and `mvm.mv` remain asynchronous
-array-command operations with general-purpose-register operands. Direct
-vector-register-to-array instructions would be a future ISA revision and
-must not be assumed by software or compiler lowering.
-
-## Mesh and task-runtime invariants
-
-RVV is tile-local and does not change the network contract:
-
-- one mesh channel transfer remains exactly 32 bits;
-- tensor payloads remain ordered sequences of independent 32-bit words;
-- route headers, task IDs, execution IDs, and runtime slots are unchanged;
-- RVV registers are not transferred implicitly between tiles; and
-- vectorized local computation must explicitly store data before the existing
-  runtime or NIC can route it.
-
-The tile task and tensor ABI remains memory-based. The platform introduces no
-platform-specific vector calling convention and relies on LLVM's RISC-V ABI
-behavior for compiler-generated code.
-
-## Bare-metal execution contract
-
-QEMU is the functional RVV executor. A conforming managed tile must launch
-QEMU with:
+The [QEMU launcher](../src/sst/execution/qemuProcess.cc) constructs:
 
 ```text
 -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64
 ```
 
-Before entering `tile_main`, `src/platform/crt0.S` must:
+[Tile parameters](../src/sst/configuration/tileParameters.h) expose
+`riscv_vector_enabled`, `riscv_vector_length_bits`, and
+`riscv_vector_element_bits`. Alternate geometry needs a compatible compiler
+target. [Startup](../src/platform/startup/crt0.S) enables `mstatus.FS` and
+`mstatus.VS` before calling `tile_main`; generated code selects VL and VTYPE.
 
-1. enable floating-point state through `mstatus.FS`;
-2. enable vector state through `mstatus.VS`; and
-3. leave `VL` and `VTYPE` selection to generated or explicit RVV code.
+## Compiler and issue timing
 
-There is no operating system and no vector context switching. Each tile owns
-one hart and one bare-metal program for the lifetime of the simulation.
+LLVM's checked-in
+[processor definition](../third_party/llvm-project/llvm/lib/Target/RISCV/RISCVProcessors.td)
+gives `golem-analog` the V, Zvl256b, and XGolemAnalog features. The
+[extension definition](../third_party/llvm-project/llvm/lib/Target/RISCV/RISCVFeatures.td)
+declares XGolemAnalog 1.0. With the Golem compiler:
 
-Mittens exposes `riscv_vector_enabled`, `riscv_vector_length_bits`, and
-`riscv_vector_element_bits` for validation and architectural experiments.
-A conforming current run must use `true`, `256`, and `64`. Other accepted
-values describe an experimental processor configuration and require a matching
-compiler target.
+```sh
+clang --target=riscv64-unknown-elf -mcpu=golem-analog -mabi=lp64d -O2 -c kernel.c
+```
 
-## Compiler contract
+An additional `-march` is not needed to enable RVV. Automatic vectorization
+depends on the loop and LLVM's profitability decisions. The processor uses
+`NoSchedModel`; it has no Golem model for operation-specific vector resources.
 
-The LLVM `golem-analog` processor definition must include:
+The [CPU ledger](../src/sst/execution/cpuExecutionLedger.h) charges an issue
+region as:
 
 ```text
-FeatureStdExtV
-FeatureStdExtZvl256b
-FeatureVendorXGolemAnalog
+cycles = max(ceil(total instructions / cpu_issue_width), vector instructions)
 ```
 
-`FeatureStdExtV` provides the full standard vector extension and its required
-dependencies. `FeatureStdExtZvl256b` records the minimum architectural vector
-length used by the compiler. Once the compiler stage is complete, this must
-be sufficient to select the full tile ISA:
+Occupancy carries across ordinary quantum ends; device boundaries close the
+region. Vector configuration instructions count as vector instructions.
+Arithmetic dependencies, operation latency, and vector-length-dependent
+occupancy are not modeled.
 
-```bash
-clang \
-  --target=riscv64-unknown-elf \
-  -mcpu=golem-analog \
-  -mabi=lp64d
-```
+## Memory, analog, and mesh
 
-An explicit `-march=rv64gcv_xgolemanalog` is permitted but must not be
-required. Enabling RVV makes vector instructions legal; `-O2` or `-O3` and
-LLVM's profitability analysis still determine whether an ordinary loop is
-auto-vectorized.
+Vector loads and stores use guest memory. Enabled scratchpad accesses pass
+through the bank/port timing model shared by CPU and DMA clients. Optional
+StandardMem timing handles ordinary RAM accesses. Memory timing is implemented
+separately from vector arithmetic timing; see the [timing model](timing-model.md).
 
-The current `NoSchedModel` is temporary. A later compiler stage must introduce
-a Golem scheduling model that represents the scalar issue width, single
-vector issue slot, vector execution resources, and custom analog-command
-resource.
+Analog commands use general-purpose-register operands and memory buffers,
+not an implicit vector-register connection. The
+[analog device](../src/sst/analog/analogDevice.cc) shares one bidirectional
+256-bit link across the tile's arrays: eight float32 words per beat.
+This width does not establish RVV arithmetic latency or mesh bandwidth.
 
-## Timing ownership
+Mesh payload words and wormhole flits are 32 bits. Physical link width is
+configurable in positive multiples of 32 bits, with separate clock, buffer,
+and TX/RX lane settings. Software stores vector results before explicit
+runtime/NIC transfers; registers are never transferred implicitly.
 
-QEMU owns instruction semantics and architectural state. SST owns simulated
-time. Functional RVV support alone does not establish vector performance.
+## Validation entry points
 
-The completed functional path is:
-
-```text
-RVV ELF -> QEMU RVV 1.0 decode and execution -> retired instruction count
-                                                |
-                                                v
-                           current SST scalar/vector issue-throughput model
-```
-
-The target timing path is:
-
-```text
-QEMU instruction accounting
-  -> scalar or vector operation class
-  -> VL / SEW / LMUL and memory-transfer metadata where required
-  -> SST issue, latency, occupancy, and bandwidth model
-  -> simulated completion cycle
-```
-
-Changing host QEMU execution speed must not change simulated vector time.
-
-## Required acceptance proofs
-
-The vector architecture is considered implemented only when all of the
-following pass:
-
-1. `vlenb` reads exactly 32 on a conforming tile.
-2. Explicit RVV integer and floating-point operations produce correct output.
-3. `-mcpu=golem-analog` emits RVV without an additional `-march`.
-4. At least one ordinary C++ loop is auto-vectorized and verified in QEMU.
-5. Existing scalar, custom analog, mesh, and deployment tests remain valid.
-6. Scalar issue-width changes do not silently multiply vector issue width.
-7. SST reports vector timing according to documented operation parameters
-   rather than treating vector work as unclassified scalar work.
-
-Items 1 through 6 are covered by the RISC-V vector microtest, compiler
-code-generation checks, vectorized ResNet-18 deployment, and scalar/vector
-issue-width comparison. Item 7 remains future work: the current model
-preserves the vector issue limit but does not yet assign distinct latency and
-occupancy to individual vector operations.
-
-## Explicit non-goals
-
-- New custom vector opcodes.
-- Direct RVV-register/analog-array transfers.
-- Wider mesh words or vector-sized network packets.
-- Linux vector context management.
-- A cache or scratchpad timing hierarchy.
-- Uncalibrated claims that RVV operations complete in one cycle.
+[RVV platform tests](../tests/platform/riscv-vector/run-test.sh) exercise
+functional execution and compiler output.
+[CPU timing tests](../tests/platform/cpu-timing/run-test.sh) exercise instruction
+accounting and issue width. Neither establishes a detailed vector pipeline model.

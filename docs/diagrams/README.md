@@ -1,14 +1,14 @@
 # Architecture diagrams
 
-These SVGs are editable source diagrams of the tile and mesh boundaries. They
-are illustrative, not a complete specification of every configurable resource.
+These editable SVGs show implemented boundaries. Optional resources are labeled;
+widths and capacities are configurable unless explicitly stated.
 
-- [Single tile](single-tile-uml.svg): guest, QEMU, bridge, SST, and analog boundaries.
-- [Mesh](mesh-topology.svg): a 3×3 example with a route from tile 0 to tile 8.
+- [Single tile](single-tile-uml.svg): functional QEMU state, control/data bridges,
+  SST timing, banked SPM, DMA, and analog arrays.
+- [Mesh](mesh-topology.svg): a 3×3 example with X-then-Y routing from tile 0 to
+  tile 8, local NIC lanes, and a separate global-RAM DMA fabric.
 
-The diagrams include Merlin-era network details. The current hardware path
-also provides the Mittens wormhole NIC/router and configurable TX/RX lanes;
-do not use these drawings to infer current lane counts or default buffering.
-
-For current implementation ownership, see [src/README.md](../../src/README.md)
-and [the SST element](../../src/sst/README.md).
+The drawings describe structure, not a deployment's resolved parameters.
+See the [timing model](../timing-model.md),
+[vector architecture](../vector-architecture.md), and
+[source ownership](../../src/README.md) for details and implementation links.

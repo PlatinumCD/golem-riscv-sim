@@ -5,10 +5,11 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-readonly SOURCE="${PROJECT_ROOT}/third_party/sculptor-mlir"
+require_sculptor_source
+readonly SOURCE="${GOLEM_SCULPTOR_SOURCE}"
 readonly BUILD="${BUILD_ROOT}/sculptor-mlir"
 readonly INSTALL="${INSTALL_ROOT}/sculptor-mlir"
-readonly LLVM="${INSTALL_ROOT}/llvm"
+readonly LLVM="${GOLEM_LLVM_DIR}"
 readonly HOST_CC="${SCULPTOR_HOST_CC:-/usr/bin/cc}"
 readonly HOST_CXX="${SCULPTOR_HOST_CXX:-/usr/bin/c++}"
 

@@ -12,8 +12,14 @@ readonly RUNTIME_LIBRARY="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
 readonly TAIL_STRESS_WAVES="${MITTENS_TAIL_STRESS_WAVES:-4}"
 readonly TAIL_STRESS_WORDS="${MITTENS_TAIL_STRESS_WORDS:-64}"
 
-GOLEM_RUNTIME_ENABLE_PROFILE=1 \
-    "${PROJECT_ROOT}/build-scripts/build-runtime.sh"
+software_only="${MITTENS_FANOUT_BUILD_SOFTWARE_PAYLOAD_ONLY:-0}"
+runtime_flags=()
+runtime_libraries=()
+if [[ "${software_only}" != 1 ]]; then
+    GOLEM_RUNTIME_ENABLE_PROFILE=1 "${PROJECT_ROOT}/build-scripts/build-runtime.sh"
+    runtime_flags+=("-I${RUNTIME_INCLUDE}")
+    runtime_libraries+=("${RUNTIME_LIBRARY}")
+fi
 mkdir -p -- "${OUTPUT_DIR}"
 
 common_flags=(
@@ -40,7 +46,7 @@ cxx_flags=(
     -Wextra
     -Wpedantic
     -Werror
-    "-I${RUNTIME_INCLUDE}"
+    "${runtime_flags[@]}"
     "-I${PLATFORM_ROOT}"
 )
 
@@ -53,9 +59,8 @@ for source in uart platform-exit freestanding-memory; do
         -o "${OUTPUT_DIR}/${source}.o"
 done
 
-# Model the Retina route-226 receive contract directly: the complete framed
-# payload arrives, but the destination intentionally consumes it through the
-# word interface and never registers an RX-DMA descriptor.
+# Receive complete framed payloads through the software word interface,
+# without registering an RX-DMA descriptor.
 for tile_id in 0 1; do
     object="${OUTPUT_DIR}/software-payload-2-tile${tile_id}.o"
     elf="${OUTPUT_DIR}/software-payload-2-tile${tile_id}.elf"
@@ -67,7 +72,7 @@ for tile_id in 0 1; do
         -DMITTENS_FANOUT_SOFTWARE_PAYLOAD=1 \
         -DMITTENS_FANOUT_SOFTWARE_PAYLOAD_WORDS=1022 \
         -DMITTENS_FANOUT_RECEIVER_DELAY_CYCLES=500000 \
-        -c "${TEST_DIR}/main.cpp" \
+        -c "${PROJECT_ROOT}/src/sst/tests/rx-software-payload.cpp" \
         -o "${object}"
     "${LLVM}/bin/clang++" "${common_flags[@]}" \
         -nostdlib -nostartfiles -nodefaultlibs \
@@ -80,7 +85,7 @@ for tile_id in 0 1; do
         "${OUTPUT_DIR}/platform-exit.o" \
         "${OUTPUT_DIR}/freestanding-memory.o" \
         "${object}" \
-        "${RUNTIME_LIBRARY}" \
+        "${runtime_libraries[@]}" \
         -o "${elf}"
 done
 

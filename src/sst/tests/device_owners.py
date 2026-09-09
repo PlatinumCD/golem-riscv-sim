@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone R9 host tests: no SST/QEMU build, install, or execution."""
+"""Host correctness tests for memory, DMA, barrier, and analog controllers."""
 import argparse
 from pathlib import Path
 import shlex
@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sanitize', action='store_true')
     args = parser.parse_args()
-    output = Path(tempfile.mkdtemp(prefix='golem-r9-host-'))
+    output = Path(tempfile.mkdtemp(prefix='golem-device-owners-'))
     sources = ['memory/memoryAccessController.cc', 'memory/globalDMAClient.cc',
                'synchronization/initializationBarrierClient.cc',
                'memory/scratchpad/scratchpadTimingModel.cc',

@@ -1,5 +1,5 @@
 {
-  "baseline": "R3 accepted defaults, /tmp/golem-src2-configuration-nfopv8us/defaults; frozen for future compatibility",
+  "baseline": "Expected tile defaults for the configuration regression",
   "schema_version": 1,
   "parameters": {
     "tile_id": {

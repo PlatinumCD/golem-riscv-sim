@@ -12,7 +12,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-VALIDATOR = PROJECT_ROOT / "scripts" / "validate-sculptor-phase5-differential.py"
+VALIDATOR = PROJECT_ROOT / "tools" / "compiler" / "validate-sculptor-scalar-region-differential.py"
 STAGES = (
     "01-canonical.mlir",
     "02-converted.mlir",

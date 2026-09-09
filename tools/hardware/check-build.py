@@ -19,13 +19,14 @@ def main():
     elf = build / 'tests/hello/hello.elf'
     qemu = install / 'qemu/bin/qemu-system-riscv64'
     library = install / 'sst-elements/lib/sst-elements-library/libmittens.so'
+    env = dict(os.environ, GOLEM_TEST_RESULTS_ROOT=str(build / 'tests'),
+               MITTENS_TEST_ELF=str(elf),
+               MITTENS_PROVENANCE_PROFILE=str(output / 'profile'),
+               GOLEM_RESOLVED_CONFIG_DIR=str(output / 'resolved'))
     with (output / 'guest-build.log').open('w') as log:
         subprocess.run(['bash', str(ROOT / 'tools/hardware/env.sh'), 'bash',
                         str(ROOT / 'build-scripts/build-platform.sh'), 'hello'],
-                       stdout=log, stderr=subprocess.STDOUT, check=True)
-    env = dict(os.environ, MITTENS_TEST_ELF=str(elf),
-               MITTENS_PROVENANCE_PROFILE=str(output / 'profile'),
-               GOLEM_RESOLVED_CONFIG_DIR=str(output / 'resolved'))
+                       env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
     command = ['bash', str(ROOT / 'tools/hardware/env.sh'), 'strace', '-f', '-s', '4096',
                '-e', 'trace=execve,openat', '-o', str(output / 'process.trace'),
                str(install / 'sst-core/bin/sst'), str(ROOT / 'src/sst/tests/qemu_boot.py')]

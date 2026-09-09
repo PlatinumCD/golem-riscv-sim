@@ -9,7 +9,6 @@ ABI ?= lp64d
 
 CLANGXX ?= $(LLVM)/bin/clang++
 OUTPUT_DIR := $(BUILD_ROOT)/tests/platform/rvv-only-accounting
-RUNTIME_LIBRARY := $(INSTALL_ROOT)/runtime/lib/libgolem-runtime.a
 
 COMMON_FLAGS := \
 	--target=$(TARGET) -mcpu=$(CPU) -mabi=$(ABI) -mcmodel=medany \
@@ -56,12 +55,12 @@ define LINK_ELF
 	$(CLANGXX) $(COMMON_FLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 		-fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
 		-Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld -Wl,-Map,$@.map \
-		$(COMMON_OBJECTS) $< $(RUNTIME_LIBRARY) -o $@
+		$(COMMON_OBJECTS) $< -o $@
 	@echo "built $@"
 endef
 
 $(OUTPUT_DIR)/rvv-k%.elf: $(OUTPUT_DIR)/rvv-k%.o $(COMMON_OBJECTS) \
-	$(RUNTIME_LIBRARY) $(PLATFORM_STARTUP_ROOT)/tile.ld $(TEST_DIR)/Makefile
+	$(PLATFORM_STARTUP_ROOT)/tile.ld $(TEST_DIR)/Makefile
 	$(LINK_ELF)
 
 clean:

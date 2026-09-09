@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-VALIDATOR = PROJECT_ROOT / "scripts" / "validate-sculptor-materialization-audit.py"
+VALIDATOR = PROJECT_ROOT / "tools" / "compiler" / "validate-sculptor-materialization-audit.py"
 
 FIELDS = {
     "schema_version": 1,

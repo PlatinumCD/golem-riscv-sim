@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-VALIDATOR = PROJECT_ROOT / "scripts" / "validate-sculptor-compile-qualification.py"
+VALIDATOR = PROJECT_ROOT / "tools" / "compiler" / "validate-sculptor-compile-qualification.py"
 ACTIVE_TILES = [0, 1]
 LOWERING_STAGES = (
     "01-canonical",

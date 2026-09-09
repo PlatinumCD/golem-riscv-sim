@@ -13,7 +13,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-COMPARATOR = PROJECT_ROOT / "scripts" / "compare-sculptor-materialization-audits.py"
+COMPARATOR = PROJECT_ROOT / "tools" / "analysis" / "compare-sculptor-materialization-audits.py"
 UINT64_MAX = (1 << 64) - 1
 
 

@@ -8,7 +8,7 @@ import tempfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-WRITER = PROJECT_ROOT / "scripts" / "write-sculptor-run-manifest.py"
+WRITER = PROJECT_ROOT / "tools" / "compiler" / "write-sculptor-run-manifest.py"
 
 
 def main() -> None:
@@ -69,7 +69,7 @@ def main() -> None:
                 "--source",
                 f"repository={PROJECT_ROOT}",
                 "--source-scope",
-                "repository=scripts",
+                "repository=tools",
                 "--source-scope",
                 "repository=tests/validation/run-manifest",
                 "--tool",

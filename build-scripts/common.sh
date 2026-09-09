@@ -14,7 +14,18 @@ readonly HARDWARE_ROOT="${PROJECT_ROOT}/src"
 readonly BUILD_ROOT="${GOLEM_BUILD_ROOT}"
 readonly INSTALL_ROOT="${GOLEM_INSTALL_ROOT}"
 readonly PREPARED_SOURCE_ROOT="${GOLEM_SOURCE_ROOT}"
-readonly TEST_RESULTS_ROOT="${PROJECT_ROOT}/tests/results"
+readonly TEST_RESULTS_ROOT="${GOLEM_TEST_RESULTS_ROOT:-${PROJECT_ROOT}/tests/results}"
+
+printf 'Build scope: %s\nBuild: %s\nInstall: %s\nPrepared sources: %s\nLLVM: %s\n' \
+    "${GOLEM_BUILD_SCOPE:-hardware}" "${BUILD_ROOT}" "${INSTALL_ROOT}" \
+    "${PREPARED_SOURCE_ROOT}" "${GOLEM_LLVM_DIR}" >&2
+
+require_sculptor_source() {
+    if [[ -z "${GOLEM_SCULPTOR_SOURCE:-}" || ! -f "${GOLEM_SCULPTOR_SOURCE}/CMakeLists.txt" ]]; then
+        echo 'Optional compiler/runtime requires GOLEM_SCULPTOR_SOURCE pointing to an external Sculptor checkout (not a submodule).' >&2
+        return 1
+    fi
+}
 
 require_owned_comparison_output() {
     [[ "${HARDWARE_TREE}" == src ]] || return 0

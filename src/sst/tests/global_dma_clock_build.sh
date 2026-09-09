@@ -4,13 +4,10 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${TEST_DIR}/../../../tests/support/test-env.sh"
 readonly OUTPUT="${1:?usage: build-guest.sh OUTPUT_DIRECTORY}"
 readonly LLVM="${GOLEM_LLVM_DIR:-${PROJECT_ROOT}/install/llvm}"
-readonly RUNTIME="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
-"${PROJECT_ROOT}/build-scripts/build-runtime.sh"
-require_file "${RUNTIME}"
 mkdir -p "${OUTPUT}"
 
 # Same freestanding platform/ABI support as scratchpad-dma/build-platform.sh.
-# Compile once; both source trees execute these exact ELFs and runtime bytes.
+# The guests use only local device headers and freestanding startup support.
 common=("--target=${GOLEM_TARGET}" "-mcpu=${GOLEM_CPU}" "-mabi=${GOLEM_ABI}"
     -mcmodel=medany -ffreestanding -fno-stack-protector
     -ffunction-sections -fdata-sections -O2 -g)
@@ -30,5 +27,5 @@ for mode in scalar batch; do
         -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
         "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT}/crt0.o" "${OUTPUT}/uart.o" "${OUTPUT}/platform-exit.o" \
-        "${OUTPUT}/${mode}.o" "${RUNTIME}" -o "${OUTPUT}/${mode}.elf"
+        "${OUTPUT}/${mode}.o" -o "${OUTPUT}/${mode}.elf"
 done

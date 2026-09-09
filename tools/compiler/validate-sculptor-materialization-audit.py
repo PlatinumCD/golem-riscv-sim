@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "tests" / "support"))
 from deployment_manifest import load_deployment_manifest  # noqa: E402
 

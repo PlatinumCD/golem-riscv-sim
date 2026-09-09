@@ -11,9 +11,28 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from build import ROOT, hardware_inputs, input_identity, require_owned_output, validate_output_roots
+from hardware_paths import resolve_paths
 
 
 class BuildSelection(unittest.TestCase):
+    def test_shell_test_results_default_and_override(self):
+        env = {key: value for key, value in os.environ.items() if not key.startswith('GOLEM_')}
+        for override in (None, '/tmp/golem-explicit-test-results'):
+            settings = dict(env)
+            if override:
+                settings['GOLEM_TEST_RESULTS_ROOT'] = override
+            result = subprocess.run(['bash', '-c', 'source "$1"; printf "%s" "$TEST_RESULTS_ROOT"',
+                                     'test-results', str(ROOT / 'build-scripts/common.sh')],
+                                    env=settings, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, override or str(ROOT / 'tests/results'))
+
+    def test_shared_scope_has_explicit_dependency_roots(self):
+        paths = resolve_paths({'GOLEM_BUILD_SCOPE': 'shared'})
+        self.assertEqual(paths['GOLEM_BUILD_ROOT'], str(ROOT / 'build'))
+        self.assertEqual(paths['GOLEM_INSTALL_ROOT'], str(ROOT / 'install'))
+        self.assertEqual(paths['GOLEM_SOURCE_ROOT'], str(ROOT / 'build/sources'))
+
     def shell(self, **settings):
         env = {k: v for k, v in os.environ.items() if not k.startswith('GOLEM_')}
         env.update(settings)

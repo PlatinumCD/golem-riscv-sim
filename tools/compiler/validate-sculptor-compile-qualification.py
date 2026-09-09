@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "tests" / "support"))
 from deployment_manifest import load_deployment_manifest  # noqa: E402
 
@@ -891,7 +891,7 @@ def validate_execution_residency(
     output = run / "deployment" / "04-residency-regions.mlir"
     for path in (audit, source, output):
         require_nonempty_file(path, check)
-    validator = PROJECT_ROOT / "scripts" / "validate-sculptor-execution-residency.py"
+    validator = PROJECT_ROOT / "tools" / "compiler" / "validate-sculptor-execution-residency.py"
     require_nonempty_file(validator, check)
     command = [
         sys.executable,

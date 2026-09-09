@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-ANALYZER_PATH = PROJECT_ROOT / "scripts" / "analyze-residency-feasibility.py"
+ANALYZER_PATH = PROJECT_ROOT / "tools" / "analysis" / "analyze-residency-feasibility.py"
 SPEC = importlib.util.spec_from_file_location("residency_feasibility", ANALYZER_PATH)
 ANALYZER = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader

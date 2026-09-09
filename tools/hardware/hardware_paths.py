@@ -31,7 +31,13 @@ def resolve_paths(environment=None):
     build = Path(env.get('GOLEM_BUILD_ROOT') or ROOT / 'build/src').resolve()
     install = Path(env.get('GOLEM_INSTALL_ROOT') or ROOT / 'install/src').resolve()
     prepared = Path(env.get('GOLEM_SOURCE_ROOT') or build / 'sources').resolve()
-    validate_output_roots(build, install, prepared)
+    scope = env.get('GOLEM_BUILD_SCOPE', 'hardware')
+    if scope == 'shared':
+        build, install, prepared = ROOT / 'build', ROOT / 'install', ROOT / 'build/sources'
+    elif scope == 'hardware':
+        validate_output_roots(build, install, prepared)
+    else:
+        raise ValueError(f'unsupported GOLEM_BUILD_SCOPE: {scope}')
     return {'GOLEM_HARDWARE_TREE': 'src', 'GOLEM_BUILD_ROOT': str(build),
             'GOLEM_INSTALL_ROOT': str(install), 'GOLEM_SOURCE_ROOT': str(prepared),
             'GOLEM_LLVM_DIR': str(Path(env.get('GOLEM_LLVM_DIR') or ROOT / 'install/llvm').resolve())}

@@ -9,20 +9,29 @@ required_commands=(
     autoconf
     automake
     autoreconf
+    bison
     cmake
+    curl
     find
+    flex
+    gawk
     g++
     gcc
     git
     install
     libtoolize
     make
+    makeinfo
     mpicc
     mpicxx
     ninja
     pkg-config
+    patch
+    perl
     python3
     /usr/bin/python3
+    tar
+    xz
 )
 
 missing=0

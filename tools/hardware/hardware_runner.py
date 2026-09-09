@@ -98,14 +98,21 @@ def run_cases(cases, hardware, output, timeout, *, historical_baseline=False):
                  if not key.startswith(('MITTENS_', 'GOLEM_')) and key not in ('SST_LIB_PATH', 'QEMU_SYSTEM_RISCV64')}
     install = output / 'install'
     env = dict(inherited, GOLEM_HARDWARE_TREE='src', GOLEM_BUILD_ROOT=str(output / 'setup'),
+               GOLEM_TEST_RESULTS_ROOT=str(output / 'setup/tests'),
                GOLEM_INSTALL_ROOT=str(install), GOLEM_LLVM_DIR=str(ROOT / 'install/llvm'),
                GOLEM_SOURCE_ROOT=str(output / 'sources'), PYTHONDONTWRITEBYTECODE='1',
                SST_LIB_PATH=str(install / 'sst-elements/lib/sst-elements-library'),
                MITTENS_TEST_QEMU=str(install / 'qemu/bin/qemu-system-riscv64'),
                QEMU_SYSTEM_RISCV64=str(install / 'qemu/bin/qemu-system-riscv64'))
+    if os.environ.get('GOLEM_SCULPTOR_SOURCE'):
+        env['GOLEM_SCULPTOR_SOURCE'] = os.environ['GOLEM_SCULPTOR_SOURCE']
     report['environment'] = {key: value for key, value in env.items() if key.startswith(('GOLEM_', 'SST_', 'MITTENS_', 'QEMU_'))}
     report['discarded_fixture_keys'] = sorted(key for key in os.environ if key.startswith('MITTENS_'))
     try:
+        if any(case.requires_runtime for case in cases):
+            source = env.get('GOLEM_SCULPTOR_SOURCE')
+            if not source or not (Path(source) / 'runtime/include/golem/runtime/runtime.h').is_file():
+                raise RuntimeError('Optional runtime selection requires GOLEM_SCULPTOR_SOURCE with runtime/include/golem/runtime/runtime.h')
         report['binary_sha256'] = {name: digest(hardware / name) for name in BINARY_NAMES}
         for dependency in ('sst-core', 'llvm', 'cross-sim'):
             link_dependency(ROOT / 'install' / dependency, install / dependency)
@@ -125,8 +132,10 @@ def run_cases(cases, hardware, output, timeout, *, historical_baseline=False):
 
     report['provenance'] = execute(['python3', '-B', str(ROOT / 'tools/hardware/check-build.py')],
                                    env, output / 'provenance.log', timeout)
-    report['runtime_build'] = execute(['bash', str(ROOT / 'build-scripts/build-runtime.sh')],
+    report['runtime_build'] = (execute(['bash', str(ROOT / 'build-scripts/build-runtime.sh')],
                                       env, output / 'runtime-build.log', timeout)
+                               if any(case.requires_runtime for case in cases) else
+                               {'status': 'NOT_APPLICABLE', 'reason': 'selected cases do not use the external runtime'})
     save(output / 'results.json', report)
     identity = None
     if report['provenance']['status'] == 'PASS':
@@ -148,7 +157,8 @@ def run_cases(cases, hardware, output, timeout, *, historical_baseline=False):
         build.mkdir()
         # Profile owners already emit configuration beside each profile. A single
         # case-wide override would overwrite tile-0.json across internal sweeps.
-        case_env = dict(env, GOLEM_BUILD_ROOT=str(build), GOLEM_TEST_CASE_NAME=case.name)
+        case_env = dict(env, GOLEM_BUILD_ROOT=str(build), GOLEM_TEST_RESULTS_ROOT=str(build / 'tests'),
+                        GOLEM_TEST_CASE_NAME=case.name)
         entry = execute(case.command(), case_env, trial / 'execution.log', timeout)
         entry['case'] = case.name
         entry['execution_status'] = entry['status']
@@ -167,7 +177,8 @@ def run_cases(cases, hardware, output, timeout, *, historical_baseline=False):
     report['dependencies_unchanged'] = all(digest(Path(path)) == expected for path, expected in report['dependency_sha256'].items())
     report['git_index_unchanged'] = digest(ROOT / '.git/index') == report['git_index_sha256']
     report['status'] = ('PASS' if all(entry['status'] == 'PASS' for entry in report['cases'])
-                        and all(report[key]['status'] == 'PASS' for key in ('provenance', 'runtime_build'))
+                        and report['provenance']['status'] == 'PASS'
+                        and report['runtime_build']['status'] in ('PASS', 'NOT_APPLICABLE')
                         and report['binaries_unchanged'] and report['dependencies_unchanged'] else 'FAIL')
     save(output / 'results.json', report)
     print(f'{report["status"]}: {len(cases)} cases; {output / "results.json"}', flush=True)
@@ -177,7 +188,8 @@ def run_cases(cases, hardware, output, timeout, *, historical_baseline=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
-    selection.add_argument('--suite', choices=('hardware', 'compiler', 'models', 'all'), default='hardware')
+    selection.add_argument('--suite', choices=('hardware', 'runtime', 'compiler', 'models', 'all'), default='hardware',
+                           help='hardware is independent of Sculptor; runtime and all include optional runtime integration')
     selection.add_argument('--group', choices=GROUPS)
     parser.add_argument('--case', action='append')
     parser.add_argument('--list', action='store_true')

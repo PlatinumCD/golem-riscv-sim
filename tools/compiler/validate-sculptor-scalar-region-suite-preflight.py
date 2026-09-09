@@ -300,7 +300,7 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(

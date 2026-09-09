@@ -26,7 +26,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_validator(project_root: Path) -> Any:
-    path = project_root / "scripts" / "validate-sculptor-execution-residency.py"
+    path = project_root / "tools" / "compiler" / "validate-sculptor-execution-residency.py"
     spec = importlib.util.spec_from_file_location("execution_residency_validator", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load validator: {path}")

@@ -25,6 +25,17 @@ require_file "${SYNC_BRIDGE_HEADER}"
 prepare_worktree "${SUBMODULE}" "${SOURCE}" "${SST_ELEMENTS_COMMIT}" \
     "SST Elements"
 
+if [[ "${GOLEM_BUILD_SCOPE:-hardware}" == shared ]]; then
+    while IFS= read -r -d '' directory; do
+        case "$(basename -- "${directory}")" in
+            memHierarchy|merlin) rm -f -- "${directory}/.ignore" ;;
+            *) touch "${directory}/.ignore" ;;
+        esac
+    done < <(find "${SOURCE}/src/sst/elements" -mindepth 1 -maxdepth 1 -type d -print0)
+    echo "prepared shared SST Elements (Merlin and memHierarchy): ${SOURCE}"
+    exit 0
+fi
+
 while IFS= read -r -d '' file; do
     relative="${file#${ELEMENT}/}"
     install -D -m 0644 "${file}" "${DESTINATION}/${relative}"

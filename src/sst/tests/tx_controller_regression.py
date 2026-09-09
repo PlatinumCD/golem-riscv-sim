@@ -17,7 +17,7 @@ def main():
     output = build / 'tx-controller'
     require_owned_output(output, build)
     output.mkdir(parents=True, exist_ok=False)
-    kernel = ROOT / 'studies/banks-channels/tx-fanout-opportunity'
+    kernel = ROOT / 'src/sst/tests/tx-controller'
     # Each entry is (pattern, bank layout, FIFO bytes, lanes, active tiles).
     # Layout 2 pads independent buffers; keep the same 32 KiB SPM in every case.
     fixtures = [

@@ -17,8 +17,7 @@ for executable in "${CLANG}" "${CLANGXX}" "${READELF}"; do
     require_executable "${executable}"
 done
 
-"${SCRIPT_DIR}/build-runtime.sh"
-require_file "${RUNTIME_LIBRARY}"
+runtime_ready=0
 
 common_flags=(
     "--target=${GOLEM_TARGET}"
@@ -45,7 +44,6 @@ cxx_flags=(
     -Wall
     -Wextra
     -Wpedantic
-    "-I${RUNTIME_INCLUDE}"
     "-I${PLATFORM_ROOT}"
 )
 
@@ -58,6 +56,19 @@ build_tile() {
     local application_object="${output_dir}/${image_name}.o"
     local elf="${output_dir}/${image_name}.elf"
     local entry
+    local runtime_flags=() runtime_libraries=()
+    case "${application_source}" in
+        */tests/runtime/library/*|*/tests/analog/distributed-matvec/*)
+            if ((runtime_ready == 0)); then
+                require_sculptor_source
+                "${SCRIPT_DIR}/build-runtime.sh"
+                require_file "${RUNTIME_LIBRARY}"
+                runtime_ready=1
+            fi
+            runtime_flags+=("-I${RUNTIME_INCLUDE}")
+            runtime_libraries+=("${RUNTIME_LIBRARY}")
+            ;;
+    esac
 
     mkdir -p -- "${output_dir}"
 
@@ -71,6 +82,7 @@ build_tile() {
         -c "${PLATFORM_STARTUP_ROOT}/platform-exit.cpp" \
         -o "${output_dir}/platform-exit.o"
     "${CLANGXX}" "${cxx_flags[@]}" \
+        "${runtime_flags[@]}" \
         "${application_flags[@]}" \
         -c "${application_source}" \
         -o "${application_object}"
@@ -88,7 +100,7 @@ build_tile() {
         "${output_dir}/uart.o" \
         "${output_dir}/platform-exit.o" \
         "${application_object}" \
-        "${RUNTIME_LIBRARY}" \
+        "${runtime_libraries[@]}" \
         -o "${elf}"
 
     entry="$(${READELF} --file-header "${elf}" | \

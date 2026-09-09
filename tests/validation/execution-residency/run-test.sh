@@ -5,7 +5,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
 
-readonly VALIDATOR="${PROJECT_ROOT}/scripts/validate-sculptor-execution-residency.py"
+readonly VALIDATOR="${PROJECT_ROOT}/tools/compiler/validate-sculptor-execution-residency.py"
 readonly GENERATOR="${TEST_DIR}/make-fixture.py"
 readonly OUTPUT="${TEST_RESULTS_ROOT}/validation/execution-residency"
 

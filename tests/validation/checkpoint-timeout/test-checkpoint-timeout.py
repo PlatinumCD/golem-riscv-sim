@@ -8,7 +8,7 @@ import tempfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SUPERVISOR = PROJECT_ROOT / "scripts" / "run-with-checkpoint-timeout.py"
+SUPERVISOR = PROJECT_ROOT / "tools" / "analysis" / "run-with-checkpoint-timeout.py"
 CHECKPOINT_PAYLOAD = {
     "schema": "sculptor.compile-ready",
     "version": 1,

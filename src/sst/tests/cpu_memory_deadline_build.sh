@@ -4,7 +4,6 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${TEST_DIR}/../../../tests/support/test-env.sh"
 readonly OUTPUT="${1:?output directory}"
 readonly LLVM="${GOLEM_LLVM_DIR:-${PROJECT_ROOT}/install/llvm}"
-"${PROJECT_ROOT}/build-scripts/build-runtime.sh"
 mkdir -p "${OUTPUT}"
 common=("--target=${GOLEM_TARGET}" "-mcpu=${GOLEM_CPU}" "-mabi=${GOLEM_ABI}"
     -mcmodel=medany -ffreestanding -fno-stack-protector
@@ -24,5 +23,5 @@ for mode in delivery spm; do
         -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
         "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT}/crt0.o" "${OUTPUT}/uart.o" "${OUTPUT}/exit.o" "${OUTPUT}/${mode}.o" \
-        "${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a" -o "${OUTPUT}/${mode}.elf"
+        -o "${OUTPUT}/${mode}.elf"
 done

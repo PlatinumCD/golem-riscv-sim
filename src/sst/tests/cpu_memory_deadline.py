@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R5b cacheless correctness oracle; reference failures remain failures."""
+"""Check CPU delivery and scratchpad service deadlines across clock rates."""
 import argparse
 import os
 from pathlib import Path
@@ -46,7 +46,7 @@ def analyze(trial, mode, factor, stores):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference-install", type=Path, help="Optional explicit historical hardware installation")
+    parser.add_argument("--reference-install", type=Path, help="Optional hardware installation to compare")
     parser.add_argument("--reference-only", action="store_true")
     parser.add_argument("--cpu", action="append", choices=["500MHz", "1GHz", "2GHz"])
     args = parser.parse_args()

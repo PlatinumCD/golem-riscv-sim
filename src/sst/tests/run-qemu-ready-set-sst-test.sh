@@ -2,9 +2,9 @@
 set -euo pipefail
 
 readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly SRC2_TEST_PROJECT_ROOT="$(cd -- "${TEST_DIR}/../../.." && pwd)"
+readonly TEST_PROJECT_ROOT="$(cd -- "${TEST_DIR}/../../.." && pwd)"
 export GOLEM_HARDWARE_TREE=src
-source "${SRC2_TEST_PROJECT_ROOT}/build-scripts/common.sh"
+source "${TEST_PROJECT_ROOT}/build-scripts/common.sh"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly ELEMENT_LIBRARY="${MITTENS_TEST_ELEMENT_LIBRARY:-${INSTALL_ROOT}/sst-elements/lib/sst-elements-library}"

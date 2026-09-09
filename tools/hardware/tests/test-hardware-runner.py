@@ -11,13 +11,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hardware_runner import execute, measurements, counters, run_cases
-from hardware_suite import Case, GROUPS, HARDWARE, ROOT, selected_cases
+from hardware_suite import Case, GROUPS, HARDWARE, ROOT, selected_cases, runtime_cases
 
 
 class HardwareRunnerTests(unittest.TestCase):
     def test_hardware_default_is_an_allowlist(self):
         cases = selected_cases()
-        self.assertEqual(len(cases), 33)
+        self.assertEqual(len(cases), 28)
+        self.assertFalse(any(case.requires_runtime for case in cases))
+        self.assertFalse(set(case.name for case in cases) & set(case.name for case in runtime_cases()))
         self.assertTrue(all(case.script.is_file() for case in cases))
         for case in cases:
             self.assertNotIn('/compiler/', str(case.script))
@@ -59,7 +61,22 @@ class HardwareRunnerTests(unittest.TestCase):
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), [case.name for case in selected_cases(group=group)])
-            self.assertTrue(all(line.startswith(group + '/') for line in result.stdout.splitlines()))
+            if group != 'runtime':
+                self.assertTrue(all(line.startswith(group + '/') for line in result.stdout.splitlines()))
+
+    def test_runtime_integrations_are_explicit_and_retained(self):
+        expected = {'runtime/rx-controller', 'runtime/library', 'runtime/deployment-pair', 'runtime/epoch-barrier',
+                    'network/transmit-fanout', 'analog/distributed-matvec'}
+        self.assertEqual({case.name for case in selected_cases(group='runtime')}, expected)
+        self.assertEqual({case.name for case in selected_cases('runtime')}, expected)
+        self.assertTrue(expected <= {case.name for case in selected_cases('all')})
+
+    def test_runtime_selection_requires_external_source(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'GOLEM_SCULPTOR_SOURCE': ''}):
+            root = Path(temporary)
+            result = run_cases(runtime_cases(), root / 'hardware', root / 'out', 1)
+            self.assertEqual(result['status'], 'FAIL')
+            self.assertIn('GOLEM_SCULPTOR_SOURCE', result['preflight']['error'])
 
     def test_group_cannot_broaden_implicitly_to_another_suite(self):
         for arguments in (['unknown', '--list'], ['network', '--suite', 'all', '--list']):
@@ -102,14 +119,20 @@ class HardwareRunnerTests(unittest.TestCase):
                  patch('hardware_runner.digest', return_value='fixture-hash'), \
                  patch('hardware_runner.link_dependency'), \
                  patch('hardware_runner.execute', side_effect=[
-                     {'status': 'PASS'}, {'status': 'PASS'},
+                     {'status': 'PASS'},
                      {'status': 'FAIL', 'wall_seconds': 0}, {'status': 'PASS', 'wall_seconds': 0}]) as execute_case:
                 result = run_cases([Case('first', root / 'first.sh'), Case('second', root / 'second.sh')],
                                    root / 'hardware', root / 'out', 1, historical_baseline=True)
-                for call, name in zip(execute_case.call_args_list[2:], ('first', 'second')):
+                self.assertEqual(result['runtime_build']['status'], 'NOT_APPLICABLE')
+                self.assertEqual(execute_case.call_args_list[0].args[1]['GOLEM_TEST_RESULTS_ROOT'],
+                                 str(root / 'out/setup/tests'))
+                self.assertFalse(any('build-runtime.sh' in str(call) for call in execute_case.call_args_list))
+                for call, name in zip(execute_case.call_args_list[1:], ('first', 'second')):
                     self.assertEqual(call.args[1]['GOLEM_TEST_CASE_NAME'], name)
                     self.assertEqual(call.args[1]['GOLEM_BUILD_ROOT'],
                                      str(root / 'out/cases' / name / 'artifacts'))
+                    self.assertEqual(call.args[1]['GOLEM_TEST_RESULTS_ROOT'],
+                                     str(root / 'out/cases' / name / 'artifacts/tests'))
             self.assertEqual([case['status'] for case in result['cases']], ['FAIL', 'PASS'])
             self.assertEqual(result['status'], 'FAIL')
 

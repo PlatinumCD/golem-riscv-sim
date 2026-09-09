@@ -10,8 +10,10 @@
 __pycache__/
 *.py[cod]
 
-# Local remnants from the retired hosted Linux/MUSL prototype.
+# Local external sources and execution environments.
 /emulation/
 /third_party/linux/
-/third_party/riscv-gnu-toolchain/
 /third_party/sculptor-mlir/
+
+# Acquired by build-scripts/build-riscv-gnu-toolchain.sh at its pinned revision.
+/third_party/riscv-gnu-toolchain/

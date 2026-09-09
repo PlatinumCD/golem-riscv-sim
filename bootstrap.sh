@@ -9,8 +9,6 @@ source "${ROOT}/build-scripts/common.sh"
 
 required_submodules=(
     third_party/llvm-project
-    third_party/torch-mlir
-    third_party/sculptor-mlir
     third_party/cross-sim
     third_party/qemu
     third_party/sst-core
@@ -25,20 +23,22 @@ actions:
   hardware       rebuild QEMU/Mittens and run hardware tests using existing dependencies (default)
   build-hardware rebuild QEMU/Mittens using existing dependencies
   test-hardware  run the hardware correctness suite only
-  all            explicitly initialize/build the full environment and run all suites
-  build          initialize and build the complete environment
+  all            initialize/build hardware dependencies and hardware, then run hardware tests
+  build          initialize/build hardware dependencies and hardware
+  dependencies   initialize/build shared dependencies in build/ and install/
+  compiler       build optional compiler (requires GOLEM_SCULPTOR_SOURCE)
   check          verify host build dependencies
   compiler-python install the pinned local PyTorch compiler environment
   riscv-gnu-toolchain initialize and install the bare-metal RISC-V GNU toolchain
   llvm           initialize and build LLVM/Clang/LLD/MLIR
   torch-mlir     initialize and build LLVM/MLIR and Torch-MLIR
-  sculptor-mlir  initialize and build LLVM/MLIR and Sculptor-MLIR
+  sculptor-mlir  alias for compiler; requires GOLEM_SCULPTOR_SOURCE
   crosssim       initialize and install the minimal CrossSim Python stack
   qemu           initialize and build QEMU with the Mittens NIC and analog ISA
   sst-core       initialize and build SST Core
   sst            initialize and build SST Core, memHierarchy, Merlin, and Mittens
-  runtime        build and install the bare-metal runtime archive
-  platform       build all bare-metal test images
+  runtime        build optional Sculptor runtime; requires GOLEM_SCULPTOR_SOURCE
+  platform       build optional compiler test images; requires GOLEM_SCULPTOR_SOURCE
   test           run the hardware correctness suite (same as test-hardware)
   test-runtime   run host, QEMU, and QEMU/SST runtime proofs
   test-elements  run the complete Mittens element test directory
@@ -51,18 +51,17 @@ initialize_submodules() {
 }
 
 build_environment() {
-    "${ROOT}/build-scripts/build-llvm.sh"
-    "${ROOT}/build-scripts/build-torch-mlir.sh"
-    "${ROOT}/build-scripts/build-sculptor-mlir.sh"
-    "${ROOT}/build-scripts/build-qemu.sh"
-    "${ROOT}/build-scripts/build-sst-core.sh"
-    "${ROOT}/build-scripts/build-cross-sim.sh"
-    "${ROOT}/build-scripts/build-sst-elements.sh"
-    "${ROOT}/build-scripts/build-platform.sh" all
+    for dependency in riscv-gnu-toolchain llvm sst-core cross-sim sst-elements; do
+        shared_build "${dependency}"
+    done
+}
+
+shared_build() {
+    GOLEM_BUILD_SCOPE=shared "${ROOT}/build-scripts/build-$1.sh"
 }
 
 run_system_tests() {
-    bash "${ROOT}/tests/run-all.sh" --suite all
+    bash "${ROOT}/tests/run-all.sh" --suite hardware
 }
 
 case "${ACTION}" in
@@ -76,12 +75,16 @@ case "${ACTION}" in
         "${ROOT}/build-scripts/check-dependencies.sh"
         initialize_submodules "${required_submodules[@]}"
         build_environment
+        python3 "${ROOT}/tools/hardware/build.py" all -j "${BUILD_JOBS}"
         run_system_tests
         ;;
-    build)
+    build|dependencies)
         "${ROOT}/build-scripts/check-dependencies.sh"
         initialize_submodules "${required_submodules[@]}"
         build_environment
+        if [[ "${ACTION}" == build ]]; then
+            python3 "${ROOT}/tools/hardware/build.py" all -j "${BUILD_JOBS}"
+        fi
         ;;
     check)
         "${ROOT}/build-scripts/check-dependencies.sh"
@@ -90,26 +93,30 @@ case "${ACTION}" in
         "${ROOT}/build-scripts/build-compiler-python.sh"
         ;;
     riscv-gnu-toolchain|gnu-riscv-toolchain)
-        "${ROOT}/build-scripts/build-riscv-gnu-toolchain.sh"
+        shared_build riscv-gnu-toolchain
         ;;
     llvm)
         initialize_submodules third_party/llvm-project
-        "${ROOT}/build-scripts/build-llvm.sh"
+        shared_build riscv-gnu-toolchain
+        shared_build llvm
         ;;
     torch-mlir)
         initialize_submodules third_party/llvm-project third_party/torch-mlir
-        "${ROOT}/build-scripts/build-llvm.sh"
-        "${ROOT}/build-scripts/build-torch-mlir.sh"
+        shared_build riscv-gnu-toolchain
+        shared_build llvm
+        shared_build torch-mlir
         ;;
-    sculptor-mlir)
-        initialize_submodules third_party/llvm-project \
-            third_party/sculptor-mlir
-        "${ROOT}/build-scripts/build-llvm.sh"
-        "${ROOT}/build-scripts/build-sculptor-mlir.sh"
+    sculptor-mlir|compiler)
+        require_sculptor_source
+        initialize_submodules third_party/llvm-project third_party/torch-mlir
+        shared_build riscv-gnu-toolchain
+        shared_build llvm
+        shared_build torch-mlir
+        shared_build sculptor-mlir
         ;;
     crosssim)
         initialize_submodules third_party/cross-sim
-        "${ROOT}/build-scripts/build-cross-sim.sh"
+        shared_build cross-sim
         ;;
     qemu)
         initialize_submodules third_party/qemu
@@ -117,13 +124,14 @@ case "${ACTION}" in
         ;;
     sst-core)
         initialize_submodules third_party/sst-core
-        "${ROOT}/build-scripts/build-sst-core.sh"
+        shared_build sst-core
         ;;
     sst)
         initialize_submodules third_party/sst-core third_party/sst-elements \
             third_party/cross-sim
-        "${ROOT}/build-scripts/build-sst-core.sh"
-        "${ROOT}/build-scripts/build-cross-sim.sh"
+        shared_build sst-core
+        shared_build cross-sim
+        shared_build sst-elements
         "${ROOT}/build-scripts/build-sst-elements.sh"
         ;;
     runtime)

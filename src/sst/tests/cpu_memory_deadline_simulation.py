@@ -1,4 +1,4 @@
-"""Cacheless R5b fixture: ordinary StandardMem plus private SPM, no NIC."""
+"""CPU deadline fixture: uncached StandardMem and private scratchpad."""
 import json
 import os
 from pathlib import Path

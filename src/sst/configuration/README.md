@@ -13,6 +13,10 @@ This directory reads and validates settings before resource execution.
 defaults, and documentation. Controller state and scheduling queues do not
 belong in configuration objects.
 
+The [parameter reference](../../../docs/parameters.md) lists the same settings
+as readable tables. After editing defaults or descriptions, regenerate it with
+`python3 tools/hardware/parameter-reference.py`; `--check` verifies it is current.
+
 Set `GOLEM_RESOLVED_CONFIG_DIR` to write per-instance JSON snapshots.
 [env.sh](../../../tools/hardware/env.sh) sets a default when used to launch a
 command. Snapshot filenames distinguish processes and instances.

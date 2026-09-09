@@ -1,9 +1,9 @@
-# Measurement contracts and legacy limitations
+# Measurement semantics
 
-This is the source-audited contract for the refactoring queue's R10 task.
-It does not claim that additional counters or corrected measurement semantics
-have already been implemented. Preserve legacy CSV compatibility; any improved
-measurements need an explicit schema/version and availability metadata.
+This document defines counter units, availability, and aggregation for the
+current simulator. JSON records carry availability metadata; CSV output cannot
+distinguish an unavailable value from zero. Use JSON for analysis that needs
+to make that distinction.
 
 ## Three quantities that must not be confused
 
@@ -132,7 +132,7 @@ and RX-SPM service; adding them double counts. Local controller idle predicates
 do not prove global drain. Pending RX counts mix packets/bursts/frames, and
 global-DMA pending tokens include completed-but-unretired and teardown entries.
 
-R10 exposes these scopes and unavailable values explicitly. Whole-run busy
+The JSON report exposes these scopes and unavailable values explicitly. Whole-run busy
 time, true bank-delay cycles, event-complete TX observation and corrected NIC
 stall semantics require additional measurement, not relabeling existing values.
 

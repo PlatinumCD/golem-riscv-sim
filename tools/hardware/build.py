@@ -70,18 +70,24 @@ def main():
         require_owned_output(build / 'mittens-objects', build)
     except ValueError as error:
         parser.error(str(error))
+    shared = {'sst-core': ROOT / 'install/sst-core',
+              'llvm': Path(paths['GOLEM_LLVM_DIR']), 'cross-sim': ROOT / 'install/cross-sim'}
     dependencies = [ROOT / 'install' / name for name in (
         'sst-core/bin/sst', 'sst-core/bin/sst-config', 'sst-core/etc/sst/sstsimulator.conf',
-        'llvm/bin/clang++', 'cross-sim/python/simulator',
+        'cross-sim/python/simulator',
         'sst-elements/lib/sst-elements-library/libmerlin.so',
         'sst-elements/lib/sst-elements-library/libmemHierarchy.so')]
+    dependencies.append(shared['llvm'] / 'bin/clang++')
     missing = [str(path) for path in dependencies if not path.exists()]
+    print(f'Hardware source: {SOURCE}\nHardware build: {build}\nHardware install: {install}'
+          f'\nPrepared sources: {prepared}\nShared dependencies: {ROOT / "install"}', flush=True)
+    print(f'Selected LLVM: {shared["llvm"]}', flush=True)
     if missing:
-        parser.error('Missing shared dependencies (no fallback or dependency rebuild): ' + ', '.join(missing))
+        parser.error('Missing shared dependencies; run ./bootstrap.sh dependencies first: ' + ', '.join(missing))
     build.mkdir(parents=True, exist_ok=True)
     libdir = install / 'sst-elements/lib/sst-elements-library'
-    for name in ('sst-core', 'llvm', 'cross-sim'):
-        link_dependency(ROOT / 'install' / name, install / name)
+    for name, source in shared.items():
+        link_dependency(source, install / name)
     for name in ('libmerlin.so', 'libmemHierarchy.so'):
         link_dependency(ROOT / 'install/sst-elements/lib/sst-elements-library' / name,
                         libdir / name)

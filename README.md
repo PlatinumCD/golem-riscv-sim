@@ -18,21 +18,35 @@ instruction-accounting model, not a detailed processor pipeline.
 
 Hardware settings belong to the simulation configuration. Study-specific
 capacities, clock rates, and bandwidths are not fixed properties of the machine.
-See [parameter definitions](src/sst/configuration/tileParameters.h).
+See the [parameter reference](docs/parameters.md).
 
-## Build and test
+## First run
 
-With the toolchain and shared dependencies already installed:
+Use an AArch64 Linux host with the build tools checked by `bootstrap.sh check`.
+From a fresh checkout:
+
+```bash
+git clone https://github.com/PlatinumCD/golem-riscv-sim.git
+cd golem-riscv-sim
+bash bootstrap.sh check
+JOBS=8 bash bootstrap.sh build
+bash tests/run-all.sh --case platform/hello
+```
+
+`build` acquires and builds the shared dependencies, then builds the current
+hardware. The hello test boots one bare-metal tile and prints
+`Golem: single tile booted`. See [tests/](tests/README.md) for the coverage map.
+
+After changing simulator code:
 
 ```bash
 JOBS=8 bash bootstrap.sh build-hardware
 bash tests/run-all.sh --suite hardware
 ```
 
-This rebuilds the project-owned hardware integration. It does not install the
-compiler toolchain, SST Core, or other shared dependencies. For a new machine,
-run `bash bootstrap.sh check` to check host tools, and use
-`bash bootstrap.sh --help` for dependency build actions.
+`build-hardware` reuses installed dependencies. The build prints its source,
+build, and installation paths; tests check that the loaded simulator matches
+the current source. `bash bootstrap.sh --help` lists individual build actions.
 
 ```bash
 bash tests/run-all.sh --list
@@ -41,24 +55,25 @@ bash tests/run-group.sh network
 python3 -B tools/hardware/verify.py
 ```
 
-The hardware suite currently includes a communication-envelope wrapper that
-requires the local-only `studies/` tree. A checkout without that tree cannot
-run the complete suite as-is; see [the wrapper's README](tests/network/communication-envelope/README.md).
-
 ## Source layout
 
 | Directory | Contents |
 |---|---|
 | [src/](src/README.md) | QEMU devices, SST models, bridge protocols, and guest support |
 | [tools/hardware/](tools/hardware/README.md) | Build checks, test runner, and baseline comparisons |
-| tests/ | Integration and regression tests |
+| [tools/analysis/](tools/analysis/README.md) | Performance, progress, and result analysis |
+| [tools/compiler/](tools/compiler/README.md) | Optional compiler artifact checks |
+| [tests/](tests/README.md) | Integration and regression tests |
 | build-scripts/ | Dependency preparation and build scripts |
 | docs/ | Architecture and interface documentation |
 | third_party/ | Upstream submodules |
 
-Builds and installations go under `build/` and `install/`; hardware defaults
-are `build/src/` and `install/src/`. Test output normally goes under
-`tests/results/`. These generated directories are ignored.
+Shared dependencies use `build/<dependency>/` and `install/<dependency>/`.
+The current hardware uses `build/src/` and `install/src/`.
+Test output goes under `tests/results/`; all these outputs are ignored.
+
+For optional compiler integration, provide the Sculptor source directory with
+`GOLEM_SCULPTOR_SOURCE=/absolute/path` when running `bash bootstrap.sh compiler`.
 
 ## Documentation
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TEST_DIR.parents[2]
-CLASSIFIER = PROJECT_ROOT / "scripts" / "classify-sculptor-sst-progress.py"
+CLASSIFIER = PROJECT_ROOT / "tools" / "analysis" / "classify-sculptor-sst-progress.py"
 INVALID_U32 = (1 << 32) - 1
 
 FIELDS = [

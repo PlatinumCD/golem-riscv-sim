@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(
     "validate_sst_partition",
-    ROOT / "scripts" / "validate-sculptor-sst-partition.py",
+    ROOT / "tools" / "analysis" / "validate-sculptor-sst-partition.py",
 )
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

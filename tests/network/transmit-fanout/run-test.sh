@@ -11,7 +11,7 @@ readonly MODE="${MITTENS_FANOUT_MODE:-polling}"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly ANALYZER="${PROJECT_ROOT}/scripts/analyze-performance-profile.py"
+readonly ANALYZER="${PROJECT_ROOT}/tools/analysis/analyze-performance-profile.py"
 readonly FANOUTS="${MITTENS_FANOUTS:-1 2 4 8 16 24}"
 readonly QUANTA="${MITTENS_FANOUT_QUANTA:-1000000 100000 10000}"
 

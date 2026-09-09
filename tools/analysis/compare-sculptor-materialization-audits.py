@@ -538,7 +538,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                 "ceil(sum(per-request service_cycles) / channels)"
             ),
             "parallel_lower_bound_source": (
-                "scripts/analyze-residency-feasibility.py:947"
+                "tools/analysis/analyze-residency-feasibility.py:947"
             ),
         },
         "baseline": baseline,

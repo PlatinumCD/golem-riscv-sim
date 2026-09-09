@@ -9,9 +9,9 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TEST_DIR.parents[2]
-ANALYZER = PROJECT_ROOT / "scripts" / "analyze-performance-profile.py"
+ANALYZER = PROJECT_ROOT / "tools" / "analysis" / "analyze-performance-profile.py"
 ROUTE_EXTRACTOR = (
-    PROJECT_ROOT / "scripts" / "extract-deployment-routes.py"
+    PROJECT_ROOT / "tools" / "analysis" / "extract-deployment-routes.py"
 )
 
 

@@ -10,6 +10,7 @@ class Case:
     name: str
     script: Path
     measurements_required: bool = False
+    requires_runtime: bool = False
 
     def command(self):
         return (['python3', '-B'] if self.script.suffix == '.py' else ['bash']) + [str(self.script)]
@@ -18,12 +19,22 @@ class Case:
 HARDWARE = {
     'platform': ('hello', 'riscv-vector', 'cpu-timing', 'register-only-accounting', 'rvv-only-accounting', 'rvv-memory-accounting'),
     'memory': ('global-ram', 'global-ram-exact', 'scratchpad-dma', 'global-dma-macro-contention'),
-    'network': ('pair', 'mesh-3x3', 'timing', 'transmit-fanout', 'pipeline', 'communication-envelope'),
-    'runtime': ('library', 'deployment-pair', 'epoch-barrier'),
+    'network': ('pair', 'mesh-3x3', 'timing', 'pipeline', 'communication-envelope'),
     'analog': ('instructions', 'ops', 'timing', 'mesh-2x2', 'route-2x2',
-               'mesh-2x2-dual-array', 'distributed-matvec', 'producer-mvm-recombine-distance'),
+               'mesh-2x2-dual-array', 'producer-mvm-recombine-distance'),
 }
-GROUPS = (*HARDWARE, 'compiler', 'models', 'validation')
+GROUPS = (*HARDWARE, 'runtime', 'compiler', 'models', 'validation')
+
+
+def runtime_cases():
+    """Explicit integration coverage, preserving original case names and scripts."""
+    return [Case('runtime/rx-controller', ROOT / 'src/sst/tests/rx_runtime_regression.sh', True, True)] + [Case(name, ROOT / 'tests' / name / entry, requires_runtime=required)
+            for name, entry, required in (
+                ('runtime/library', 'run-test.sh', True),
+                ('runtime/deployment-pair', 'run-all.sh', True),
+                ('runtime/epoch-barrier', 'run-test.sh', False),
+                ('network/transmit-fanout', 'run-test.sh', True),
+                ('analog/distributed-matvec', 'run-test.sh', True))]
 
 
 def hardware_cases():
@@ -46,11 +57,13 @@ def selected_cases(suite='hardware', names=None, group=None):
         if group not in GROUPS or suite != 'hardware':
             raise ValueError('select one known group or one suite, not both')
         # Hardware groups use the full suite's allowlist. Other discovery is opt-in.
-        cases = [case for case in hardware_cases() if case.name.startswith(group + '/')]
-        groups = () if group in HARDWARE else (group,)
+        cases = runtime_cases() if group == 'runtime' else [case for case in hardware_cases() if case.name.startswith(group + '/')]
+        groups = () if group in (*HARDWARE, 'runtime') else (group,)
     else:
         cases = hardware_cases() if suite in ('hardware', 'all') else []
-        groups = ('compiler', 'models', 'validation') if suite == 'all' else ((suite,) if suite != 'hardware' else ())
+        if suite in ('runtime', 'all'):
+            cases += runtime_cases()
+        groups = ('compiler', 'models', 'validation') if suite == 'all' else ((suite,) if suite not in ('hardware', 'runtime') else ())
     existing = {case.name for case in cases}
     for discovered_group in groups:
         for directory in sorted((ROOT / 'tests' / discovered_group).iterdir()):

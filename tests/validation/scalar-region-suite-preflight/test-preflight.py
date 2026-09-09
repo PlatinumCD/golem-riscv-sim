@@ -13,7 +13,7 @@ import unittest
 
 TEST_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TEST_DIR.parents[2]
-VALIDATOR = PROJECT_ROOT / "scripts" / "validate-sculptor-phase5-suite-preflight.py"
+VALIDATOR = PROJECT_ROOT / "tools" / "compiler" / "validate-sculptor-scalar-region-suite-preflight.py"
 FAKE_TOOL = TEST_DIR / "fake-split-tool.py"
 MODELS = (
     "resnet32",

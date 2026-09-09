@@ -1,675 +1,166 @@
 # Timing model
 
-The platform synchronizes every managed QEMU tile to the SST event schedule.
-SST is the time authority; QEMU is the functional RISC-V instruction executor.
+SST owns simulated time; QEMU executes each tile's RISC-V instructions and
+functional memory/device operations. Timing comes from CPU issue accounting
+and explicit memory, network, DMA, and analog controllers.
 
-## CPU synchronization
+## CPU and bridges
 
-Every tile owns a control bridge on QEMU file descriptor 41. SST grants QEMU
-a bounded instruction quantum, QEMU executes under precise `-icount`, and QEMU
-returns an event containing the total and vector instruction counts completed
-in that grant. SST computes CPU issue cycles as:
-
-```text
-cpu cycles =
-    max(ceil(total retired instructions / cpu_issue_width),
-        retired vector instructions)
-```
-
-`cpu_issue_width` accepts 1, 2, or 4 and defaults to 1. The vector term limits
-the tile to at most one vector issue per cycle even when the scalar front end
-is dual- or quad-issue. QEMU executes RVV semantics, but SST does not yet
-assign vector-length-dependent latency, dependencies, or resource occupancy.
-RVV results and scalar/vector issue throughput are modeled; RVV performance
-is not yet a detailed vector-pipeline model.
-
-The default `cpu_clock` is 1 GHz and the component default
-`sync_instruction_quantum` is 1,000 instructions. SST schedules the next
-control event after the issue cycles calculated from the exact reported
-counts. The quantum adds no synthetic delay, but it is also the temporal
-lookahead bound between independently executing QEMU and SST: QEMU cannot
-observe an SST delivery that becomes ready in the middle of a grant until it
-reaches a device boundary or the grant ends. It is therefore an accuracy and
-host-throughput parameter for code whose control flow depends on asynchronous
-device state, and every model-level result must record it.
+The [CPU ledger](../src/sst/execution/cpuExecutionLedger.h) charges each issue
+region:
 
 ```text
-SST                                      QEMU
----                                      ----
-grant N instructions over fd 41  ----->  execute under precise icount
-                                         stop at quantum or device boundary
-receive reason + total/vector counts <- yield over fd 41
-advance by calculated issue cycles
-process the boundary
-resume or issue the next grant    ----->  continue
+cycles = max(ceil(retired instructions / cpu_issue_width),
+             retired vector instructions)
 ```
 
-QEMU may yield before the end of a quantum for:
+Component defaults are a 1 GHz CPU, issue width 1, and a 1,000-instruction
+grant. Supported widths are 1, 2, and 4. Occupancy carries across ordinary
+quantum ends; architectural device boundaries close the region.
+[Execution control](../src/sst/execution/cpuExecutionController.cc) schedules
+stops and replays batched records using their instruction counts.
 
-- an accepted deployment-burst descriptor or a full legacy transmit ring;
-- a blocking mesh transmit wait;
-- a blocking mesh receive wait;
-- an analog submission;
-- an analog queue/completion wait;
-- a timed RAM data access when `memory_backend=memhierarchy`;
-- normal guest completion through the SiFive test finisher; or
-- another explicitly modeled device boundary.
+Grants provide bounded functional lookahead. Without rollback, asynchronous
+arrivals during a grant can change the software path observed at its next
+boundary. Record quantum and batching settings with results. Control handshakes
+add no synthetic CPU cycle. RVV issue is counted, but arithmetic dependencies,
+operation latency, and VL/SEW/LMUL occupancy are not modeled.
 
-Counts are monotonic within one grant even when QEMU internally rebases its
-icount counters. The fd 41 bridge accumulates those internal segments before
-reporting progress to SST. Two boundaries at the same retired-instruction
-count are scheduled at the same SST time; control handshakes never add a
-synthetic CPU cycle.
+The [launcher](../src/sst/execution/qemuProcess.cc) installs these descriptors.
+Protocol versions come from the linked headers:
 
-A normal finisher write publishes `GUEST_EXIT` before QEMU shuts down. SST
-schedules the terminal event using its exact instruction count and reaps the
-child at that event, so host process-exit observation cannot change the
-simulated completion time.
+| FD | Purpose | Protocol version |
+|---:|---|---:|
+| 41 | Grants, stops, waits, memory records, and completion control | [26](../src/bridge/include/mittens/SyncTileBridge.h) |
+| 42 | NIC packet and DMA payload transport | [7](../src/bridge/include/mittens/NICTileBridge.h) |
+| 43 | Analog commands, operands, and results | [1](../src/bridge/include/mittens/AnalogTileBridge.h) |
+| 44 | Shared sparse global-RAM backing when configured | File backing, not a bridge protocol |
 
-Scalar/vector issue occupancy carries across `QUANTUM_END` yields. Otherwise,
-rounding `ceil(instructions / issue width)` independently at each host quantum
-would turn the nonarchitectural batching size into a timing parameter. A real
-fd-41 device or task boundary closes the current issue interval and starts a
-new one.
+NIC, analog, memory, task, and guest-exit boundaries use fd 41 for timing.
+Data in fd 42 or 43 does not independently grant execution. Blocking waits
+resume when their controller satisfies the boundary.
 
-Instruction-only regions are exactly quantum invariant. Explicit fd-41
-device boundaries are also timestamped exactly. Receive data that becomes
-ready while QEMU is inside a grant is the remaining exception: because the
-current co-simulation has no rollback, a coarse grant can allow QEMU to take
-an empty-receive software path that a finer grant would have avoided.
+## Memory and scratchpad
 
-`tests/platform/cpu-timing` verifies this rule with widths 1/2/4 and quanta
-37/1,000. Its 18 region checks have zero-cycle error, including explicit
-counting of `vsetivli`, and each width has identical timestamps and completion
-time under both quanta.
+[Tile configuration](../src/sst/configuration/tileParameters.h) supports
+`native`, `memhierarchy`, and `streaming` memory backends. Native is the
+component default. MemHierarchy uses the `memoryIF` StandardMem interface for
+ordinary RAM data-access timing; QEMU supplies functional data. Streaming
+deployments use explicit private scratchpad and shared global-RAM DMA.
+Instruction fetch and TLB timing are not detailed models.
 
-## Bridge roles
+The private noncoherent scratchpad is implemented and enabled explicitly with
+`scratchpad_enabled` (component default false). Defaults when enabled are:
 
-The three inherited descriptors have distinct responsibilities:
+| Resource | Default |
+|---|---:|
+| Capacity | 256 KiB |
+| Banks | 8 |
+| Read / write ports per bank | 1 / 1 |
+| CPU access width | 256 bits |
+| Access latency | 1 CPU cycle |
+| Scratchpad DMA bandwidth | 32 bytes per CPU cycle |
+| Scratchpad DMA setup | 8 CPU cycles |
 
-| Descriptor | Role |
-| ---: | --- |
-| 41 | Execution grants, yields, stop reasons, and resume handshakes |
-| 42 | Mesh NIC packet data |
-| 43 | Analog command, operand, and result data |
+[Scratchpad timing](../src/sst/memory/scratchpad/scratchpadTimingModel.cc)
+splits requests into beats, selects a bank using
+`floor(offset / CPU_port_bytes) % banks`, and reserves an available port.
+Read and write ports have separate availability. CPU accesses and local DMA
+clients share these reservations; conflicts delay service. Capacity and access
+ranges are checked. DMA clients also maintain engine availability.
 
-Descriptors 42 and 43 are data planes. They do not advance or resume QEMU.
-For example, an analog instruction first publishes its command and payload in
-fd 43, then yields once through fd 41 with `ANALOG_SUBMIT`. SST reads fd 43,
-models the operation, and resumes QEMU through fd 41. A blocking
-`StoreVector` remains held until its fd 43 result is complete.
+[Memory access control](../src/sst/memory/memoryAccessController.cc) holds a
+CPU scratchpad access until its scheduled deadline. Transport batching and
+run compaction replay accesses through this model; compact host records do
+not remove modeled memory service. StandardMem loads and stores have bounded
+queues (defaults: eight loads, one store). Fences drain older timed stores;
+independent request grouping uses instruction identity and dependency metadata.
 
-The deployment NIC follows the same control/data separation. QEMU snapshots a
-burst into fd 42, then publishes a zero-wait `NIC_TRANSMIT` descriptor
-doorbell through fd 41. SST advances to the exact reported instruction
-boundary, drains fd 42, and resumes QEMU immediately when the bounded ring has
-space. If guest software observes no burst slot, `TX_WAIT` rechecks the ring
-inside QEMU and publishes `NIC_TRANSMIT_WAIT` only when it is still full. The
-hart then remains stopped until SST frees a slot. This makes transmit timing
-independent of `sync_instruction_quantum` without inventing a control latency.
+Optional initialization batching charges setup plus
+`ceil(total_bytes / memory_init_bytes_per_cycle)`, with defaults of two
+cycles and 32 bytes/cycle. This aggregates initialization traffic without
+warming a modeled cache. See
+[initialization control](../src/sst/synchronization/initializationBarrierClient.cc)
+and tile parameters for phase/barrier settings.
 
-## Optional private-L1 memory timing
+## Shared global RAM
 
-Every tile selects one of two data-memory backends:
+The [global RAM controller](../src/sst/memory/globalRAMController.cc) serves
+explicit DMA over dedicated per-tile SST links, separate from the mesh.
+Sparse backing defaults to 32 GiB deployment-wide. Its
+[configuration](../src/sst/memory/globalRAMController.h) defaults to one
+1 GHz channel, 16 total queued requests, and eight per tile.
 
-| `memory_backend` | Behavior |
-| --- | --- |
-| `native` | QEMU accesses its private RAM directly; no cache or lower-memory delay is added |
-| `memhierarchy` | Each QEMU RAM data access yields through fd 41 and completes through the tile's StandardMem path |
-
-The optional `memory_access_batching` mode groups fd 41 transport events.
-SST still sends one StandardMem request for each access record. The active
-batch contains 16 records by default.
-
-`native` is the default and preserves existing simulations. In
-`memhierarchy` mode, the SST configuration must attach
-`memHierarchy.standardInterface` to the tile's `memoryIF` slot. The first
-proof connects that interface to one 32 KiB, four-way, 64-byte-line private L1
-and a simple 50 ns lower-memory timing backend:
+For B bytes, controller service is:
 
 ```text
-guest load/store
-      |
-      | physical address, byte size, read/write
-      v
-fd 41 MEMORY_ACCESS
-      |
-      v
-mittens.tile -> StandardMem -> private L1 -> timing memory controller
-      ^                              |
-      `--------- response -----------'
-      |
-      v
-resume QEMU and complete the functional RAM access
+setup_cycles
+  + ceil(B / burst_bytes) * fixed_latency_cycles
+  + ceil(B / bytes_per_cycle)
 ```
 
-QEMU remains the sole owner of guest data. SST models only the completion
-time; read payloads returned by StandardMem are intentionally ignored and
-write payloads are placeholders. Instruction fetches, MMIO, and QEMU device
-accesses do not enter this path.
-
-The current bridge permits up to eight proven-independent load requests per
-tile. It also permits eight buffered stores by default. One vector load can
-issue independent cache-line fragments together. Consecutive scalar loads can
-also issue together when their address registers have no dependency. Different
-tiles overlap, and each tile owns a private L1 instance.
-
-This model provides cache-hit, cache-miss, store-buffer, and lower-memory
-timing. It does not yet model general out-of-order misses, prefetching,
-instruction-cache timing, TLB timing, or cache and DMA coherence.
-
-Access batching adds bounded functional lookahead. QEMU can execute the active
-batch before SST replays its timing. Each record keeps its instruction count,
-vector-instruction count, guest PC, return address, address, size, and
-direction. Standard scalar load records also keep integer register dependency
-masks and the RISC-V instruction length. Mittens groups adjacent scalar loads
-only when the later address does not use an earlier load result. It groups
-cache-line fragments when every identity field matches one vector memory
-instruction. For the private scratchpad, an aligned eight-element `e32`
-unit-stride load or store is represented as one 32-byte CPU transaction,
-matching the configured 256-bit SPM port; the eight guest elements remain part
-of logical accounting.
-
-QEMU publishes every RISC-V `fence` as a protocol boundary.
-Mittens drains all older timed stores before it resumes the hart. Atomic
-accesses remain synchronous ordering boundaries.
-
-The `memory_access_batching=false` mode supplies reference timing. An
-architecture study must compare each batched result with this reference.
-
-The 16-record setting reduced a measured 4-by-4 transformer wall time from
-218.84 seconds to 41 seconds. The modeled time changed from 5.97184 ms to
-6.00519 ms in that experiment. This difference is 0.56 percent.
-
-Large deployment images perform millions of data accesses while installing
-their task and analog-array state. An optional initialization phase preserves
-the byte volume but aggregates its host synchronization:
-
-```text
-QEMU boot and runtime.boot()
-        |
-        | count reads/writes locally; do not yield per access
-        v
-guest complete_memory_initialization()
-        |
-        | one fd 41 MEMORY_INIT_COMPLETE event
-        v
-SST delay = setup cycles + ceil(total bytes / bytes per cycle)
-        |
-        v
-resume QEMU; every later access uses StandardMem/private L1
-```
-
-The default aggregate rate is 32 bytes per cycle, corresponding to a 256-bit
-initialization path, with a two-cycle setup cost. Both values are SST
-parameters. This is an explicit phase model: it does not populate L1 cache
-state, and post-marker cache hits and misses are measured independently. The
-profile reports the handshake count, access count, read and write byte counts,
-and charged initialization cycles.
-
-The retired private-L1 timing test previously verified the cache boundary.
-For the documented L1, links, and 50 ns lower-memory backend, it observed exact
-five-cycle hits and 61-cycle misses. The following are historical cache results;
-the active memory tests now cover global RAM and scratchpad DMA.
-
-The conflict test matches four hits, six misses, and 386 wait cycles. The
-capacity test matches one hit, 514 misses, and 31,359 wait cycles. The store
-test reaches eight outstanding requests and completes with correct values.
-The vector test issues two cache-line reads from one instruction at the same
-simulation tick. Two independent scalar misses complete in 62 cycles. The
-equivalent two-load pointer chain completes in 122 cycles.
-
-The profile reports these memory-concurrency metrics:
-
-- maximum outstanding memory requests
-- maximum outstanding loads
-- maximum store-buffer occupancy
-- store-buffer full events
-- vector request-group count
-- requests issued in vector groups
-- scalar request-group count
-- requests issued in scalar groups
-
-Bridge protocol version 14 carries memory records and fence events. A standard
-scalar load record contains its source register mask, destination register
-mask, instruction length, and program counter. Mittens rejects missing data
-instead of assuming that an unknown load is independent. Atomic operations
-remain synchronous.
-
-### End-to-end validation
-
-The two-decoder GPT-2 test uses a 10 by 10 mesh, two digital workers, six
-tokens, dual issue, and the MemHierarchy backend. The original blocking model
-completed in 4.74722 ms. Store buffering and vector request groups reduced the
-time to 3.42995 ms. Scalar request groups reduced the time to 3.27415 ms.
-
-The complete change reduces simulated time by 31.0 percent. Scalar grouping
-adds a 4.5 percent reduction after the store and vector changes. The final
-trace contains 67,022 scalar request groups and 182,638 requests in those
-groups. The maximum number of outstanding reads is eight.
-
-## Mesh timing
-
-Model experiments use `mittens.wormholeRouter` and `mittens.wormholeNIC` by
-default. Compatibility tests can select the legacy Merlin network.
-
-The Mittens network divides every request into 32-bit flits. The physical
-width controls the number of flits that each output sends in one cycle.
-
-The packet head waits for the route and switch pipeline. The default pipeline
-cost is three router cycles.
-
-An output stays reserved until the packet tail departs. Round-robin arbitration
-selects one packet when multiple heads request the same free output.
-
-Each output tracks downstream buffer credits. A router stops transmission when
-the downstream input has no free flit slot.
-
-The local endpoint returns credits when the tile removes a complete request.
-Thus, a full tile receive path can stop the local router output.
-
-The destination interface delivers the request after the tail arrives. Thus,
-the tile does not add a second packet-serialization delay.
-
-The primary network parameters are:
-
-| Parameter | Meaning | Default |
-| --- | --- | --- |
-| `GOLEM_MODEL_MESH_ROUTER_BACKEND` | Select `mittens` or `merlin` | `mittens` |
-| `GOLEM_MODEL_MESH_LINK_LATENCY` | Delay for each SST mesh or local link | `1ns` |
-| `GOLEM_MODEL_MESH_LINK_WIDTH_BITS` | Physical output width in bits per cycle | `32` |
-| `GOLEM_MODEL_WORMHOLE_INPUT_BUFFER_FLITS` | Flit slots in each router input | `32` |
-| `GOLEM_MODEL_WORMHOLE_INJECTION_BUFFER_FLITS` | Flit slots in each tile injection queue | `64` |
-| `GOLEM_MODEL_WORMHOLE_PIPELINE_CYCLES` | Pipeline cost for each packet head | `3` |
-
-The Mittens statistics separate the primary block causes:
-
-- `switch_arbitration_stall_cycles` counts ready packet heads that lose an
-  output selection or wait behind a reserved packet.
-- `output_credit_stall_cycles` counts requested outputs with no downstream
-  buffer credit.
-- `input_buffer_full_cycles` counts cycles when an input buffer is full.
-- `output_link_busy_cycles` counts cycles that transmit one or more flits.
-
-### Merlin compatibility timing
-
-The legacy `TX_DATA` path publishes one 32-bit packet in fd 42. The deployment
-runtime instead submits up to 4096 contiguous words through one DMA-style
-fd 42 burst slot. Mittens creates one bounded Merlin request. Routing,
-buffering, contention, credits, and backpressure remain modeled even though
-the host handles one event per burst rather than one per word.
-
-Mesh payloads remain sequences of architectural 32-bit words, while the
-physical SST link width and clock are configurable. `build_mesh()` accepts
-`mesh_link_width_bits`, which must be a positive multiple of 32, and
-`mesh_link_clock`. Merlin bandwidth is derived as:
-
-```text
-link bandwidth = mesh_link_width_bits * mesh_link_clock
-link cycles per timing cell =
-    ceil((network_cell_words * 32) / mesh_link_width_bits)
-```
-
-Timing cells are padded to a complete physical beat. A partial final request
-is additionally padded to the configured cell size. Arbitration occurs at
-cell boundaries; configured link/router latency and contention are
-additional.
-
-Model-level deployments use `network_cell_words=1`: one timing cell is one
-architectural 32-bit word, so a 512-word request consumes 512 cycles on a
-32-bit, 1 GHz link. The independent `network_buffer_cells=16384` setting
-preserves 64 KiB of router capacity. The 4,096-word maximum fd-42 host burst
-is a batching boundary and does not widen the timing cell.
-
-Merlin notifies a `SimpleNetwork` endpoint when the request's head flit
-arrives, while reserving downstream link bandwidth for the complete request.
-Mittens therefore applies an explicit tail-completion boundary before placing
-the burst in fd 42:
-
-```text
-packet link cycles =
-    ceil(packet_words * 32 / mesh_link_width_bits)
-
-serialization start =
-    max(Merlin head-arrival time,
-        destination link's next-available time)
-
-NIC-visible time =
-    serialization start
-    + (packet link cycles - 1) * mesh-link period
-
-destination link next-available time =
-    serialization start
-    + packet link cycles * mesh-link period
-```
-
-Without that boundary, a lone multiword packet would become visible after
-only its head latency even though Merlin correctly kept the physical link
-occupied for all remaining flits. Destination software and receive DMA can
-now observe a burst only after its final physical beat. The per-destination
-next-available time also preserves physical packet order: a later short packet
-cannot complete ahead of an earlier long packet merely because its calculated
-tail delay is shorter.
-
-The controlled 32-bit, 1 GHz, 10 ns-link configuration has the exact
-closed-form result:
-
-```text
-uncontended head cycles = 35 + 12 * (Manhattan hops - 1)
-uncontended completion =
-    head cycles + packet_words - 1
-```
-
-The one-hop constant contains three 10-cycle SST links plus five
-endpoint/router pipeline cycles. Each additional hop contributes one
-10-cycle link and two router cycles. Under equal-size one-hop incast,
-contender `rank` receives the output after:
-
-```text
-head[rank] = 35 + rank * packet_words
-completion[rank] = 35 + (rank + 1) * packet_words - 1
-```
-
-`tests/network/timing` checks this law with 21 exact timestamp
-comparisons across packet size, Manhattan distance, and two/four-source
-contention.
-
-The corrected deployment configuration is a 32-bit, 1 GHz link: 4 GB/s with
-one 32-bit word per timing cell. One cell occupies the link for one cycle; a
-64-bit, 1 GHz experiment transfers two cells per cycle. The independent
-16,384-cell buffer preserves 64 KiB of capacity.
-
-### Transmit doorbell and backpressure
-
-An accepted deployment burst has two distinct times:
-
-```text
-descriptor visible = exact fd-41 NIC_TRANSMIT boundary
-network service     = Merlin serialization, routing, buffering, and contention
-```
-
-The descriptor doorbell contributes no synthetic cycle. It prevents QEMU
-from running to an unrelated quantum boundary before SST sees a partial
-transmit ring. When all four burst slots are occupied, runtime progress
-returns `WaitForTransmit`; the platform writes `TX_WAIT`, and the hart sleeps
-until the matching burst ring has space. The status check and wait publication
-occur in one QEMU MMIO operation, preventing a lost wakeup.
-
-The performance profile records every actual blocked interval in
-`tile-<id>-transmit-blocked.csv`, including route, execution, destination,
-transfer kind, word count, start/finish ticks, retry count, and maximum queue
-occupancy. Per-tile summaries include total blocked ticks, events, retries,
-and maximum occupancy.
-
-The receive interface provides an `RX_WAIT` doorbell. Guest software first
-checks `STATUS.RX_VALID` and the receive-DMA completion bit, then writes
-`RX_WAIT` only when neither ordinary data nor a completion is available. QEMU
-rechecks the receive queues, services eligible DMA bursts, and rechecks the
-completion queue inside the MMIO write to prevent a lost wakeup. If data or a
-completion became visible between the status read and the write, QEMU
-continues immediately. Otherwise it yields `NIC_RECEIVE_WAIT` through fd 41.
-
-SST schedules that stop after the exact number of CPU instructions reported
-by QEMU. At the scheduled stop timestamp it services any network data already
-delivered to the endpoint. If the receive bridge remains empty, the tile
-stays stopped. A later Merlin delivery places the cell in fd 42 and resumes
-the hart at that delivery timestamp. The control handshake adds no synthetic
-cycle:
-
-```text
-receive observation = max(
-    scheduled CPU time of the RX_WAIT boundary,
-    Merlin delivery time of the next receive cell
-)
-```
-
-Once software has published `RX_WAIT`, its wakeup is event driven and does
-not wait for an ordinary quantum end. The quantum still bounds how far QEMU
-may execute before publishing that wait, however. If network data becomes
-ready during the preceding grant, a coarse grant can change whether software
-observes it before or after a runtime scan. The controlled Epoch D fanout
-audit converges at 36.188 us for 1,000- and 100-instruction grants, versus
-36.711 us for 100,000 and 1,000,000 instructions; traffic is identical.
-
-### Receive DMA and timing
-
-After software decodes a five-word route header, it may register the
-destination tensor range with the NIC. Subsequent fd-42 payload bursts are
-copied into that guest range and generate a completion instead of requiring
-one guest MMIO load per 32-bit word:
-
-```text
-source RAM -> fd 42 -> Merlin mesh -> RX DMA engine -> destination RAM
-                         timed             timed
-```
-
-This changes CPU instruction work, not mesh work. Packet count, architectural
-word count, route, physical width, link serialization, buffer pressure, and
-contention remain identical.
-
-Descriptor submission is an exact fd-41 `NIC_RX_DMA_SUBMIT` boundary carrying
-source, route ID, and word count. Each tile owns one SST-clocked DMA channel,
-so its bursts serialize while DMA engines on different tiles overlap. A
-burst becomes guest-visible only when an SST self-event authorizes it at:
-
-```text
-start = max(current rx_dma_clock cycle, channel next-available cycle)
-transfer = ceil(burst_word_count * 32 / rx_dma_width_bits)
-completion = start + transfer + first_burst(rx_dma_setup_cycles)
-```
-
-Defaults are a 1 GHz clock, 256-bit width, eight setup cycles per descriptor,
-and four queued receive bursts. The queue is finite and applies endpoint
-backpressure. QEMU performs the functional guest-RAM write only after
-authorization, so software cannot observe the payload early.
-
-This is a timed NIC-to-local-memory boundary. The optional private data-L1
-backend times CPU loads and stores separately, but the two paths do not yet
-share ports or maintain cache/DMA coherence. Scratchpad capacity, banks,
-instruction caches, TLBs, and a detailed DRAM backend remain future work.
-
-## Task trace timing
-
-The optional task tracer uses the same fd-41 instruction boundary as the NIC
-and analog devices. `TASK_START` is emitted immediately before
-`Task::execute`; `TASK_FINISH` is emitted immediately after it returns. SST
-schedules each marker after the exact instructions retired since the previous
-stop, then records `getCurrentSimCycle()` using the simulation's configured
-time base.
-
-Trace records use `(tile_id, task_id, execution_id)` as their identity.
-Because SST writes them at global simulation time, timestamps from different
-QEMU processes are directly comparable. Per-tile raw CSV files avoid
-corruption from QEMU UART and SST text sharing stdout.
-
-The marker executes a small number of additional guest MMIO instructions and
-adds an fd-41 handshake. A traced result is therefore diagnostic rather than
-the official benchmark. The receive-DMA 8x8 ResNet-18 trace completed at
-1.278541685 simulated seconds and produced 123 matched task intervals.
-
-## Analog timing
-
-Every analog array owns an ordered four-entry queue. All arrays on one tile
-share one bidirectional, half-duplex 256-bit link. The
-`analog_link_clock` advances that link, and
-`analog_compute_latency_cycles` sets the latency of each independent array
-compute engine in that clock domain.
-
-The command timing rules are:
-
-1. `SetMatrix` and `LoadVector` snapshot guest input, publish it in fd 43, and
-   yield through fd 41.
-2. `Compute` publishes and yields through fd 41.
-3. These asynchronous commands resume after their selected queue accepts
-   them.
-4. `StoreVector` yields through fd 41 and remains stopped until SST completes
-   the selected array's output transfer.
-5. SST writes the result to fd 43 and resumes QEMU through fd 41; QEMU then
-   copies the result into private guest RAM.
-
-One link beat carries eight 32-bit words. Transfer costs are:
-
-```text
-SetMatrix:  ceil((rows * columns) / 8) link cycles
-LoadVector: ceil(columns / 8) link cycles
-StoreVector: ceil(rows / 8) link cycles
-MoveVector: 2 * ceil(rows / 8) link cycles
-```
-
-At most one transfer beat crosses the shared link per tile per link cycle.
-Contending arrays receive beats in deterministic round-robin order. Compute
-phases on different arrays still progress concurrently and may overlap the
-winning transfer beat. `MoveVector` requires two transfers: source array to
-tile, followed by tile to destination array. CrossSim host execution time is
-not charged as simulated latency; CrossSim supplies numerical behavior while
-SST supplies the modeled transfer and compute schedule.
-
-`tests/analog/timing` checks this boundary end to end from real
-bare-metal Golem instructions through QEMU, fd 43, fd 41, and SST. An
-independent reference scheduler predicts every service-phase timestamp from
-the observed command arrivals. For 9x9 arrays and an eight-cycle compute
-latency, the single-array case matched 23/23 active cycles and 15/15 link
-beats; the dual-array case matched 37/37 active cycles and 30/30 link beats,
-including 14 cycles of contending transfer demand and two cycles of
-independent compute overlap.
-
-## Valid measurements
-
-The current implementation supports deterministic measurements of:
-
-- retired instruction count under the one-instruction-per-cycle policy;
-- CPU cycles between synchronized device boundaries;
-- packet injection time and Merlin network timing;
-- receive-DMA setup, bandwidth, serialization, queue pressure, and
-  cross-tile overlap;
-- analog transfer and configured compute cycles;
-- shared-link contention and overlap between independent analog computes; and
-  - end-to-end simulated completion time.
-
-Native and CrossSim runs with identical architectural behavior should have the
-same simulated CPU timeline even if their host runtimes differ.
-
-## Performance attribution
-
-Every tile supports a machine-readable profile independent of the existing
-verbose console counters:
-
-| Mode | Output | Simulated-time effect |
-| --- | --- | --- |
-| `off` | No profile files | None |
-| `summary` | One finish-time counter file per tile | None |
-| `trace` | Summary plus wait, packet, receive-DMA, analog, memory, and task event files | Task markers add guest instructions and fd-41 boundaries |
-
-The next RA-tree multi-tile deployment runner will configure all tiles and run
-the system-level analyzer automatically. Existing platform tests validate the
-profile format independently of a neural-network deployment.
-
-`summary` is the correct mode for low-overhead counter collection. `trace` is
-the diagnostic mode used to locate a critical chain. Host-side CSV writes do
-not advance SST time, but task start/finish markers execute guest MMIO and
-therefore perturb the traced program. Official performance numbers must come
-from an untraced run; the traced run explains those numbers.
-
-The raw directory contains:
-
-| File | Meaning |
-| --- | --- |
-| `tile-N-summary.csv` | Retired instructions, modeled CPU cycles, network totals, device activity, and wait totals |
-| `tile-N-network.csv` | Packet ready, injection, and arrival timestamps plus route/execution identity |
-| `tile-N-receive-dma.csv` | Receive-DMA schedule and completion records |
-| `tile-N-analog.csv` | Queue, input transfer, compute, output transfer, move, and completion phases |
-| `tile-N-memory.csv` | Timed StandardMem issue and response events |
-| `tile-N-waits.csv` | Exact fd-41 stop intervals by reason |
-| `tile-N.csv` | Task start and finish markers in trace-enabled deployment ELFs |
-
-`scripts/analyze-performance-profile.py` joins those files with Merlin router
-statistics and, when available, `deployment-routes.csv`. It writes:
-
-- `summary.json` and `summary.csv`;
-- `network-packets.csv` and logical `routes.csv`;
-- `receive-dma.csv`, `analog-operations.csv`, and `memory-requests.csv`;
-- `waits.csv` and `link-statistics.csv`; and
-- `critical-path.csv`.
-
-The route manifest is extracted from partitioned Sculptor MLIR by
-`scripts/extract-deployment-routes.py`. It preserves the global source and
-destination task IDs, route ID, resource ID, byte count, payload words, and
-expected Manhattan distance. The analyzer uses route arrival/DMA readiness
-to connect task intervals across tiles. Within a tile, it adds the preceding
-task as a serialization dependency, selects the latest ready predecessor for
-each observed task, and backtracks from the final finishing task. This is an
-observed execution critical chain, not a static estimate of every possible
-task-graph path.
-
-The network quantities are deliberately separate:
-
-```text
-injected words = each architectural 32-bit word counted once at its source
-
-directional word-hops =
-    sum(packet words * source-to-destination Manhattan hops)
-
-physical link bits =
-    sum of Merlin send_bit_count on non-endpoint router ports
-```
-
-Shared-memory latency uses the same non-overlap rule. Every completed global
-RAM request has four controller-owned timestamps and exactly three adjacent
-intervals:
-
-```text
-exact-readiness delay = readiness cycle - arrival cycle
-RAM queue delay       = service-start cycle - readiness cycle
-RAM service           = completion cycle - service-start cycle
-```
-
-`global-ram-requests.csv` records those timestamps and intervals; its column
-sums must equal the corresponding `readiness_delay_cycles`,
-`queue_delay_cycles`, and `service_cycles` SST statistics. Exact-execution
-teardown is a rendezvous, not a DMA, and is recorded separately in
-`global-ram-teardowns.csv`. Initialization release likewise has one
-controller-owned row per active tile in `memory-init-barrier.csv`. Tile-local
-scratchpad bank and DMA service is reported as `scratchpad_service_cycles` in
-both SST statistics and each enabled per-tile summary. The production launcher
-fails if any trace row, aggregate, tile coverage, or controller statistic does
-not reconcile.
-
-The first measures application traffic, the second measures topology-weighted
-communication work, and the third records what the modeled links actually
-carried. Packet latency, endpoint queue time, DMA activity, device activity,
-and per-tile waits are sums of intervals and may overlap across tiles. They
-must not be added together and called end-to-end time; `critical-path.csv`
-exists to expose the causally limiting sequence.
-
-With `memory_backend=native`, QEMU RAM has no separately modeled latency, so
-`memory.modeled` is false. With `memhierarchy`, the request report contains
-the actual StandardMem response latency. Initialization batching remains a
-single explicitly charged summary event rather than millions of fabricated
-per-access records.
-
-## Runtime microprofile
-
-`mittens.tile` verbosity level 1 reports per-tile synchronized instruction,
-stop-reason, network-word, and analog-operation counters at simulation finish.
-A future RA-tree neural-network deployment can enable cycle-level runtime
-profiling. Such instrumentation measures receive, receive-wait, transmit,
-blocked-transmit, generated-task, and idle runtime steps with `rdcycle`.
-It perturbs the simulated CPU timeline, so profile runs are for attribution
-only. Official completion comparisons must use an uninstrumented build.
-
-## Limits
-
-This is a synchronized functional CPU model, not a cycle-accurate RISC-V
-microarchitecture. It does not yet model:
-
-- pipeline width, hazards, branch prediction, or instruction-dependent CPI;
-- cache, TLB, or DRAM stalls;
-- NIC interrupts—the current receive mechanism is an explicit blocking
-  doorbell;
-- detailed UART timing; or
-- operating-system scheduling.
-
-`rdcycle` remains QEMU's architectural counter and is not the public source of
-SST timestamps. Timing analyses should use SST time and the fd 41 instruction
-statistics. A future CPU model can replace the one-instruction-per-cycle rule
-without changing the bridge separation or device-boundary protocol.
+Defaults are eight setup cycles, 64-byte bursts, two fixed cycles per burst,
+and 32 bytes/cycle per channel. Readiness and channel queue delays are
+additional. The controller supports bulk barriers and exact dependencies;
+exact reads wait for committed coverage of their ranges. Configurable
+scheduling priorities and channel reservations affect contention.
+
+The [tile DMA client](../src/sst/memory/globalDMAClient.cc) tracks tokens,
+local SPM service, and global completion. Waits must satisfy both local and
+global deadlines. This is a bounded bandwidth/latency model, not a DRAM
+command or cache-coherence model.
+
+## Mesh and NIC DMA
+
+The [wormhole router](../src/sst/network/wormholeRouter.cc) uses 32-bit flits
+and configurable physical `link_width_bits`, a positive multiple of 32.
+An output can transmit `link_width_bits / 32` flits per router cycle,
+subject to credits and readiness. Payload word size does not fix link width.
+
+[Router defaults](../src/sst/configuration/networkConfiguration.cc) are
+32-bit width, 1 GHz clock, 32 input flits, and three head-pipeline cycles.
+Routing is X then Y unless an explicit route override applies. Arbitration,
+output reservation through the tail, downstream credits, and finite buffers
+model contention and backpressure. SST link latency is configured separately.
+
+The [wormhole NIC](../src/sst/network/wormholeNetworkInterface.cc) handles
+injection and receive delivery. The [mesh builder](../tests/support/mesh.py)
+also supports Merlin, which needs explicit tail-delivery timing because head
+arrival alone does not mean the payload is complete. Record backend, widths,
+clocks, link latencies, buffer sizes, and lane counts with results.
+
+[TX DMA](../src/sst/network/tx/txController.cc) reserves SPM reads and stages
+data in a bounded FIFO before injection. The default FIFO is 128 bytes;
+zero disables timed TX DMA. [RX DMA](../src/sst/network/rx/rxController.cc)
+reserves SPM writes and schedules completion before authorizing guest visibility.
+TX and RX each support 1, 2, or 4 lanes; both default to 1. Multiple lanes still
+contend for shared SPM ports and router outputs. Optional RX streaming releases
+eligible arrived fragments before the whole frame completes.
+
+Without the SPM timing path, the
+[receive DMA engine](../src/sst/network/receiveDMAEngine.cc) uses a configured
+clock, width, and setup delay (defaults: 1 GHz, 256 bits, eight cycles).
+The receive burst queue defaults to four entries. TX/RX waits use fd 41
+and controller events.
+
+## Analog and measurements
+
+The [analog device](../src/sst/analog/analogDevice.cc) schedules array commands
+and arbitrates one shared half-duplex 256-bit link across all arrays.
+Each beat carries up to eight 32-bit words. Independent array computation can
+overlap; transfers contend for the link. Compute latency defaults to 100
+analog-link cycles with a 1 GHz link clock. Array count defaults to zero
+(disabled). Functional backend selection does not create a physical analog
+circuit timing model.
+
+[Profiling](../src/sst/profiling/) records CPU issue, device waits, SPM
+service/conflicts, DMA, and network activity. Overlapping controller service
+counters are not automatically additive wall time. Preserve clock domains
+and units when interpreting traces.
+
+[Source tests](../src/sst/tests/) cover the CPU ledger, scratchpad timing,
+global-RAM readiness, and wormhole network.
+[CPU timing](../tests/platform/cpu-timing/) and
+[RVV execution](../tests/platform/riscv-vector/) provide guest-level checks.
+Use [analysis tools](../tools/analysis/) for profile/report processing and
+[compiler checks](../tools/compiler/) for deployment validation.

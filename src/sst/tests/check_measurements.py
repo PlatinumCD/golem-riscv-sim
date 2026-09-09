@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only validation of actual R10 Tile JSON summaries and neighboring CSV.
+"""Read-only validation of Tile JSON summaries and neighboring CSV.
 
 Usage: check_measurements.py ARTIFACT_ROOT [ARTIFACT_ROOT ...]
                               [--implementation-id sha256:...]

@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-COLLECTOR = PROJECT_ROOT / "scripts" / "collect-sculptor-model-suite-report.py"
+COLLECTOR = PROJECT_ROOT / "tools" / "analysis" / "collect-sculptor-model-suite-report.py"
 SPEC = importlib.util.spec_from_file_location("model_suite_report", COLLECTOR)
 REPORT = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader

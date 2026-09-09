@@ -12,6 +12,7 @@ COPY = TOOLS.parents[1] / 'src'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
+    subprocess.run(['python3', '-B', str(TOOLS / 'parameter-reference.py'), '--check'], check=True)
     cases = {
         'cpu_execution_ledger': [],
         'cpu_execution_controller': ['execution/cpuExecutionController.cc',
@@ -59,7 +60,7 @@ def main():
     print('device_owners: PASS', flush=True)
     subprocess.run(['python3', str(COPY / 'sst/tests/test_measurements.py')], check=True)
     print('measurement artifact validation: PASS', flush=True)
-    for script in ('test-build-selection.py', 'test-pin-baseline.py',
+    for script in ('test-bootstrap.py', 'test-build-selection.py', 'test-pin-baseline.py',
                    'test-comparison.py', 'test-hardware-runner.py'):
         subprocess.run(['python3', '-B', str(TOOLS / 'tests' / script)], check=True)
     print(f'Executables: {output}')
