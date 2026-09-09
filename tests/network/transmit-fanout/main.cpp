@@ -28,6 +28,22 @@
 #define MITTENS_FANOUT_WAVES 1
 #endif
 
+#ifndef MITTENS_FANOUT_RECEIVER_DELAY_CYCLES
+#define MITTENS_FANOUT_RECEIVER_DELAY_CYCLES 0
+#endif
+
+#ifndef MITTENS_FANOUT_FIRST_DMA_DELAY_CYCLES
+#define MITTENS_FANOUT_FIRST_DMA_DELAY_CYCLES 0
+#endif
+
+#ifndef MITTENS_FANOUT_SOURCE_DELAY_CYCLES
+#define MITTENS_FANOUT_SOURCE_DELAY_CYCLES 0
+#endif
+
+#ifndef MITTENS_FANOUT_SOFTWARE_PAYLOAD_WORDS
+#define MITTENS_FANOUT_SOFTWARE_PAYLOAD_WORDS 1022
+#endif
+
 namespace {
 
 using namespace golem::runtime;
@@ -37,11 +53,27 @@ constexpr uint32_t kFanout = MITTENS_FANOUT;
 constexpr uint32_t kSourceCount = MITTENS_FANOUT_SOURCE_COUNT;
 constexpr uint32_t kDestinationTile = MITTENS_FANOUT_DESTINATION_TILE;
 [[maybe_unused]] constexpr uint32_t kWaves = MITTENS_FANOUT_WAVES;
+[[maybe_unused]] constexpr uint64_t kReceiverDelayCycles =
+    MITTENS_FANOUT_RECEIVER_DELAY_CYCLES;
+[[maybe_unused]] constexpr uint64_t kFirstDmaDelayCycles =
+    MITTENS_FANOUT_FIRST_DMA_DELAY_CYCLES;
+[[maybe_unused]] constexpr uint64_t kSourceDelayCycles =
+    MITTENS_FANOUT_SOURCE_DELAY_CYCLES;
 constexpr uint32_t kSourceTaskId = 11;
 constexpr uint32_t kFirstDestinationTaskId = 100;
 constexpr uint32_t kFirstRouteId = 1000;
 constexpr uint64_t kTensorBytes =
     static_cast<uint64_t>(kElementCount) * sizeof(float);
+
+#if defined(MITTENS_FANOUT_SOFTWARE_PAYLOAD)
+constexpr uint32_t kDeploymentFrameMagic = UINT32_C(0x474f4c4d);
+constexpr uint32_t kSoftwarePayloadWords =
+    MITTENS_FANOUT_SOFTWARE_PAYLOAD_WORDS;
+constexpr uint32_t kSoftwarePayloadFrames = 2;
+constexpr uint32_t kSoftwarePayloadRouteBase = 9000;
+static_assert(kSoftwarePayloadWords > 1);
+static_assert(kSoftwarePayloadWords <= mesh_nic::kBurstWordCapacity);
+#endif
 
 static_assert(kFanout >= 1 && kFanout <= 24);
 static_assert(kSourceCount >= 1);
@@ -170,24 +202,40 @@ bool trySendWords(
         destination, words, wordCount);
 }
 
+void delayFirstReceiveDMA();
+
 bool tryStartReceiveWords(
     void*,
     uint32_t source,
     uint32_t routeId,
+    uint64_t logicalIteration,
     void* destination,
     uint32_t wordCount)
 {
+    delayFirstReceiveDMA();
     return mesh_nic::try_start_receive_words(
-        source, routeId, destination, wordCount);
+        source, routeId, logicalIteration, destination, wordCount);
 }
 
 bool tryReceiveWordsCompletion(
     void*,
     uint32_t* source,
-    uint32_t* routeId)
+    uint32_t* routeId,
+    uint64_t* logicalIteration)
 {
     return mesh_nic::try_receive_words_completion(
-        source, routeId);
+        source, routeId, logicalIteration);
+}
+
+bool tryClaimReceiveWords(
+    void*,
+    uint32_t source,
+    uint32_t routeId,
+    uint64_t logicalIteration,
+    uint32_t wordCount)
+{
+    return mesh_nic::try_claim_receive_words(
+        source, routeId, logicalIteration, wordCount);
 }
 
 uint64_t readCycle(void*)
@@ -195,6 +243,40 @@ uint64_t readCycle(void*)
     uint64_t value = 0;
     __asm__ volatile("rdcycle %0" : "=r"(value));
     return value;
+}
+
+void delayReceiver()
+{
+    if constexpr (kReceiverDelayCycles != 0) {
+        const uint64_t start = readCycle(nullptr);
+        while (readCycle(nullptr) - start < kReceiverDelayCycles) {
+            __asm__ volatile("" ::: "memory");
+        }
+    }
+}
+
+void delaySource()
+{
+    if constexpr (kSourceDelayCycles != 0) {
+        const uint64_t start = readCycle(nullptr);
+        while (readCycle(nullptr) - start < kSourceDelayCycles) {
+            __asm__ volatile("" ::: "memory");
+        }
+    }
+}
+
+void delayFirstReceiveDMA()
+{
+    if constexpr (kFirstDmaDelayCycles != 0) {
+        static bool delayed = false;
+        if (!delayed) {
+            delayed = true;
+            const uint64_t start = readCycle(nullptr);
+            while (readCycle(nullptr) - start < kFirstDmaDelayCycles) {
+                __asm__ volatile("" ::: "memory");
+            }
+        }
+    }
 }
 
 void emitTaskTrace(
@@ -216,6 +298,7 @@ const RoutedWordTransport kTransport{
     trySendWords,
     tryStartReceiveWords,
     tryReceiveWordsCompletion,
+    tryClaimReceiveWords,
 };
 
 void printUnsigned(uint64_t value)
@@ -243,6 +326,124 @@ void printProfile(const DeploymentProfile& profile)
     uart_puts(" transmit_cycles=");
     printUnsigned(profile.transmit_cycles);
 }
+
+#if defined(MITTENS_FANOUT_SOFTWARE_PAYLOAD)
+[[maybe_unused]] uint32_t softwarePayloadWord(
+    uint32_t frame,
+    uint32_t word)
+{
+    return UINT32_C(0xa5000000) ^ (frame << 20U) ^ word;
+}
+
+[[maybe_unused]] void sendWordsBlocking(
+    uint32_t destination,
+    const uint32_t* words,
+    uint32_t wordCount)
+{
+    while (!mesh_nic::try_send_words(destination, words, wordCount)) {
+        mesh_nic::wait_for_transmit();
+    }
+}
+
+[[maybe_unused]] uint32_t receiveWordBlocking(uint32_t* source)
+{
+    uint32_t payload = 0;
+    while (!mesh_nic::try_receive_from(source, &payload)) {
+        mesh_nic::wait_for_receive();
+    }
+    return payload;
+}
+
+int runSoftwarePayload()
+{
+    mesh_nic::complete_memory_initialization();
+    if constexpr (MITTENS_TILE_ID == 0) {
+        alignas(64) uint32_t payload[kSoftwarePayloadWords];
+        for (uint32_t frame = 0;
+             frame < kSoftwarePayloadFrames;
+             ++frame) {
+            const uint64_t executionId = UINT64_C(0x100000000) + frame;
+            const uint64_t logicalIteration = frame;
+            alignas(64) const uint32_t header[] = {
+                kDeploymentFrameMagic,
+                kSoftwarePayloadRouteBase + frame,
+                static_cast<uint32_t>(executionId),
+                static_cast<uint32_t>(executionId >> 32U),
+                static_cast<uint32_t>(logicalIteration),
+                static_cast<uint32_t>(logicalIteration >> 32U),
+                kSoftwarePayloadWords,
+            };
+            for (uint32_t word = 0;
+                 word < kSoftwarePayloadWords;
+                 ++word) {
+                payload[word] = softwarePayloadWord(frame, word);
+            }
+            sendWordsBlocking(1, header, 7);
+            sendWordsBlocking(1, payload, kSoftwarePayloadWords);
+        }
+        uart_puts("SOFTWARE_PAYLOAD_SOURCE_PASS frames=");
+        printUnsigned(kSoftwarePayloadFrames);
+        uart_putc('\n');
+        return 0;
+    }
+
+    if constexpr (MITTENS_TILE_ID == 1) {
+        delayReceiver();
+        for (uint32_t frame = 0;
+             frame < kSoftwarePayloadFrames;
+             ++frame) {
+            const uint64_t executionId = UINT64_C(0x100000000) + frame;
+            const uint64_t logicalIteration = frame;
+            const uint32_t expectedHeader[] = {
+                kDeploymentFrameMagic,
+                kSoftwarePayloadRouteBase + frame,
+                static_cast<uint32_t>(executionId),
+                static_cast<uint32_t>(executionId >> 32U),
+                static_cast<uint32_t>(logicalIteration),
+                static_cast<uint32_t>(logicalIteration >> 32U),
+                kSoftwarePayloadWords,
+            };
+            for (uint32_t word = 0; word < 7; ++word) {
+                uint32_t source = UINT32_MAX;
+                if (receiveWordBlocking(&source) != expectedHeader[word] ||
+                    source != 0) {
+                    uart_puts("SOFTWARE_PAYLOAD_DESTINATION_FAIL header\n");
+                    return 1;
+                }
+            }
+            if (!mesh_nic::try_claim_receive_words(
+                    0,
+                    kSoftwarePayloadRouteBase + frame,
+                    logicalIteration,
+                    kSoftwarePayloadWords)) {
+                uart_puts(
+                    "SOFTWARE_PAYLOAD_DESTINATION_FAIL claim\n");
+                return 3;
+            }
+            for (uint32_t word = 0;
+                 word < kSoftwarePayloadWords;
+                 ++word) {
+                uint32_t source = UINT32_MAX;
+                if (receiveWordBlocking(&source) !=
+                        softwarePayloadWord(frame, word) ||
+                    source != 0) {
+                    uart_puts("SOFTWARE_PAYLOAD_DESTINATION_FAIL payload\n");
+                    return 2;
+                }
+            }
+        }
+        uart_puts("SOFTWARE_PAYLOAD_DESTINATION_PASS frames=");
+        printUnsigned(kSoftwarePayloadFrames);
+        uart_puts(" words=");
+        printUnsigned(
+            static_cast<uint64_t>(kSoftwarePayloadFrames) *
+            kSoftwarePayloadWords);
+        uart_putc('\n');
+        return 0;
+    }
+    return 3;
+}
+#endif
 
 [[maybe_unused]] int runSource()
 {
@@ -298,29 +499,22 @@ void printProfile(const DeploymentProfile& profile)
     const TaskBinding bindings[] = {
         {sourceTaskId(MITTENS_TILE_ID, 0), 0, 1, 1, 1, 2, 0, 0},
     };
-    const TileABI abi{
-        MITTENS_TILE_ID,
-        nullptr,
-        0,
-        {tasks, 1},
-        nullptr,
-        0,
-        outgoing,
-        kFanout,
-        inputs,
-        1,
-        nullptr,
-        0,
-        resources,
-        2,
-        dimensions,
-        1,
-        kTensorBytes,
-        bindings,
-        1,
-        bindingData,
-        2,
-    };
+    TileABI abi{};
+    abi.core_id = MITTENS_TILE_ID;
+    abi.dispatch_tasks = {tasks, 1};
+    abi.outgoing_routes = outgoing;
+    abi.outgoing_route_count = kFanout;
+    abi.model_inputs = inputs;
+    abi.model_input_count = 1;
+    abi.resources = resources;
+    abi.resource_count = 2;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size = kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = 1;
+    abi.task_binding_data = bindingData;
+    abi.task_binding_data_count = 2;
 
     alignas(64) float modelInput[kElementCount];
     for (uint32_t index = 0; index < kElementCount; ++index) {
@@ -334,6 +528,7 @@ void printProfile(const DeploymentProfile& profile)
         return 1;
     }
     mesh_nic::complete_memory_initialization();
+    delaySource();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
         if (step == DeploymentStep::WaitForReceive) {
@@ -362,7 +557,7 @@ void printProfile(const DeploymentProfile& profile)
     TaskBinding bindings[kFanout]{};
     uint32_t bindingData[2 * kFanout]{};
     const ModelIO inputs[] = {
-        {0, 0, 1, 0, kTensorBytes},
+        {0, MITTENS_TILE_ID, 1, 0, kTensorBytes},
     };
     const int64_t dimensions[] = {kElementCount};
     resources[0] = {
@@ -418,29 +613,22 @@ void printProfile(const DeploymentProfile& profile)
             0,
         };
     }
-    const TileABI abi{
-        MITTENS_TILE_ID,
-        nullptr,
-        0,
-        {tasks, kFanout},
-        nullptr,
-        0,
-        outgoing,
-        kFanout,
-        inputs,
-        1,
-        nullptr,
-        0,
-        resources,
-        kFanout + 1,
-        dimensions,
-        1,
-        kFanout * kTensorBytes,
-        bindings,
-        kFanout,
-        bindingData,
-        2 * kFanout,
-    };
+    TileABI abi{};
+    abi.core_id = MITTENS_TILE_ID;
+    abi.dispatch_tasks = {tasks, kFanout};
+    abi.outgoing_routes = outgoing;
+    abi.outgoing_route_count = kFanout;
+    abi.model_inputs = inputs;
+    abi.model_input_count = 1;
+    abi.resources = resources;
+    abi.resource_count = kFanout + 1;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size = kFanout * kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = kFanout;
+    abi.task_binding_data = bindingData;
+    abi.task_binding_data_count = 2 * kFanout;
 
     alignas(64) float modelInput[kElementCount];
     for (uint32_t index = 0; index < kElementCount; ++index) {
@@ -464,6 +652,7 @@ void printProfile(const DeploymentProfile& profile)
         return 1;
     }
     mesh_nic::complete_memory_initialization();
+    delaySource();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
         if (step == DeploymentStep::WaitForReceive) {
@@ -535,29 +724,20 @@ void printProfile(const DeploymentProfile& profile)
             0,
         };
     }
-    const TileABI abi{
-        kDestinationTile,
-        nullptr,
-        0,
-        {tasks, kIncomingCount},
-        incoming,
-        kIncomingCount,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        resources,
-        kIncomingCount,
-        dimensions,
-        1,
-        kIncomingCount * kTensorBytes,
-        bindings,
-        kIncomingCount,
-        bindingData,
-        kIncomingCount,
-    };
+    TileABI abi{};
+    abi.core_id = kDestinationTile;
+    abi.dispatch_tasks = {tasks, kIncomingCount};
+    abi.incoming_routes = incoming;
+    abi.incoming_route_count = kIncomingCount;
+    abi.resources = resources;
+    abi.resource_count = kIncomingCount;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size = kIncomingCount * kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = kIncomingCount;
+    abi.task_binding_data = bindingData;
+    abi.task_binding_data_count = kIncomingCount;
 
     DeploymentProfile profile{nullptr, readCycle};
     DeploymentTrace trace{nullptr, emitTaskTrace};
@@ -567,6 +747,7 @@ void printProfile(const DeploymentProfile& profile)
         return 3;
     }
     mesh_nic::complete_memory_initialization();
+    delayReceiver();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
         if (step == DeploymentStep::WaitForReceive) {
@@ -576,7 +757,23 @@ void printProfile(const DeploymentProfile& profile)
         }
     }
     if (runtime.failed()) {
-        uart_puts("FANOUT_DESTINATION_FAIL\n");
+        uart_puts("FANOUT_DESTINATION_FAIL code=");
+        printUnsigned(static_cast<uint32_t>(runtime.error()));
+        if (runtime.error() == DeploymentError::InvalidFrame) {
+            const InvalidFrameDiagnostic& diagnostic =
+                runtime.invalidFrameDiagnostic();
+            uart_puts(" reason=");
+            printUnsigned(static_cast<uint32_t>(diagnostic.reason));
+            uart_puts(" source=");
+            printUnsigned(diagnostic.source_tile);
+            uart_puts(" route=");
+            printUnsigned(diagnostic.route_id);
+            uart_puts(" expected=");
+            printUnsigned(diagnostic.expected);
+            uart_puts(" actual=");
+            printUnsigned(diagnostic.actual);
+        }
+        uart_putc('\n');
         return 4;
     }
     uart_puts("FANOUT_DESTINATION_PASS fanout=");
@@ -718,29 +915,25 @@ int runBidirectional()
             };
         }
     }
-    const TileABI abi{
-        tile,
-        nullptr,
-        0,
-        {tasks, kTaskCount},
-        incoming,
-        kRouteCount,
-        outgoing,
-        kRouteCount,
-        inputs,
-        1,
-        nullptr,
-        0,
-        resources,
-        kResourceCount,
-        dimensions,
-        1,
-        static_cast<uint64_t>(kWaves + kRouteCount) * kTensorBytes,
-        bindings,
-        kTaskCount,
-        bindingData,
-        kBindingDataCount,
-    };
+    TileABI abi{};
+    abi.core_id = tile;
+    abi.dispatch_tasks = {tasks, kTaskCount};
+    abi.incoming_routes = incoming;
+    abi.incoming_route_count = kRouteCount;
+    abi.outgoing_routes = outgoing;
+    abi.outgoing_route_count = kRouteCount;
+    abi.model_inputs = inputs;
+    abi.model_input_count = 1;
+    abi.resources = resources;
+    abi.resource_count = kResourceCount;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size =
+        static_cast<uint64_t>(kWaves + kRouteCount) * kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = kTaskCount;
+    abi.task_binding_data = bindingData;
+    abi.task_binding_data_count = kBindingDataCount;
 
     alignas(64) float modelInput[kElementCount];
     for (uint32_t index = 0; index < kElementCount; ++index) {
@@ -776,7 +969,9 @@ int runBidirectional()
 
 extern "C" int tile_main()
 {
-#if defined(MITTENS_FANOUT_BIDIRECTIONAL)
+#if defined(MITTENS_FANOUT_SOFTWARE_PAYLOAD)
+    return runSoftwarePayload();
+#elif defined(MITTENS_FANOUT_BIDIRECTIONAL)
     return runBidirectional();
 #else
     if constexpr (MITTENS_TILE_ID < kSourceCount) {

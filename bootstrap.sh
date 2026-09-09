@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly ACTION="${1:-all}"
+readonly ACTION="${1:-hardware}"
 # shellcheck source=build-scripts/common.sh
 source "${ROOT}/build-scripts/common.sh"
 
@@ -22,10 +22,14 @@ usage() {
 usage: ./bootstrap.sh [action]
 
 actions:
-  all            initialize, build, and run all system tests (default)
+  hardware       rebuild QEMU/Mittens and run hardware tests using existing dependencies (default)
+  build-hardware rebuild QEMU/Mittens using existing dependencies
+  test-hardware  run the hardware correctness suite only
+  all            explicitly initialize/build the full environment and run all suites
   build          initialize and build the complete environment
   check          verify host build dependencies
   compiler-python install the pinned local PyTorch compiler environment
+  riscv-gnu-toolchain initialize and install the bare-metal RISC-V GNU toolchain
   llvm           initialize and build LLVM/Clang/LLD/MLIR
   torch-mlir     initialize and build LLVM/MLIR and Torch-MLIR
   sculptor-mlir  initialize and build LLVM/MLIR and Sculptor-MLIR
@@ -35,7 +39,7 @@ actions:
   sst            initialize and build SST Core, memHierarchy, Merlin, and Mittens
   runtime        build and install the bare-metal runtime archive
   platform       build all bare-metal test images
-  test           run compiler, element, boot, mesh, routing, and compute proofs
+  test           run the hardware correctness suite (same as test-hardware)
   test-runtime   run host, QEMU, and QEMU/SST runtime proofs
   test-elements  run the complete Mittens element test directory
 EOF
@@ -58,33 +62,16 @@ build_environment() {
 }
 
 run_system_tests() {
-    "${ROOT}/components/elements/mittens/tests/run-test.sh"
-    "${ROOT}/visualizer/tests/run-test.sh"
-    "${ROOT}/tests/compiler/torch-mlir/run-test.sh"
-    "${ROOT}/tests/compiler/pytorch-single-core/run-test.sh"
-    "${ROOT}/tests/compiler/sculptor-ra-tree-single-tile/run-test.sh"
-    "${ROOT}/tests/runtime/library/run-test.sh"
-    "${ROOT}/tests/memory/private-l1/run-test.sh"
-    "${ROOT}/tests/runtime/deployment-pair/run-test.sh"
-    "${ROOT}/tests/platform/hello/run-test.sh"
-    "${ROOT}/tests/platform/riscv-vector/run-test.sh"
-    "${ROOT}/tests/platform/cpu-timing/run-test.sh"
-    "${ROOT}/tests/analog/instructions/run-test.sh"
-    "${ROOT}/tests/analog/ops/run-test.sh"
-    "${ROOT}/tests/analog/timing/run-test.sh"
-    "${ROOT}/tests/analog/mesh-2x2/run-test.sh"
-    "${ROOT}/tests/analog/route-2x2/run-test.sh"
-    "${ROOT}/tests/analog/mesh-2x2-dual-array/run-test.sh"
-    "${ROOT}/tests/network/pair/run-test.sh"
-    "${ROOT}/tests/network/mesh-3x3/run-test.sh"
-    "${ROOT}/tests/network/timing/run-test.sh"
-    "${ROOT}/tests/network/transmit-fanout/run-test.sh"
-    "${ROOT}/tests/memory/timing/run-test.sh"
-    "${ROOT}/tests/network/pipeline/run-test.sh"
-    "${ROOT}/tests/analog/distributed-matvec/run-test.sh"
+    bash "${ROOT}/tests/run-all.sh" --suite all
 }
 
 case "${ACTION}" in
+    hardware|build-hardware)
+        python3 "${ROOT}/tools/hardware/build.py" all -j "${BUILD_JOBS}"
+        if [[ "${ACTION}" == hardware ]]; then
+            bash "${ROOT}/tests/run-all.sh" --suite hardware
+        fi
+        ;;
     all)
         "${ROOT}/build-scripts/check-dependencies.sh"
         initialize_submodules "${required_submodules[@]}"
@@ -101,6 +88,9 @@ case "${ACTION}" in
         ;;
     compiler-python)
         "${ROOT}/build-scripts/build-compiler-python.sh"
+        ;;
+    riscv-gnu-toolchain|gnu-riscv-toolchain)
+        "${ROOT}/build-scripts/build-riscv-gnu-toolchain.sh"
         ;;
     llvm)
         initialize_submodules third_party/llvm-project
@@ -142,11 +132,11 @@ case "${ACTION}" in
     platform)
         "${ROOT}/build-scripts/build-platform.sh" all
         ;;
-    test)
-        run_system_tests
+    test|test-hardware)
+        bash "${ROOT}/tests/run-all.sh" --suite hardware
         ;;
     test-elements)
-        "${ROOT}/components/elements/mittens/tests/run-test.sh"
+        bash "${ROOT}/tests/run-all.sh" --suite hardware --case component
         ;;
     test-runtime)
         "${ROOT}/tests/runtime/library/run-test.sh"

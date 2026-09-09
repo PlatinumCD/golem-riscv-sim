@@ -1,0 +1,9 @@
+{
+  "schema": "sculptor.deployment",
+  "version": 2,
+  "active_tile_ids": [0, 1],
+  "synchronization": {
+    "mode": "bulk_barrier",
+    "semantic_epoch_count": 3
+  }
+}

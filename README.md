@@ -1,5 +1,9 @@
 # Golem RISC-V simulation
 
+Correctness and regression checks live in [`tests/`](docs/testing.md).
+Architecture experiments and their dashboards live in [`studies/`](studies/README.md).
+Use `python3 studies/run.py --list` to discover runnable studies.
+
 This repository reproduces an AArch64-hosted compiler and simulation stack for
 the bare-metal Golem RISC-V tile platform. It builds the custom LLVM/MLIR
 compiler, a pinned PyTorch/Torch-MLIR import and lowering path, the
@@ -33,13 +37,12 @@ not part of the required build or runtime.
 
 ## Quick start
 
-After installing the host dependencies documented in
-[`docs/building.md`](docs/building.md), run:
+For hardware development with the existing pinned toolchain, SST Core, Merlin,
+memHierarchy and CrossSim installations, run:
 
 ```bash
-git clone --recurse-submodules https://github.com/PlatinumCD/golem-riscv-sim.git
-cd golem-riscv-sim
-./bootstrap.sh
+JOBS=8 bash bootstrap.sh build-hardware
+bash tests/run-all.sh --suite hardware
 ```
 
 Bootstrap uses every online host CPU by default. Override that with `JOBS`:
@@ -48,17 +51,17 @@ Bootstrap uses every online host CPU by default. Override that with `JOBS`:
 JOBS=8 ./bootstrap.sh
 ```
 
-The build succeeds only after the element, runtime, and target/system proofs
-pass:
+The default bootstrap action builds and tests hardware. Missing dependencies
+are reported rather than silently rebuilt; this workflow does not claim a
+dependency-free fresh checkout. See [building](docs/building.md) for scope.
+Compiler/model suites are explicit opt-ins. Useful hardware entry points are:
 
 ```bash
-./components/elements/mittens/tests/run-test.sh
-./visualizer/tests/run-test.sh
-./tests/compiler/torch-mlir/run-test.sh
-./tests/compiler/pytorch-single-core/run-test.sh
-./tests/compiler/sculptor-ra-tree-single-tile/run-test.sh
+python3 -B tools/hardware/verify.py
+bash tests/run-all.sh --list
+bash tests/run-all.sh --case component
 ./tests/runtime/library/run-test.sh
-./tests/memory/private-l1/run-test.sh
+./tests/memory/global-ram/run-test.sh
 ./tests/runtime/deployment-pair/run-test.sh
 ./tests/platform/hello/run-test.sh
 ./tests/platform/riscv-vector/run-test.sh
@@ -73,7 +76,7 @@ pass:
 ./tests/network/mesh-3x3/run-test.sh
 ./tests/network/timing/run-test.sh
 ./tests/network/transmit-fanout/run-test.sh
-./tests/memory/timing/run-test.sh
+./tests/memory/scratchpad-dma/run-test.sh
 ./tests/network/pipeline/run-test.sh
 ./tests/analog/distributed-matvec/run-test.sh
 ```
@@ -91,35 +94,36 @@ Run one subsystem group with:
 ./tests/run-group.sh network
 ```
 
-Run all root test groups with:
+Run the hardware gate (default), or explicitly select the entire repository suite:
 
 ```bash
-./tests/run-all.sh
+bash tests/run-all.sh --suite hardware
+# Explicitly includes compiler and model workloads:
+bash tests/run-all.sh --suite all
 ```
 
 ## Repository layout
 
 ```text
 build-scripts/                  reproducible preparation and build operations
-bridge/                         shared QEMU/SST bridge ABI
-components/devices/             project-owned QEMU device sources
-components/elements/mittens/    project-owned SST element and its tests
-components/qemu/                project-owned RISC-V decoder/helper sources
-config/                         pinned revisions and Platform v0.1 build settings
+src/bridge/                     shared QEMU/SST bridge ABI
+src/qemu/devices/               project-owned QEMU device sources
+src/sst/                        project-owned SST element and component tests
+src/qemu/instructions/          project-owned RISC-V decoder/helper sources
+src/config/                     pinned revisions and Platform v0.1 build settings
 docs/                           platform, build, and testing documentation
-patches/qemu/                   minimal upstream QEMU integration changes
-platform/                       bare-metal startup, linker script, and MMIO API
+src/patches/qemu/               minimal upstream QEMU integration changes
+src/platform/                   bare-metal startup, linker script, and MMIO API
 tests/platform/                 boot, ISA, and CPU tests
 tests/compiler/                 compiler integration tests
 tests/runtime/                  tile runtime tests
-tests/memory/                   cache, memory, and scratchpad tests
+tests/memory/                   global RAM and scratchpad/DMA tests
 tests/network/                  mesh and transport tests
 tests/analog/                   analog accelerator tests
 tests/models/                   complete model deployments
 tests/validation/               cross-component validation tests
 tests/support/                  shared test infrastructure
 third_party/                    pinned compilers, runtime source, and simulators
-visualizer/                     opt-in mesh activity exporter and web viewer
 build/                          generated source and build trees (ignored)
 install/                        generated local installation (ignored)
 ```
@@ -148,21 +152,19 @@ small integration patches there.
 - [`docs/building.md`](docs/building.md) documents host requirements and build
   entry points.
 - [`docs/testing.md`](docs/testing.md) describes every system and element proof.
-- [`visualizer/README.md`](visualizer/README.md) documents the opt-in animated
-  mesh and timeline view for tasks, tensor routes, DMA, analog work, and waits.
 - [`docs/research-goals.md`](docs/research-goals.md) separates simulator-credibility work
   from the analog-versus-digital architectural study.
 - [`docs/architecture-review.md`](docs/architecture-review.md) records the
   current experimental architecture, timing parameters, and claim limits.
 - [`docs/compiler-scoring-advice.md`](docs/compiler-scoring-advice.md) gives
   evidence-backed guidance for Sculptor's placement and timing model.
-- [`config/epoch-c.env`](config/epoch-c.env) preserves the first
+- [`src/config/epoch-c.env`](src/config/epoch-c.env) preserves the first
   component-validated experimental baseline. Epoch C used a coarse
   4,096-word network timing cell.
-- [`config/epoch-d.env`](config/epoch-d.env) is the corrected physical-word
+- [`src/config/epoch-d.env`](src/config/epoch-d.env) is the corrected physical-word
   network baseline: one 32-bit timing cell with the same 64 KiB router
   capacity.
-- [`config/epoch-e.env`](config/epoch-e.env) preserves the physical-word
+- [`src/config/epoch-e.env`](src/config/epoch-e.env) preserves the physical-word
   network model while making 100 ns the deployment and compiler cost of one
   analog MVM. Epoch C and Epoch D remain frozen historical baselines.
 
@@ -177,7 +179,7 @@ small integration patches there.
 - SST Core `v16.0.0_Final`; and
 - SST Elements `v16.0.0_Final`.
 
-Exact commit IDs are recorded in `config/versions.env` and by the Git
+Exact commit IDs are recorded in `src/config/versions.env` and by the Git
 submodule links.
 
 The runtime directory contains the implemented Platform v0.1 foundations:

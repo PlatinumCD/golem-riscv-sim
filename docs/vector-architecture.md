@@ -171,7 +171,7 @@ QEMU with:
 -cpu rv64,v=true,vext_spec=v1.0,vlen=256,elen=64
 ```
 
-Before entering `tile_main`, `platform/crt0.S` must:
+Before entering `tile_main`, `src/platform/crt0.S` must:
 
 1. enable floating-point state through `mstatus.FS`;
 2. enable vector state through `mstatus.VS`; and

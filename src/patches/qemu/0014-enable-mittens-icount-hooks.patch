@@ -1,0 +1,69 @@
+diff --git a/accel/tcg/tcg-accel-ops-icount.c b/accel/tcg/tcg-accel-ops-icount.c
+--- a/accel/tcg/tcg-accel-ops-icount.c
++++ b/accel/tcg/tcg-accel-ops-icount.c
+@@ -26,6 +26,7 @@
+ #include "sysemu/replay.h"
+ #include "sysemu/cpu-timers.h"
+ #include "qemu/main-loop.h"
++#include "hw/misc/mittens_sync.h"
+ #include "qemu/guest-random.h"
+ #include "exec/exec-all.h"
+ 
+@@ -105,6 +106,8 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+ {
+     int insns_left;
+ 
++    cpu_budget = mittens_sync_wait_for_grant(cpu_budget);
++
+     /*
+      * These should always be cleared by icount_process_data after
+      * each vCPU execution. However u16.high can be raised
+@@ -117,7 +120,9 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+ 
+     replay_mutex_lock();
+ 
+-    cpu->icount_budget = MIN(icount_get_limit(), cpu_budget);
++    cpu->icount_budget = mittens_sync_available() ?
++        cpu_budget :
++        MIN(icount_get_limit(), cpu_budget);
+     insns_left = MIN(0xffff, cpu->icount_budget);
+     cpu->neg.icount_decr.u16.low = insns_left;
+     cpu->icount_extra = cpu->icount_budget - insns_left;
+@@ -135,6 +140,7 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+ 
+ void icount_process_data(CPUState *cpu)
+ {
++    mittens_sync_quantum_end();
+     /* Account for executed instructions */
+     icount_update(cpu);
+ 
+diff --git a/accel/tcg/icount-common.c b/accel/tcg/icount-common.c
+--- a/accel/tcg/icount-common.c
++++ b/accel/tcg/icount-common.c
+@@ -28,7 +28,8 @@
+ #include "migration/vmstate.h"
+ #include "qapi/error.h"
+ #include "qemu/error-report.h"
+ #include "sysemu/cpus.h"
++#include "hw/misc/mittens_sync.h"
+ #include "sysemu/qtest.h"
+ #include "qemu/main-loop.h"
+ #include "qemu/option.h"
+@@ -85,5 +86,8 @@ static void icount_update_locked(CPUState *cpu)
+ {
+     int64_t executed = icount_get_executed(cpu);
++    mittens_sync_account_icount(
++        executed,
++        cpu->icount_budget - executed);
+     cpu->icount_budget -= executed;
+ 
+     qatomic_set_i64(&timers_state.qemu_icount,
+@@ -340,6 +344,7 @@ static void icount_start_warp_timer(void)
+     if (deadline < 0) {
+         static bool notified;
+-        if (!icount_sleep && !notified) {
++        if (!icount_sleep && !notified &&
++            !mittens_sync_available()) {
+             warn_report("icount sleep disabled and no active timers");
+             notified = true;
+         }

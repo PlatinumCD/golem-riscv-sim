@@ -4,7 +4,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
-readonly TEST_BUILD="${BUILD_ROOT}/tests/mesh-3x3"
+readonly TEST_BUILD="${TEST_RESULTS_ROOT}/mesh-3x3"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
@@ -89,7 +89,7 @@ for backend in merlin mittens; do
         west=west
         south=south
         north=north
-        local_port=local
+        local_port=local0
     fi
 
     # Forward path: (0,0) -> (1,0) -> (2,0) -> (2,1) -> (2,2).

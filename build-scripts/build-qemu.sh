@@ -8,6 +8,9 @@ source "${SCRIPT_DIR}/common.sh"
 readonly SOURCE="${PREPARED_SOURCE_ROOT}/qemu"
 readonly BUILD="${BUILD_ROOT}/qemu"
 readonly INSTALL="${INSTALL_ROOT}/qemu"
+require_owned_comparison_output "${INSTALL}" "${INSTALL_ROOT}"
+require_owned_comparison_output "${BUILD}" "${BUILD_ROOT}"
+require_owned_comparison_output "${SOURCE}" "${PREPARED_SOURCE_ROOT}"
 
 if [[ -n "${QEMU_PYTHON:-}" ]]; then
     readonly PYTHON="${QEMU_PYTHON}"

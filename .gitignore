@@ -1,5 +1,9 @@
 /build/
 /install/
+/tests/results/
+/tests/models/sculptor-ra-tree/
+/tests/compiler/
+/studies/
 /results/sweep-archives/
 /config-temp/
 /config.log

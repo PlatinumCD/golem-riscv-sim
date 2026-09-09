@@ -1,0 +1,85 @@
+diff --git a/target/riscv/translate.c b/target/riscv/translate.c
+--- a/target/riscv/translate.c
++++ b/target/riscv/translate.c
+@@ -1128,6 +1128,10 @@ static bool is_mittens_vector_memory_instruction(uint32_t opcode)
+            (width == 0 || width >= 5);
+ }
+ 
++bool mittens_sync_memory_timing_enabled(void);
++static bool is_mittens_memory_instruction(uint32_t opcode,
++                                          target_ulong instruction_length);
++
+ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
+ {
+     /*
+@@ -1147,6 +1151,10 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
+     /* Check for compressed insn */
+     if (ctx->cur_insn_len == 2) {
+         ctx->opcode = opcode;
++        if (mittens_sync_memory_timing_enabled() &&
++            is_mittens_memory_instruction(opcode, 2)) {
++            translator_io_start(&ctx->base);
++        }
+         /*
+          * The Zca extension is added as way to refer to instructions in the C
+          * extension that do not include the floating-point loads and stores
+@@ -1163,6 +1171,16 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
+                                              ctx->base.pc_next + 2));
+         ctx->opcode = opcode32;
+ 
++        if (mittens_sync_memory_timing_enabled() &&
++            is_mittens_memory_instruction(opcode32, 4)) {
++            /*
++             * End the TB at every yielding instruction, including FENCE.
++             * Set can_do_io before its helpers, avoiding MMIO recompilation
++             * after an issued-vector counter has already been updated.
++             */
++            translator_io_start(&ctx->base);
++        }
++
+         if (is_mittens_vector_memory_instruction(opcode32)) {
+             /*
+              * Count the issued vector memory instruction before its element
+@@ -1261,12 +1279,24 @@ static bool is_mittens_vector_instruction(
+            (width == 0 || width >= 5);
+ }
+ 
+-bool mittens_sync_memory_timing_enabled(void);
+-static bool is_mittens_memory_instruction(uint32_t opcode)
++static bool is_mittens_memory_instruction(uint32_t opcode,
++                                          target_ulong instruction_length)
+ {
++    if (instruction_length == 2) {
++        const uint32_t quadrant = extract32(opcode, 0, 2);
++        const uint32_t funct3 = extract32(opcode, 13, 3);
++
++        /* Compact register/stack loads and stores, including Zcb's quadrant
++         * zero group. A conservative boundary for non-memory Zcb operations
++         * is harmless; missing a yielding load is not.
++         */
++        return (quadrant == 0 && funct3 != 0) ||
++               (quadrant == 2 && funct3 != 0 && funct3 != 4);
++    }
+     switch (extract32(opcode, 0, 7)) {
+     case 0x03: /* integer load */
+     case 0x07: /* floating-point or vector load */
++    case 0x0f: /* FENCE can publish a synchronous memory boundary */
+     case 0x23: /* integer store */
+     case 0x27: /* floating-point or vector store */
+     case 0x2f: /* atomic memory operation */
+@@ -1287,15 +1317,6 @@ static void riscv_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
+ 
+     ctx->ol = ctx->xl;
+     decode_opc(env, ctx, opcode16);
+-    if (mittens_sync_memory_timing_enabled() &&
+-        is_mittens_memory_instruction(ctx->opcode)) {
+-        /*
+-         * QEMU charges a translated block's instruction count at TB entry.
+-         * Timed memory hooks run inside the TB, so end it here to keep the
+-         * event boundary from observing instructions that have not run yet.
+-         */
+-        translator_io_start(&ctx->base);
+-    }
+     if (is_mittens_vector_instruction(ctx->opcode, ctx->cur_insn_len) &&
+         !is_mittens_vector_memory_instruction(ctx->opcode)) {
+         gen_helper_mittens_sync_vector_instruction();

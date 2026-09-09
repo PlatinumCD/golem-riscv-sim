@@ -124,12 +124,14 @@ bool tryStartReceiveWords(
     void*,
     uint32_t source,
     uint32_t route_id,
+    uint64_t logical_iteration,
     void* destination,
     uint32_t word_count
 ) {
     return mesh_nic::try_start_receive_words(
         source,
         route_id,
+        logical_iteration,
         destination,
         word_count
     );
@@ -138,10 +140,22 @@ bool tryStartReceiveWords(
 bool tryReceiveWordsCompletion(
     void*,
     uint32_t* source,
-    uint32_t* route_id
+    uint32_t* route_id,
+    uint64_t* logical_iteration
 ) {
     return mesh_nic::try_receive_words_completion(
-        source, route_id);
+        source, route_id, logical_iteration);
+}
+
+bool tryClaimReceiveWords(
+    void*,
+    uint32_t source,
+    uint32_t route_id,
+    uint64_t logical_iteration,
+    uint32_t word_count
+) {
+    return mesh_nic::try_claim_receive_words(
+        source, route_id, logical_iteration, word_count);
 }
 
 const RoutedWordTransport transport{
@@ -151,6 +165,7 @@ const RoutedWordTransport transport{
     trySendWords,
     tryStartReceiveWords,
     tryReceiveWordsCompletion,
+    tryClaimReceiveWords,
 };
 
 void emitTaskTrace(
@@ -202,29 +217,22 @@ DeploymentTrace taskTrace{nullptr, emitTaskTrace};
     const TaskBinding bindings[] = {
         {11, 0, 1, 1, 1, 2, 0, 0},
     };
-    const TileABI abi{
-        0,
-        nullptr,
-        0,
-        {tasks, 1},
-        nullptr,
-        0,
-        outgoing,
-        1,
-        inputs,
-        1,
-        nullptr,
-        0,
-        resources,
-        2,
-        dimensions,
-        1,
-        kTensorBytes,
-        bindings,
-        1,
-        binding_data,
-        2,
-    };
+    TileABI abi{};
+    abi.core_id = 0;
+    abi.dispatch_tasks = {tasks, 1};
+    abi.outgoing_routes = outgoing;
+    abi.outgoing_route_count = 1;
+    abi.model_inputs = inputs;
+    abi.model_input_count = 1;
+    abi.resources = resources;
+    abi.resource_count = 2;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size = kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = 1;
+    abi.task_binding_data = binding_data;
+    abi.task_binding_data_count = 2;
 
     alignas(64) float input[kElementCount];
     for (uint32_t index = 0; index < kElementCount; ++index) {
@@ -289,29 +297,22 @@ DeploymentTrace taskTrace{nullptr, emitTaskTrace};
     const TaskBinding bindings[] = {
         {12, 0, 1, 1, 1, 2, 0, 0},
     };
-    const TileABI abi{
-        1,
-        nullptr,
-        0,
-        {tasks, 1},
-        incoming,
-        1,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        outputs,
-        1,
-        resources,
-        2,
-        dimensions,
-        1,
-        kTensorBytes,
-        bindings,
-        1,
-        binding_data,
-        2,
-    };
+    TileABI abi{};
+    abi.core_id = 1;
+    abi.dispatch_tasks = {tasks, 1};
+    abi.incoming_routes = incoming;
+    abi.incoming_route_count = 1;
+    abi.model_outputs = outputs;
+    abi.model_output_count = 1;
+    abi.resources = resources;
+    abi.resource_count = 2;
+    abi.resource_dimensions = dimensions;
+    abi.resource_dimension_count = 1;
+    abi.workspace_size = kTensorBytes;
+    abi.task_bindings = bindings;
+    abi.task_binding_count = 1;
+    abi.task_binding_data = binding_data;
+    abi.task_binding_data_count = 2;
 
     alignas(64) float output[kElementCount] = {};
     mesh_nic::complete_memory_initialization();

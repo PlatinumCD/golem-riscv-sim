@@ -8,7 +8,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 readonly LLVM="${INSTALL_ROOT}/llvm"
 readonly CLANG="${LLVM}/bin/clang"
 readonly CLANGXX="${LLVM}/bin/clang++"
-readonly OUTPUT_ROOT="${BUILD_ROOT}/tests/producer-mvm-recombine-distance"
+readonly OUTPUT_ROOT="${TEST_RESULTS_ROOT}/producer-mvm-recombine-distance"
 readonly COMMON_OUTPUT="${OUTPUT_ROOT}/common"
 readonly CONFIGURATIONS="${OUTPUT_ROOT}/configurations.tsv"
 readonly WIDTH=9
@@ -43,15 +43,15 @@ cxx_flags=(
     -Wextra
     -Wpedantic
     -Werror
-    "-I${PROJECT_ROOT}/platform"
+    "-I${PLATFORM_ROOT}"
 )
 
 "${CLANG}" "${common_flags[@]}" \
-    -c "${PROJECT_ROOT}/platform/crt0.S" \
+    -c "${PLATFORM_STARTUP_ROOT}/crt0.S" \
     -o "${COMMON_OUTPUT}/crt0.o"
 for source in uart platform-exit; do
     "${CLANGXX}" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/${source}.cpp" \
+        -c "$(platform_source "${source}.cpp")" \
         -o "${COMMON_OUTPUT}/${source}.o"
 done
 "${CLANGXX}" "${cxx_flags[@]}" \
@@ -62,7 +62,7 @@ done
     -fuse-ld=lld \
     -Wl,--build-id=none \
     -Wl,--gc-sections \
-    "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+    "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
     "${COMMON_OUTPUT}/crt0.o" \
     "${COMMON_OUTPUT}/uart.o" \
     "${COMMON_OUTPUT}/platform-exit.o" \
@@ -104,7 +104,7 @@ build_trial() {
             -fuse-ld=lld \
             -Wl,--build-id=none \
             -Wl,--gc-sections \
-            "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+            "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
             "${COMMON_OUTPUT}/crt0.o" \
             "${COMMON_OUTPUT}/uart.o" \
             "${COMMON_OUTPUT}/platform-exit.o" \

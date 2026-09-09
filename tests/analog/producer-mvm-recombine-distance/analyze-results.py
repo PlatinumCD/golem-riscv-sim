@@ -13,6 +13,8 @@ MVM_TASK = 2000
 RECOMBINE_TASK = 3000
 ACTIVATION_ROUTE = 100
 PARTIAL_ROUTES = {200, 201}
+# Matches the route/execution-tagged frame emitted by main.cpp.
+FRAME_HEADER_WORDS = 7
 TICKS_PER_NS = 1000
 
 
@@ -101,8 +103,8 @@ def analyze_trial(trial: dict[str, str]) -> dict[str, object]:
         512 * input_distance + 512 * output_distance
     )
     expected_protocol_words = (
-        (5 if input_distance else 0) +
-        (10 if output_distance else 0)
+        (FRAME_HEADER_WORDS if input_distance else 0) +
+        (2 * FRAME_HEADER_WORDS if output_distance else 0)
     )
     if (
         data_words != expected_words or

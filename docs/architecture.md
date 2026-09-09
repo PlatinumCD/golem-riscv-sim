@@ -70,7 +70,7 @@ timing memory controller     mittens.wormholeRouter <----> neighboring routers
 
 The guest-visible platform contract is defined in
 [`platform-v0.1.md`](platform-v0.1.md). The shared host bridge is an implementation
-detail documented in [`../bridge/README.md`](../bridge/README.md).
+detail documented in [`../src/bridge/README.md`](../src/bridge/README.md).
 
 ## Responsibility and ownership
 
@@ -134,15 +134,15 @@ worktrees and overlays project-owned integration code:
 
 ```text
 third_party/qemu
-  + components/devices/mittens-{sync,nic,analog}
-  + components/qemu/golem-analog
-  + bridge/include/mittens/{Sync,NIC,Analog}TileBridge.h
-  + patches/qemu
+  + src/components/devices/mittens-{sync,nic,analog}
+  + src/components/qemu/golem-analog
+  + src/bridge/include/mittens/{Sync,NIC,Analog}TileBridge.h
+  + src/patches/qemu
       -> build/sources/qemu
 
 third_party/sst-elements
-  + components/elements/mittens
-  + bridge/include/mittens/{Sync,NIC,Analog}TileBridge.h
+  + src/components/elements/mittens
+  + src/bridge/include/mittens/{Sync,NIC,Analog}TileBridge.h
       -> build/sources/sst-elements
 ```
 

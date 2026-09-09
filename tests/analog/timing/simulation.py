@@ -30,6 +30,9 @@ tile.addParams(
         "analog_backend": "native",
         "analog_link_clock": "1GHz",
         "analog_compute_latency_cycles": 8,
+        "analog_command_batching": os.environ.get(
+            "MITTENS_ANALOG_COMMAND_BATCHING", "false"
+        ),
         "profile_mode": "trace",
         "profile_output_directory": required(
             "MITTENS_ANALOG_TIMING_PROFILE"

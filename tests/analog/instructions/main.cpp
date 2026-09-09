@@ -14,11 +14,9 @@ alignas(64) float matrix0[16] = {
     0.0F, 0.0F, 0.0F, 1.0F,
 };
 
-alignas(64) float matrix1[16] = {
+alignas(64) float matrix1[8] = {
     0.5F, 0.0F, 0.0F, 0.0F,
     0.0F, 0.5F, 0.0F, 0.0F,
-    0.0F, 0.0F, 0.5F, 0.0F,
-    0.0F, 0.0F, 0.0F, 0.5F,
 };
 
 alignas(64) float input0[4] = {0.5F, -0.25F, 0.125F, -0.5F};
@@ -27,12 +25,20 @@ alignas(64) float output0[4] = {};
 alignas(64) float output1[4] = {};
 alignas(64) float movedOutput[4] = {};
 
-unsigned long setMatrix(const float* matrix, uint32_t arrayId) {
+unsigned long setMatrix(
+    const float* matrix,
+    uint32_t arrayId,
+    uint32_t rows,
+    uint32_t columns) {
     unsigned long status;
+    const unsigned long descriptor =
+        (static_cast<unsigned long>(columns) << 20) |
+        (static_cast<unsigned long>(rows) << 8) |
+        arrayId;
     asm volatile(
         "mvm.set %0, %1, %2"
         : "=r"(status)
-        : "r"(matrix), "r"(static_cast<unsigned long>(arrayId))
+        : "r"(matrix), "r"(descriptor)
         : "memory");
     return status;
 }
@@ -105,16 +111,18 @@ bool statusOk(unsigned long status, const char* operation) {
 
 extern "C" int tile_main() {
     constexpr float expected0[4] = {0.5F, -0.25F, 0.125F, -0.5F};
-    constexpr float expected1[4] = {0.125F, 0.25F, -0.25F, 0.0625F};
-    constexpr float expectedMoved[4] = {0.25F, -0.125F, 0.0625F, -0.25F};
+    constexpr float expected1[4] = {0.125F, 0.25F, 0.0F, 0.0F};
+    constexpr float expectedMoved[4] = {0.25F, -0.125F, 0.0F, 0.0F};
 
     /*
      * Issue work to both independent array queues before either blocking
      * store. Their transfers share one 256-bit tile link, while their
      * compute phases can still overlap.
      */
-    if (!statusOk(setMatrix(matrix0, kArray0), "mvm.set array 0") ||
-        !statusOk(setMatrix(matrix1, kArray1), "mvm.set array 1") ||
+    if (!statusOk(
+            setMatrix(matrix0, kArray0, 4, 4), "mvm.set array 0") ||
+        !statusOk(
+            setMatrix(matrix1, kArray1, 2, 4), "mvm.set array 1") ||
         !statusOk(loadVector(input0, kArray0), "mvm.l array 0") ||
         !statusOk(loadVector(input1, kArray1), "mvm.l array 1") ||
         !statusOk(compute(kArray0), "mvm array 0") ||

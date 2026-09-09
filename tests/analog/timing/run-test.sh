@@ -8,7 +8,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly OUTPUT_ROOT="${BUILD_ROOT}/tests/analog-timing-validation"
+readonly OUTPUT_ROOT="${TEST_RESULTS_ROOT}/analog-timing-validation"
 readonly ANALYZER="${TEST_DIR}/analyze-results.py"
 readonly RESULTS="${OUTPUT_ROOT}/results.csv"
 
@@ -31,6 +31,7 @@ run_case() {
     mkdir -p -- "${profile}"
     rm -f -- "${profile}/tile-0-analog.csv" \
         "${profile}/tile-0-summary.csv" \
+        "${profile}/tile-0-progress.csv" \
         "${log}"
 
     echo "[analog timing] case=${name} arrays=${arrays}"
@@ -47,6 +48,29 @@ run_case() {
     fi
     require_file "${profile}/tile-0-analog.csv"
     require_file "${profile}/tile-0-summary.csv"
+    require_file "${profile}/tile-0-progress.csv"
+    python3 - "${profile}" <<'PY'
+import csv
+from pathlib import Path
+import sys
+
+profile = Path(sys.argv[1])
+with (profile / "tile-0-progress.csv").open(
+        encoding="utf-8", newline="") as source:
+    progress = list(csv.DictReader(source))
+assert progress and progress[-1]["kind"] == "final", progress
+final = progress[-1]
+submitted = int(final["analog_commands_submitted"])
+completed = int(final["analog_commands_completed"])
+assert submitted == completed and submitted > 0, final
+
+with (profile / "tile-0-summary.csv").open(
+        encoding="utf-8", newline="") as source:
+    summary = {row["metric"]: int(row["value"])
+               for row in csv.DictReader(source)}
+assert summary["analog_commands_submitted"] == submitted, summary
+assert summary["analog_commands_completed"] == completed, summary
+PY
 }
 
 run_case single 1

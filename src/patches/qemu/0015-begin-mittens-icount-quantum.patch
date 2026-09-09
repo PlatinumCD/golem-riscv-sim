@@ -1,0 +1,9 @@
+diff --git a/accel/tcg/tcg-accel-ops-icount.c b/accel/tcg/tcg-accel-ops-icount.c
+--- a/accel/tcg/tcg-accel-ops-icount.c
++++ b/accel/tcg/tcg-accel-ops-icount.c
+@@ -134,4 +134,5 @@ void icount_prepare_for_run(CPUState *cpu, int64_t cpu_budget)
+         icount_notify_aio_contexts();
+         qemu_mutex_unlock_iothread();
+     }
++    mittens_sync_begin_quantum(cpu->icount_budget);
+ }

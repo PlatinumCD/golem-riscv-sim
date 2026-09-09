@@ -7,11 +7,12 @@ source "${SCRIPT_DIR}/common.sh"
 
 readonly SUBMODULE="${PROJECT_ROOT}/third_party/sst-elements"
 readonly SOURCE="${PREPARED_SOURCE_ROOT}/sst-elements"
-readonly ELEMENT="${PROJECT_ROOT}/components/elements/mittens"
+readonly ELEMENT="${SST_ELEMENT_ROOT}"
 readonly DESTINATION="${SOURCE}/src/sst/elements/mittens"
-readonly NIC_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/NICTileBridge.h"
-readonly ANALOG_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/AnalogTileBridge.h"
-readonly SYNC_BRIDGE_HEADER="${PROJECT_ROOT}/bridge/include/mittens/SyncTileBridge.h"
+readonly NIC_BRIDGE_HEADER="${HARDWARE_ROOT}/bridge/include/mittens/NICTileBridge.h"
+readonly ANALOG_BRIDGE_HEADER="${HARDWARE_ROOT}/bridge/include/mittens/AnalogTileBridge.h"
+readonly SYNC_BRIDGE_HEADER="${HARDWARE_ROOT}/bridge/include/mittens/SyncTileBridge.h"
+require_owned_comparison_output "${SOURCE}" "${PREPARED_SOURCE_ROOT}"
 
 for command in find git install; do
     require_command "${command}"
@@ -34,6 +35,10 @@ install -D -m 0644 "${ANALOG_BRIDGE_HEADER}" \
     "${DESTINATION}/include/mittens/AnalogTileBridge.h"
 install -D -m 0644 "${SYNC_BRIDGE_HEADER}" \
     "${DESTINATION}/include/mittens/SyncTileBridge.h"
+if [[ "${HARDWARE_TREE}" == src ]]; then
+    install -D -m 0644 "${HARDWARE_ROOT}/bridge/include/mittens/MemoryMap.h" \
+        "${DESTINATION}/include/mittens/MemoryMap.h"
+fi
 
 # Platform v0.1 needs the Merlin network, Mittens tile, and optional
 # memHierarchy memory timing element.

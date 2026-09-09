@@ -107,7 +107,7 @@ only one picosecond after blocking. This establishes that descriptor capacity
 and transmit/task overlap are not current bottlenecks for this GPT-2 mapping.
 
 The complete study is in
-[`docs/research-results/transmit-synchronization/`](docs/research-results/transmit-synchronization/README.md).
+[`research-results/transmit-synchronization/`](research-results/transmit-synchronization/README.md).
 
 ### Completed network timing milestone
 
@@ -556,7 +556,7 @@ one-million-instruction lookahead is 523 ns (1.45%) above the converged
 1,000/100-instruction result in a 24-route fanout. Epoch D therefore validates
 the physical-word network correction but does not yet close the receive-side
 co-simulation convergence gate. The machine-readable configuration is
-`config/epoch-d.env`.
+`src/config/epoch-d.env`.
 
 #### Epoch E: 100 ns analog-MVM baseline
 
@@ -565,7 +565,7 @@ synchronization configuration. It raises the compiler placement cost and SST
 execution delay of one analog MVM from 8 ns to 100 ns. The historical
 eight-cycle analog timing test remains a mechanism-validation fixture rather
 than evidence for the new physical latency. Epoch E's machine-readable
-configuration is `config/epoch-e.env`.
+configuration is `src/config/epoch-e.env`.
 
 ---
 

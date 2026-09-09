@@ -6,7 +6,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${TEST_DIR}/../../support/test-env.sh"
 
 readonly LLVM="${INSTALL_ROOT}/llvm"
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/transmit-fanout"
+readonly OUTPUT_DIR="${TEST_RESULTS_ROOT}/transmit-fanout"
 readonly RUNTIME_INCLUDE="${INSTALL_ROOT}/runtime/include"
 readonly RUNTIME_LIBRARY="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
 readonly TAIL_STRESS_WAVES="${MITTENS_TAIL_STRESS_WAVES:-4}"
@@ -41,17 +41,53 @@ cxx_flags=(
     -Wpedantic
     -Werror
     "-I${RUNTIME_INCLUDE}"
-    "-I${PROJECT_ROOT}/platform"
+    "-I${PLATFORM_ROOT}"
 )
 
 "${LLVM}/bin/clang" "${common_flags[@]}" \
-    -c "${PROJECT_ROOT}/platform/crt0.S" \
+    -c "${PLATFORM_STARTUP_ROOT}/crt0.S" \
     -o "${OUTPUT_DIR}/crt0.o"
 for source in uart platform-exit freestanding-memory; do
     "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/${source}.cpp" \
+        -c "$(platform_source "${source}.cpp")" \
         -o "${OUTPUT_DIR}/${source}.o"
 done
+
+# Model the Retina route-226 receive contract directly: the complete framed
+# payload arrives, but the destination intentionally consumes it through the
+# word interface and never registers an RX-DMA descriptor.
+for tile_id in 0 1; do
+    object="${OUTPUT_DIR}/software-payload-2-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/software-payload-2-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=1 \
+        -DMITTENS_FANOUT_SOURCE_COUNT=1 \
+        -DMITTENS_FANOUT_DESTINATION_TILE=1 \
+        -DMITTENS_FANOUT_SOFTWARE_PAYLOAD=1 \
+        -DMITTENS_FANOUT_SOFTWARE_PAYLOAD_WORDS=1022 \
+        -DMITTENS_FANOUT_RECEIVER_DELAY_CYCLES=500000 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
+done
+
+if [[ "${MITTENS_FANOUT_BUILD_SOFTWARE_PAYLOAD_ONLY:-0}" == "1" ]]; then
+    echo "built software-payload ELFs in ${OUTPUT_DIR}"
+    exit 0
+fi
 
 for tile_id in $(seq 0 31); do
     object="${OUTPUT_DIR}/tail-bidirectional-32-tile${tile_id}.o"
@@ -70,7 +106,7 @@ for tile_id in $(seq 0 31); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -98,7 +134,7 @@ for tile_id in $(seq 0 31); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -122,7 +158,7 @@ for fanout in 1 2 4 8 16 24; do
             -fuse-ld=lld \
             -Wl,--build-id=none \
             -Wl,--gc-sections \
-            "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+            "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
             "${OUTPUT_DIR}/crt0.o" \
             "${OUTPUT_DIR}/uart.o" \
             "${OUTPUT_DIR}/platform-exit.o" \
@@ -154,7 +190,7 @@ for fanout in 1 2 4 8 16 24; do
                 -fuse-ld=lld \
                 -Wl,--build-id=none \
                 -Wl,--gc-sections \
-                "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+                "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
                 "${OUTPUT_DIR}/crt0.o" \
                 "${OUTPUT_DIR}/uart.o" \
                 "${OUTPUT_DIR}/platform-exit.o" \
@@ -164,6 +200,75 @@ for fanout in 1 2 4 8 16 24; do
                 -o "${elf}"
         done
     done
+done
+
+# Hold the destination out of its receive loop until frames from two sources
+# have converged on the SST tile.  This deterministically exercises global
+# bridge admission while preserving each source's header/payload order.
+for tile_id in 0 1 2; do
+    object="${OUTPUT_DIR}/receive-order-2-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/receive-order-2-tile${tile_id}.elf"
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=8 \
+        -DMITTENS_FANOUT_ELEMENT_COUNT=1 \
+        -DMITTENS_FANOUT_SOURCE_COUNT=2 \
+        -DMITTENS_FANOUT_DESTINATION_TILE=2 \
+        -DMITTENS_FANOUT_INDEPENDENT_TASKS=1 \
+        -DMITTENS_FANOUT_RECEIVER_DELAY_CYCLES=250000 \
+        -DMITTENS_FANOUT_FIRST_DMA_DELAY_CYCLES=500000 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
+done
+
+# Fill every receive-bridge burst slot from source zero, then queue source-one
+# headers before the destination submits its first RX DMA.  The earlier
+# source-zero payload must be admitted ahead of those queued later headers.
+for tile_id in 0 1 2; do
+    object="${OUTPUT_DIR}/receive-head-blocking-2-tile${tile_id}.o"
+    elf="${OUTPUT_DIR}/receive-head-blocking-2-tile${tile_id}.elf"
+    source_delay_cycles=0
+    if ((tile_id == 1)); then
+        source_delay_cycles=200000
+    fi
+    "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
+        "-DMITTENS_TILE_ID=${tile_id}" \
+        -DMITTENS_FANOUT=8 \
+        -DMITTENS_FANOUT_ELEMENT_COUNT=16 \
+        -DMITTENS_FANOUT_SOURCE_COUNT=2 \
+        -DMITTENS_FANOUT_DESTINATION_TILE=2 \
+        -DMITTENS_FANOUT_INDEPENDENT_TASKS=1 \
+        "-DMITTENS_FANOUT_SOURCE_DELAY_CYCLES=${source_delay_cycles}" \
+        -DMITTENS_FANOUT_RECEIVER_DELAY_CYCLES=500000 \
+        -DMITTENS_FANOUT_FIRST_DMA_DELAY_CYCLES=500000 \
+        -c "${TEST_DIR}/main.cpp" \
+        -o "${object}"
+    "${LLVM}/bin/clang++" "${common_flags[@]}" \
+        -nostdlib -nostartfiles -nodefaultlibs \
+        -fuse-ld=lld \
+        -Wl,--build-id=none \
+        -Wl,--gc-sections \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        "${OUTPUT_DIR}/crt0.o" \
+        "${OUTPUT_DIR}/uart.o" \
+        "${OUTPUT_DIR}/platform-exit.o" \
+        "${OUTPUT_DIR}/freestanding-memory.o" \
+        "${object}" \
+        "${RUNTIME_LIBRARY}" \
+        -o "${elf}"
 done
 
 # Reproduce the GPT-2 route-tail failure with two 768-word routes from one
@@ -183,7 +288,7 @@ for tile_id in 0 1; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -215,7 +320,7 @@ for tile_id in $(seq 0 "${tail_contention_sources}"); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \

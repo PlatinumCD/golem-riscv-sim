@@ -27,6 +27,9 @@ tile.addParams(
         ),
         "analog_link_clock": "1GHz",
         "analog_compute_latency_cycles": 100,
+        "analog_command_batching": os.environ.get(
+            "MITTENS_ANALOG_COMMAND_BATCHING", "false"
+        ),
         "verbose": 2,
     }
 )

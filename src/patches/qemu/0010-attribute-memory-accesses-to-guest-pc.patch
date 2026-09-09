@@ -1,0 +1,85 @@
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+index ae91bcf..d893790 100644
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -47,6 +47,59 @@
+ #include "hw/misc/mittens_sync.h"
+ #endif
+ 
++#include "tcg/insn-start-words.h"
++
++#ifdef TARGET_RISCV
++typedef struct MittensSyncGuestPCCache {
++    CPUState *cpu;
++    uintptr_t retaddr;
++    vaddr guest_page;
++    uint64_t guest_pc;
++    bool valid;
++} MittensSyncGuestPCCache;
++
++/*
++ * RVV helpers call the soft-MMU once per vector element with the same TCG
++ * return address. Recovering the guest instruction address through
++ * cpu_unwind_state_data() for every element is redundant and dominates the
++ * timing hook on long vectors. Cache the exact unwind by vCPU, generated-code
++ * return address, and guest page. Including the guest page makes reuse across
++ * translated-block replacement safe; a different mapping is unwound again.
++ */
++static uint64_t mittens_sync_guest_pc(CPUState *cpu, uintptr_t retaddr)
++{
++    static __thread MittensSyncGuestPCCache cache;
++    uint64_t data[TARGET_INSN_START_WORDS] = { 0 };
++    const vaddr current_pc = cpu->cc->get_pc(cpu);
++    const vaddr guest_page = current_pc & TARGET_PAGE_MASK;
++
++    if (retaddr != 0 && cache.valid && cache.cpu == cpu &&
++        cache.retaddr == retaddr && cache.guest_page == guest_page) {
++        return cache.guest_pc;
++    }
++
++    if (retaddr != 0 && cpu_unwind_state_data(cpu, retaddr, data)) {
++        const uint64_t guest_pc =
++            guest_page | (data[0] & ~TARGET_PAGE_MASK);
++        cache.cpu = cpu;
++        cache.retaddr = retaddr;
++        cache.guest_page = guest_page;
++        cache.guest_pc = guest_pc;
++        cache.valid = true;
++        return guest_pc;
++    }
++
++    /* A zero return address is possible outside generated guest code. */
++    return current_pc;
++}
++
++static uint64_t mittens_sync_guest_return_address(CPUState *cpu)
++{
++    CPUArchState *env = cpu_env(cpu);
++    return env->gpr[1];
++}
++#endif
++
+ /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
+ /* #define DEBUG_TLB */
+ /* #define DEBUG_TLB_LOG */
+@@ -1872,6 +1899,8 @@ static bool mmu_lookup(CPUState *cpu, vaddr addr, MemOpIdx oi,
+             physical_address,
+             memop_size(l->memop),
+-            type == MMU_DATA_STORE);
++            type == MMU_DATA_STORE,
++            mittens_sync_guest_pc(cpu, ra),
++            mittens_sync_guest_return_address(cpu));
+     }
+ #endif
+ 
+@@ -1984,6 +2013,8 @@ static void *atomic_mmu_lookup(CPUState *cpu, vaddr addr, MemOpIdx oi,
+         const hwaddr physical_address =
+             full->phys_addr + (addr & ~TARGET_PAGE_MASK);
+-        mittens_sync_yield_memory(
+-            physical_address, size, true);
++        mittens_sync_yield_memory_atomic(
++            physical_address, size,
++            mittens_sync_guest_pc(cpu, retaddr),
++            mittens_sync_guest_return_address(cpu));
+     }
+ #endif

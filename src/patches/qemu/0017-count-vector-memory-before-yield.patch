@@ -1,0 +1,48 @@
+diff --git a/target/riscv/translate.c b/target/riscv/translate.c
+--- a/target/riscv/translate.c
++++ b/target/riscv/translate.c
+@@ -1119,6 +1119,15 @@ static inline int insn_len(uint16_t first_word)
+     return (first_word & 3) == 3 ? 4 : 2;
+ }
+ 
++static bool is_mittens_vector_memory_instruction(uint32_t opcode)
++{
++    const uint32_t primary = extract32(opcode, 0, 7);
++    const uint32_t width = extract32(opcode, 12, 3);
++
++    return (primary == 0x07 || primary == 0x27) &&
++           (width == 0 || width >= 5);
++}
++
+ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
+ {
+     /*
+@@ -1153,6 +1162,18 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
+                                              ctx->base.pc_next + 2));
+         ctx->opcode = opcode32;
+ 
++        if (is_mittens_vector_memory_instruction(opcode32)) {
++            /*
++             * Count the issued vector memory instruction before its element
++             * helpers can yield. The precise memory TB boundary already
++             * includes this instruction in icount. A post-decode vector hook
++             * leaves the final batch at I/V and the quantum end at I/(V+1),
++             * charging a vector with zero total-instruction delta. Count once
++             * here, not once per element and not again after decode.
++             */
++            gen_helper_mittens_sync_vector_instruction();
++        }
++
+         for (size_t i = 0; i < ARRAY_SIZE(decoders); ++i) {
+             if (decoders[i].guard_func(ctx->cfg_ptr) &&
+                 decoders[i].decode_func(ctx, opcode32)) {
+@@ -1271,7 +1292,8 @@ static void riscv_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
+          */
+         translator_io_start(&ctx->base);
+     }
+-    if (is_mittens_vector_instruction(ctx->opcode, ctx->cur_insn_len)) {
++    if (is_mittens_vector_instruction(ctx->opcode, ctx->cur_insn_len) &&
++        !is_mittens_vector_memory_instruction(ctx->opcode)) {
+         gen_helper_mittens_sync_vector_instruction();
+     }
+     ctx->base.pc_next += ctx->cur_insn_len;

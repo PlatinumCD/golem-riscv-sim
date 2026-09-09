@@ -1,0 +1,56 @@
+// Independent golden output captured from the PRE-integration positional
+// writer, SHA256 57e6c7e8a42842f6065c2ba6235df1a8d6aec53b92a7284d5e63a9aa5392c8c1.
+// Do not regenerate from MeasurementWriter: this pins legacy order/format/data.
+inline constexpr const char expectedSummaryCsv[] = R"csv(metric,value
+tile_id,3
+finish_tick,18446744073709551615
+instructions,2
+vector_instructions,3
+cpu_cycles,4
+synchronization_grants,5
+synchronization_events,6
+network_packets,7
+network_words,8
+network_word_hops,9
+network_transit_ticks,10
+network_endpoint_queue_ticks,11
+physical_global_dma_submitted,120
+physical_global_dma_completed,13
+analog_commands_submitted,140
+analog_commands_completed,15
+analog_active_cycles,16
+analog_link_beats,17
+receive_dma_active_cycles,18
+transmit_dma_active_cycles,19
+scratchpad_service_cycles,20
+scratchpad_read_service_cycles,21
+scratchpad_write_service_cycles,22
+scratchpad_bank_conflicts,23
+scratchpad_queue_cycles,24
+scratchpad_cpu_requests,25
+scratchpad_dma_transfers,26
+scratchpad_dma_bytes,27
+transmit_blocked_ticks,28
+transmit_blocked_events,29
+transmit_blocked_retries,30
+transmit_maximum_queue_occupancy,31
+memory_maximum_outstanding_requests,32
+memory_maximum_outstanding_reads,33
+memory_maximum_store_buffer_occupancy,34
+memory_store_buffer_full_events,35
+memory_vector_request_groups,36
+memory_vector_group_requests,37
+memory_scalar_request_groups,38
+memory_scalar_group_requests,39
+profile_clock_regressions,1
+progress_snapshots,1
+progress_watchdog_events,1
+progress_counter_flushes,1
+stop_none,7
+stop_nic_transmit,8
+stop_nic_transmit,9
+wait_none_ticks,10
+wait_nic-transmit_ticks,11
+wait_path\wait_ticks,12
+)csv";
+

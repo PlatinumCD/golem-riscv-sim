@@ -5,7 +5,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
 
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/transmit-fanout"
+readonly OUTPUT_DIR="${TEST_RESULTS_ROOT}/transmit-fanout"
 readonly SOURCE_COUNT="${MITTENS_TAIL_CONTENTION_SOURCES:-8}"
 if [[ ! "${SOURCE_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
     echo "MITTENS_TAIL_CONTENTION_SOURCES must be positive" >&2
@@ -22,7 +22,7 @@ readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
 readonly FANOUT=2
 readonly PAYLOAD_WORDS=768
 readonly PAYLOAD_BURSTS=1
-readonly FRAME_WORDS=773
+readonly FRAME_WORDS=775
 
 "${TEST_DIR}/build-test.sh"
 mkdir -p -- "${PROFILE_DIR}" "${TASK_DIR}"
@@ -72,13 +72,13 @@ for ((source = 0; source < SOURCE_COUNT; ++source)); do
         route_id=$((1000 + source * FANOUT + route_offset))
         task_id=$((100 + source * FANOUT + route_offset))
         arrived_words=$(awk -F, -v route="${route_id}" \
-            'NR > 1 && $2 == "arrive" && $6 == route {sum += $9} END {print sum + 0}' \
+            'NR > 1 && $2 == "arrive" && $6 == route {sum += $10} END {print sum + 0}' \
             "${NETWORK_TRACE}")
         dma_bursts=$(awk -F, -v route="${route_id}" \
             'NR > 1 && $2 == "complete" && $4 == route {count++} END {print count + 0}' \
             "${DMA_TRACE}")
         dma_words=$(awk -F, -v route="${route_id}" \
-            'NR > 1 && $2 == "complete" && $4 == route {sum += $7} END {print sum + 0}' \
+            'NR > 1 && $2 == "complete" && $4 == route {sum += $8} END {print sum + 0}' \
             "${DMA_TRACE}")
         if ((arrived_words != FRAME_WORDS)); then
             echo "route ${route_id}: expected ${FRAME_WORDS} arrived words, received ${arrived_words}" >&2

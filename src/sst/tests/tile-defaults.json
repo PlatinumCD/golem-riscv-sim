@@ -1,0 +1,298 @@
+{
+  "baseline": "R3 accepted defaults, /tmp/golem-src2-configuration-nfopv8us/defaults; frozen for future compatibility",
+  "schema_version": 1,
+  "parameters": {
+    "tile_id": {
+      "category": "hardware",
+      "value": 0
+    },
+    "network_size": {
+      "category": "hardware",
+      "value": 0
+    },
+    "mesh_width": {
+      "category": "hardware",
+      "value": 0
+    },
+    "mesh_height": {
+      "category": "hardware",
+      "value": 0
+    },
+    "mesh_link_clock": {
+      "category": "hardware",
+      "value": "1GHz"
+    },
+    "mesh_link_width_bits": {
+      "category": "hardware",
+      "value": 32
+    },
+    "network_packet_words": {
+      "category": "hardware",
+      "value": 16
+    },
+    "network_tail_delivery": {
+      "category": "hardware",
+      "value": false
+    },
+    "qemu_path": {
+      "category": "execution",
+      "value": "qemu-system-riscv64"
+    },
+    "elf": {
+      "category": "workload",
+      "value": ""
+    },
+    "memory": {
+      "category": "hardware",
+      "value": "16M"
+    },
+    "memory_backend": {
+      "category": "hardware",
+      "value": "native"
+    },
+    "memory_guest_base": {
+      "category": "hardware",
+      "value": 0
+    },
+    "memory_tile_stride": {
+      "category": "hardware",
+      "value": 0
+    },
+    "memory_cache_line_size": {
+      "category": "hardware",
+      "value": 64
+    },
+    "memory_load_queue_entries": {
+      "category": "hardware",
+      "value": 8
+    },
+    "memory_store_buffer_entries": {
+      "category": "hardware",
+      "value": 1
+    },
+    "memory_init_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "memory_access_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "scratchpad_access_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "scratchpad_access_run_compaction": {
+      "category": "execution",
+      "value": false
+    },
+    "memory_event_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "global_dma_submit_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "global_dma_macro_execution": {
+      "category": "execution",
+      "value": false
+    },
+    "analog_command_batching": {
+      "category": "execution",
+      "value": false
+    },
+    "memory_access_batch_records": {
+      "category": "execution",
+      "value": 16
+    },
+    "memory_init_bytes_per_cycle": {
+      "category": "hardware",
+      "value": 32
+    },
+    "memory_init_latency_cycles": {
+      "category": "hardware",
+      "value": 2
+    },
+    "memory_init_instruction_quantum": {
+      "category": "execution",
+      "value": 67108864
+    },
+    "memory_init_barrier_tiles": {
+      "category": "hardware",
+      "value": 0
+    },
+    "scratchpad_enabled": {
+      "category": "hardware",
+      "value": false
+    },
+    "scratchpad_bytes": {
+      "category": "hardware",
+      "value": 262144
+    },
+    "scratchpad_banks": {
+      "category": "hardware",
+      "value": 8
+    },
+    "scratchpad_read_ports": {
+      "category": "hardware",
+      "value": 1
+    },
+    "scratchpad_write_ports": {
+      "category": "hardware",
+      "value": 1
+    },
+    "scratchpad_access_width_bits": {
+      "category": "execution",
+      "value": 256
+    },
+    "scratchpad_latency_cycles": {
+      "category": "hardware",
+      "value": 1
+    },
+    "scratchpad_dma_bytes_per_cycle": {
+      "category": "hardware",
+      "value": 32
+    },
+    "scratchpad_dma_setup_cycles": {
+      "category": "hardware",
+      "value": 8
+    },
+    "global_ram_bytes": {
+      "category": "hardware",
+      "value": 34359738368
+    },
+    "epoch_barrier_epochs": {
+      "category": "hardware",
+      "value": 0
+    },
+    "launch_mode": {
+      "category": "workload",
+      "value": "disabled"
+    },
+    "cpu_clock": {
+      "category": "hardware",
+      "value": "1GHz"
+    },
+    "cpu_issue_width": {
+      "category": "hardware",
+      "value": 1
+    },
+    "sync_instruction_quantum": {
+      "category": "execution",
+      "value": 1000
+    },
+    "qemu_ready_set_workers": {
+      "category": "execution",
+      "value": 1
+    },
+    "qemu_runtime_ready_set": {
+      "category": "execution",
+      "value": false
+    },
+    "qemu_local_lookahead": {
+      "category": "execution",
+      "value": false
+    },
+    "qemu_capture_spin_us": {
+      "category": "execution",
+      "value": 0
+    },
+    "qemu_ready_set_independence_proof": {
+      "category": "execution",
+      "value": ""
+    },
+    "riscv_vector_enabled": {
+      "category": "hardware",
+      "value": true
+    },
+    "riscv_vector_length_bits": {
+      "category": "hardware",
+      "value": 256
+    },
+    "riscv_vector_element_bits": {
+      "category": "hardware",
+      "value": 64
+    },
+    "rx_dma_clock": {
+      "category": "hardware",
+      "value": "1GHz"
+    },
+    "rx_dma_width_bits": {
+      "category": "hardware",
+      "value": 256
+    },
+    "rx_dma_setup_cycles": {
+      "category": "hardware",
+      "value": 8
+    },
+    "rx_dma_queue_depth": {
+      "category": "hardware",
+      "value": 4
+    },
+    "tx_dma_fifo_bytes": {
+      "category": "hardware",
+      "value": 128
+    },
+    "tx_dma_streams": {
+      "category": "hardware",
+      "value": 1
+    },
+    "analog_array_count": {
+      "category": "hardware",
+      "value": 0
+    },
+    "analog_array_rows": {
+      "category": "hardware",
+      "value": 100
+    },
+    "analog_array_columns": {
+      "category": "hardware",
+      "value": 100
+    },
+    "analog_backend": {
+      "category": "hardware",
+      "value": "native"
+    },
+    "crosssim_config": {
+      "category": "workload",
+      "value": ""
+    },
+    "analog_link_clock": {
+      "category": "hardware",
+      "value": "1GHz"
+    },
+    "analog_compute_latency_cycles": {
+      "category": "hardware",
+      "value": 100
+    },
+    "profile_mode": {
+      "category": "measurement",
+      "value": "off"
+    },
+    "profile_output_directory": {
+      "category": "measurement",
+      "value": ""
+    },
+    "progress_snapshot_interval_ms": {
+      "category": "measurement",
+      "value": 10000
+    },
+    "progress_watchdog_ms": {
+      "category": "measurement",
+      "value": 60000
+    },
+    "task_trace_directory": {
+      "category": "measurement",
+      "value": ""
+    },
+    "serial_output_directory": {
+      "category": "measurement",
+      "value": ""
+    },
+    "verbose": {
+      "category": "measurement",
+      "value": 0
+    }
+  }
+}

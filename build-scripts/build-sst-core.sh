@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/common.sh"
 readonly SOURCE="${PROJECT_ROOT}/third_party/sst-core"
 readonly BUILD="${BUILD_ROOT}/sst-core"
 readonly INSTALL="${INSTALL_ROOT}/sst-core"
+require_owned_comparison_output "${INSTALL}" "${INSTALL_ROOT}"
+require_owned_comparison_output "${BUILD}" "${BUILD_ROOT}"
 
 for command in git make mpicc mpicxx python3; do
     require_command "${command}"

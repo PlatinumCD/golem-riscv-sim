@@ -4,7 +4,7 @@ set -euo pipefail
 readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
-readonly TEST_BUILD="${BUILD_ROOT}/tests/analog-route-2x2"
+readonly TEST_BUILD="${TEST_RESULTS_ROOT}/analog-route-2x2"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"

@@ -31,7 +31,7 @@ build_mesh(
     statistics_path=required("MITTENS_FANOUT_STATS"),
     verbosity=0,
     tile_params={
-        # platform/tile.ld links the stack against a 16 MiB RAM map.  QEMU
+        # src/platform/tile.ld links the stack against a 16 MiB RAM map.  QEMU
         # must expose the same map or the initial stack is outside guest RAM.
         "memory": "16M",
         "cpu_clock": "1GHz",

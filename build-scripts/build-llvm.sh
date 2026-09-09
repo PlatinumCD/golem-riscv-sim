@@ -5,16 +5,24 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-readonly SOURCE="${PROJECT_ROOT}/third_party/llvm-project"
+readonly SOURCE="${GOLEM_LLVM_SOURCE:-${PROJECT_ROOT}/third_party/llvm-project}"
 readonly BUILD="${BUILD_ROOT}/llvm"
 readonly INSTALL="${INSTALL_ROOT}/llvm"
+readonly RISCV_GNU_TOOLCHAIN="${GOLEM_RISCV_GNU_TOOLCHAIN_DIR:-${INSTALL_ROOT}/riscv-gnu-toolchain}"
+require_owned_comparison_output "${INSTALL}" "${INSTALL_ROOT}"
+require_owned_comparison_output "${BUILD}" "${BUILD_ROOT}"
 
 for command in cmake ninja git; do
-    require_command "${command}"
+require_command "${command}"
 done
 "${SCRIPT_DIR}/build-compiler-python.sh"
 require_git_commit "${SOURCE}" "${LLVM_COMMIT}" "LLVM"
-require_clean_submodule "${SOURCE}" "LLVM"
+if [[ "${SOURCE}" == "${PROJECT_ROOT}/third_party/llvm-project" ]]; then
+    require_clean_submodule "${SOURCE}" "LLVM"
+fi
+require_executable "${RISCV_GNU_TOOLCHAIN}/bin/${GOLEM_TARGET}-gcc"
+require_executable "${RISCV_GNU_TOOLCHAIN}/bin/${GOLEM_TARGET}-g++"
+require_file "${RISCV_GNU_TOOLCHAIN}/${GOLEM_TARGET}/include/stdint.h"
 
 readonly PYTHON_INCLUDE="$("${COMPILER_PYTHON}" -c \
     'import sysconfig; print(sysconfig.get_path("include"))')"
@@ -27,6 +35,9 @@ cmake -S "${SOURCE}/llvm" -B "${BUILD}" -G Ninja \
     -DLLVM_ENABLE_PROJECTS='clang;lld;mlir' \
     -DLLVM_TARGETS_TO_BUILD=RISCV \
     -DLLVM_DEFAULT_TARGET_TRIPLE="${GOLEM_TARGET}" \
+    -DGCC_INSTALL_PREFIX="${RISCV_GNU_TOOLCHAIN}" \
+    -DUSE_DEPRECATED_GCC_INSTALL_PREFIX=ON \
+    -DDEFAULT_SYSROOT="${RISCV_GNU_TOOLCHAIN}/${GOLEM_TARGET}" \
     -DLLVM_BUILD_EXAMPLES=OFF \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_TESTS=OFF \

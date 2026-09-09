@@ -1,3 +1,0 @@
-tile_id,source,route_id,execution_id,burst_index,words,schedule_tick,dma_start_cycle,dma_completion_cycle,service_cycles,completion_tick
-63,0,100,0,1,512,600000000,600000,650000,50000,650000000
-18,9,101,0,2,128,520000000,520000,550000,30000,550000000

@@ -34,7 +34,7 @@ per-tile profile, joined report, and summary under
 The focused regression uses the GPT-2 failure conditions: one source task,
 two 768-word routes, 16 network-buffer cells, RX-DMA queue depth 4, a 1,000
 instruction synchronization quantum, and the private-L1 memhierarchy backend.
-It requires all 773 frame words and one reassembled payload DMA burst for both routes.
+It requires all 775 frame words and one reassembled payload DMA burst for both routes.
 
 ```bash
 ./tests/network/transmit-fanout/run-tail-regression.sh
@@ -63,4 +63,19 @@ or `MITTENS_TAIL_STRESS_WORDS` to increase the traffic scale:
 
 ```bash
 ./tests/network/transmit-fanout/run-tail-sustained-regression.sh
+```
+
+## Receive-order regression
+
+The focused receive-order gate sends eight independent one-word frames from
+each of two converging sources while the destination waits 250,000 guest cycles
+before polling, then pauses once more immediately before its first RX DMA
+submission. It verifies that at least five headers from both sources reached
+the tile before the first RX DMA, stretches RX-DMA setup to force a real wait,
+then requires every frame to complete without a zero-tick NIC receive wakeup.
+This catches SST reporting a header as guest-visible while QEMU is correctly
+hiding it behind an active DMA from the same source.
+
+```bash
+./tests/network/transmit-fanout/run-receive-order-regression.sh
 ```

@@ -15,7 +15,7 @@ address space.
 | `0x10010000` | `0x10010fff` | 4 KiB | SST mesh NIC | Mesh communication |
 | `0x80000000` | `0x80ffffff` | 16 MiB | Tile-private RAM | Bare-metal ELF, static data, heap, and stack |
 
-The bare-metal ELF is loaded at `0x80000000`. `platform/tile.ld` defines the
+The bare-metal ELF is loaded at `0x80000000`. `src/platform/tile.ld` defines the
 text, read-only data, initialized data, and zero-initialized data regions. The
 heap begins after the aligned BSS, and a 64 KiB stack occupies the top of tile
 RAM. A linker assertion rejects images whose static data and heap boundary
@@ -83,7 +83,7 @@ interfaces enabled in its SST configuration.
 The conforming vector geometry is `VLEN=256` and `ELEN=64`. The corresponding
 Mittens parameters are `riscv_vector_enabled`,
 `riscv_vector_length_bits`, and `riscv_vector_element_bits`. QEMU supplies
-RVV instruction semantics, while `platform/crt0.S` enables vector state in
+RVV instruction semantics, while `src/platform/crt0.S` enables vector state in
 `mstatus.VS`. Compiler vector-code generation is a separate target-feature
 choice; the focused RVV test uses
 `-march=rv64gcv_xgolemanalog` explicitly. Other accepted vector parameter

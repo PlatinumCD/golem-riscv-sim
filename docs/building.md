@@ -1,5 +1,28 @@
 # Building the Platform v0.1 environment
 
+## Current hardware development workflow
+
+```bash
+JOBS=8 bash bootstrap.sh build-hardware
+bash tests/run-all.sh --suite hardware
+```
+
+These commands rebuild QEMU/Mittens and test guests from `src/`, using existing
+dependencies in `install/`. They do not build LLVM, GNU tooling, Sculptor, SST
+Core, Merlin, memHierarchy or CrossSim. Missing dependencies fail preflight.
+`bootstrap.sh` with no action performs this hardware build and test workflow.
+
+Hardware defaults are `build/src` and `install/src`; prepared upstream sources
+use `build/src/sources`. Override `GOLEM_BUILD_ROOT`, `GOLEM_INSTALL_ROOT` and
+`GOLEM_SOURCE_ROOT` explicitly for an independent build. Shared dependencies
+remain in `install/` and are fingerprinted rather than overwritten. No source
+selection wrapper is required. Hardware output roots may not alias source trees
+or escape their owners through symlinks.
+
+The dependency/whole-compiler procedures below are separate, explicit workflows.
+They are not included in the infrastructure repair acceptance or evidence of a
+complete fresh dependency-stack rebuild.
+
 ## Host requirements
 
 The build is validated on an AArch64 Debian or Ubuntu host. Required tools and
@@ -36,6 +59,7 @@ Useful partial builds are:
 
 ```bash
 ./bootstrap.sh compiler-python
+./bootstrap.sh riscv-gnu-toolchain
 ./bootstrap.sh llvm
 ./bootstrap.sh torch-mlir
 ./bootstrap.sh sculptor-mlir
@@ -99,10 +123,10 @@ export PYTHONPATH="$PWD/install/cross-sim/python${PYTHONPATH:+:$PYTHONPATH}"
 customized only in generated worktrees:
 
 ```text
-third_party/qemu + components/devices + components/qemu + patches/qemu
+third_party/qemu + src/components/devices + src/components/qemu + src/patches/qemu
     -> build/sources/qemu
 
-third_party/sst-elements + components/elements/mittens + bridge
+third_party/sst-elements + src/components/elements/mittens + src/bridge
     -> build/sources/sst-elements
 
 third_party/cross-sim

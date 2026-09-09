@@ -6,7 +6,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${TEST_DIR}/../../support/test-env.sh"
 
 readonly LLVM="${INSTALL_ROOT}/llvm"
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/deployment-runtime-pair"
+readonly OUTPUT_DIR="${TEST_RESULTS_ROOT}/deployment-runtime-pair"
 readonly RUNTIME_INCLUDE="${INSTALL_ROOT}/runtime/include"
 readonly RUNTIME_LIBRARY="${INSTALL_ROOT}/runtime/lib/libgolem-runtime.a"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
@@ -73,15 +73,15 @@ cxx_flags=(
     -Wpedantic
     -Werror
     "-I${RUNTIME_INCLUDE}"
-    "-I${PROJECT_ROOT}/platform"
+    "-I${PLATFORM_ROOT}"
 )
 
 "${LLVM}/bin/clang" "${common_flags[@]}" \
-    -c "${PROJECT_ROOT}/platform/crt0.S" \
+    -c "${PLATFORM_STARTUP_ROOT}/crt0.S" \
     -o "${OUTPUT_DIR}/crt0.o"
 for source in uart platform-exit freestanding-memory; do
     "${LLVM}/bin/clang++" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/${source}.cpp" \
+        -c "$(platform_source "${source}.cpp")" \
         -o "${OUTPUT_DIR}/${source}.o"
 done
 
@@ -95,7 +95,7 @@ for tile_id in 0 1; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -156,7 +156,7 @@ if [[ "${MITTENS_DEPLOYMENT_MESH_ROUTER_BACKEND:-merlin}" == \
             $1 == "router_1_0" &&
             $2 == "flits_forwarded" &&
             $3 == "local" { flits = $7 }
-            END { print (packets == 20 && flits == 305) ? 1 : 0 }
+            END { print (packets == 20 && flits == 307) ? 1 : 0 }
         ' "${STATISTICS}"
     )"
 else
@@ -168,12 +168,12 @@ else
             $1 == "router_1_0" &&
             $2 == "send_bit_count" &&
             $3 == "port4" { bits = $7 }
-            END { print (packets == 20 && bits == 9760) ? 1 : 0 }
+            END { print (packets == 20 && bits == 9824) ? 1 : 0 }
         ' "${STATISTICS}"
     )"
 fi
 if [[ "${statistics_valid}" != 1 ]]; then
-    echo "expected one header packet and 19 bounded payload packets (9760 bits)" >&2
+    echo "expected one header packet and 19 bounded payload packets (9824 bits)" >&2
     exit 1
 fi
 

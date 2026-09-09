@@ -7,7 +7,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly ELF="${BUILD_ROOT}/tests/analog-ops/analog-ops.elf"
+readonly ELF="${TEST_RESULTS_ROOT}/analog-ops/analog-ops.elf"
 
 for executable in "${SST}" "${QEMU}"; do
     if [[ ! -x "${executable}" ]]; then

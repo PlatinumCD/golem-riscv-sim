@@ -1,0 +1,109 @@
+{
+  "schema": "mittens.materialized-functional-cases",
+  "version": 1,
+  "cases": [
+    {
+      "name": "pointwise",
+      "id": 1,
+      "mesh": [2, 1],
+      "digital_workers": 2,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 3,
+      "minimum_executable_operation_count": 2,
+      "minimum_materialized_boundary_count": 1,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "required_semantic_layers": [
+        "pointwise_add",
+        "pointwise_multiply"
+      ]
+    },
+    {
+      "name": "fork",
+      "id": 2,
+      "mesh": [2, 2],
+      "digital_workers": 2,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 4,
+      "minimum_executable_operation_count": 4,
+      "minimum_materialized_boundary_count": 4,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "required_semantic_layers": [
+        "fork_producer",
+        "fork_left",
+        "fork_right",
+        "fork_join"
+      ]
+    },
+    {
+      "name": "pool",
+      "id": 3,
+      "mesh": [2, 1],
+      "digital_workers": 2,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 4,
+      "minimum_executable_operation_count": 4,
+      "minimum_materialized_boundary_count": 3,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "required_semantic_layers": [
+        "pool_source",
+        "pool_max",
+        "pool_result"
+      ]
+    },
+    {
+      "name": "concat",
+      "id": 4,
+      "mesh": [2, 2],
+      "digital_workers": 1,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 3,
+      "minimum_executable_operation_count": 3,
+      "minimum_materialized_boundary_count": 2,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "required_semantic_layers": [
+        "concat_left",
+        "concat_right",
+        "concat_assembly",
+        "concat_result"
+      ]
+    },
+    {
+      "name": "reduction",
+      "id": 5,
+      "mesh": [2, 2],
+      "digital_workers": 4,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 4,
+      "minimum_executable_operation_count": 4,
+      "minimum_materialized_boundary_count": 3,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "required_semantic_layers": [
+        "reduction_source",
+        "reduction_sum",
+        "reduction_result"
+      ]
+    },
+    {
+      "name": "layout-conversion",
+      "id": 6,
+      "mesh": [1, 1],
+      "digital_workers": 1,
+      "minimum_work_items_per_unit": 64,
+      "minimum_epoch_count": 3,
+      "minimum_executable_operation_count": 3,
+      "minimum_materialized_boundary_count": 2,
+      "minimum_full_transfer_count": 1,
+      "minimum_tail_transfer_count": 1,
+      "minimum_explicit_layout_conversion_count": 1,
+      "required_semantic_layers": [
+        "layout_even_source",
+        "layout_odd_source"
+      ]
+    }
+  ]
+}

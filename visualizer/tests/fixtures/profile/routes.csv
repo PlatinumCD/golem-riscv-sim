@@ -1,3 +1,0 @@
-execution_id,route_id,source_core,destination_core,protocol_words,payload_words,word_hops,manhattan_hops,injection_start_tick,injection_finish_tick,arrival_start_tick,arrival_finish_tick,dma_finish_tick,source_task,destination_task,resource_id,byte_size,ready_tick,network_span_ticks,end_to_end_ticks,payload_matches_manifest
-0,100,0,63,5,512,7238,14,150000000,155000000,580000000,600000000,650000000,10,12,50,2048,650000000,450000000,500000000,True
-0,101,9,18,5,128,266,2,420000000,425000000,500000000,520000000,550000000,11,13,51,512,550000000,100000000,130000000,True

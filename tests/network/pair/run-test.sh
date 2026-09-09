@@ -20,7 +20,7 @@ done
 
 export SST_LIB_PATH="${ELEMENT_LIBRARY}${SST_LIB_PATH:+:${SST_LIB_PATH}}"
 export MITTENS_TEST_QEMU="${QEMU}"
-export MITTENS_TILE0_ELF="${BUILD_ROOT}/tests/mesh-pair/tile0-sender.elf"
-export MITTENS_TILE1_ELF="${BUILD_ROOT}/tests/mesh-pair/tile1-receiver.elf"
+export MITTENS_TILE0_ELF="${TEST_RESULTS_ROOT}/mesh-pair/tile0-sender.elf"
+export MITTENS_TILE1_ELF="${TEST_RESULTS_ROOT}/mesh-pair/tile1-receiver.elf"
 
 exec "${SST}" "${TEST_DIR}/simulation.py"

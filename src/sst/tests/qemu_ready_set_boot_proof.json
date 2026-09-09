@@ -1,0 +1,12 @@
+{
+  "schema": "mittens.ready-set-focused-proof",
+  "version": 1,
+  "scope": "initial-qemu-grant",
+  "maximum_tiles": 16,
+  "invariants": [
+    "each tile has a private ELF and fd41 bridge",
+    "the first grant may stop only at quantum-end, a payload-free memory-fence, a tile-private analog-submit, or memory-init-complete",
+    "no global-DMA, NoC, or epoch dependency occurs before the first stop",
+    "SST alone validates and commits captured events in modeled order"
+  ]
+}

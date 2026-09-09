@@ -1,0 +1,503 @@
+#include "sst_config.h"
+
+#include "qemuProcess.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstring>
+#include <filesystem>
+#include <fcntl.h>
+#include <mutex>
+#include <spawn.h>
+#include <stdexcept>
+#include <system_error>
+#include <thread>
+#include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
+
+namespace SST {
+namespace Mittens {
+
+namespace {
+
+constexpr auto kTerminateGracePeriod = std::chrono::seconds(1);
+constexpr auto kTerminatePollInterval = std::chrono::milliseconds(10);
+constexpr int kChildSyncBridgeFileDescriptor = 41;
+constexpr int kChildBridgeFileDescriptor = 42;
+constexpr int kChildAnalogBridgeFileDescriptor = 43;
+constexpr int kChildGlobalRAMFileDescriptor = 44;
+constexpr int kFirstStagingFileDescriptor = 64;
+
+std::mutex processRegistryMutex;
+std::vector<QemuProcess*> processRegistry;
+
+struct BridgeFileDescriptorMapping {
+    int source;
+    int target;
+    int staging;
+};
+
+std::vector<std::string> buildArguments(const QemuConfiguration& config)
+{
+    std::string cpu = "rv64,v=";
+    if (config.riscvVectorEnabled) {
+        cpu += "true,vext_spec=v1.0,vlen=" +
+               std::to_string(config.riscvVectorLengthBits) +
+               ",elen=" +
+               std::to_string(config.riscvVectorElementBits);
+    } else {
+        cpu += "false";
+    }
+
+    const std::string serial = config.serialOutputPath.empty()
+        ? "stdio"
+        : "file:" + config.serialOutputPath;
+    std::vector<std::string> arguments = {
+        config.executable,
+        // Tile ELFs are bare-metal and name every device they use.  Avoid
+        // constructing QEMU's unrelated default peripherals 399 times in a
+        // full deployment; the explicit serial backend below remains the
+        // only legacy default device required by the tile ABI.
+        "-nodefaults",
+        "-no-user-config",
+        "-machine",
+        "virt",
+        "-cpu",
+        cpu,
+        "-smp",
+        "1",
+        "-m",
+        config.memory,
+        "-bios",
+        "none",
+        "-kernel",
+        config.elfPath,
+        "-display",
+        "none",
+        "-monitor",
+        "none",
+        "-serial",
+        serial,
+        "-no-reboot",
+    };
+
+    if (config.syncBridgeFileDescriptor >= 0) {
+        arguments.push_back("-icount");
+        arguments.push_back("shift=0,sleep=off");
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.bridge-fd=" +
+            std::to_string(kChildSyncBridgeFileDescriptor));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-timing=") +
+            (config.memoryTimingEnabled ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-init-batching=") +
+            (config.memoryInitializationBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-access-batching=") +
+            (config.memoryAccessBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.scratchpad-access-batching=") +
+            (config.scratchpadAccessBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string(
+                "mittens-sync.scratchpad-access-run-compaction=") +
+            (config.scratchpadAccessRunCompaction ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.memory-event-batching=") +
+            (config.memoryEventBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.global-dma-submit-batching=") +
+            (config.globalDMASubmitBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.global-dma-macro-execution=") +
+            (config.globalDMAMacroExecution ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.analog-command-batching=") +
+            (config.analogCommandBatching ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.memory-access-batch-records=" +
+            std::to_string(config.memoryAccessBatchRecords));
+        arguments.push_back("-global");
+        arguments.push_back(
+            std::string("mittens-sync.scratchpad-enabled=") +
+            (config.scratchpadEnabled ? "on" : "off"));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.scratchpad-base=" +
+            std::to_string(config.scratchpadBase));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.scratchpad-size=" +
+            std::to_string(config.scratchpadBytes));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.global-ram-fd=" +
+            std::to_string(kChildGlobalRAMFileDescriptor));
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-sync.global-ram-size=" +
+            std::to_string(config.globalRAMBytes));
+    }
+    if (config.bridgeFileDescriptor >= 0) {
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-nic.bridge-fd=" +
+            std::to_string(kChildBridgeFileDescriptor));
+    }
+    if (config.analogBridgeFileDescriptor >= 0) {
+        arguments.push_back("-global");
+        arguments.push_back(
+            "mittens-analog.bridge-fd=" +
+            std::to_string(kChildAnalogBridgeFileDescriptor));
+    }
+
+    return arguments;
+}
+
+std::vector<char*> makeArgumentPointers(std::vector<std::string>& arguments)
+{
+    std::vector<char*> pointers;
+    pointers.reserve(arguments.size() + 1);
+
+    for (std::string& argument : arguments) {
+        pointers.push_back(argument.data());
+    }
+    pointers.push_back(nullptr);
+    return pointers;
+}
+
+} // namespace
+
+bool QemuExitStatus::success() const
+{
+    return exitedNormally && exitCode == 0;
+}
+
+std::string QemuExitStatus::describe() const
+{
+    if (exitedNormally) {
+        return "exit status " + std::to_string(exitCode);
+    }
+    return "signal " + std::to_string(signalNumber) + " (" +
+           std::string(::strsignal(signalNumber)) + ")";
+}
+
+QemuProcess::QemuProcess()
+{
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+    processRegistry.push_back(this);
+}
+
+QemuProcess::~QemuProcess()
+{
+    terminate();
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+    processRegistry.erase(
+        std::remove(
+            processRegistry.begin(),
+            processRegistry.end(),
+            this),
+        processRegistry.end());
+}
+
+void QemuProcess::start(const QemuConfiguration& config)
+{
+    if (running()) {
+        throw std::logic_error("QEMU process is already running");
+    }
+
+    if (config.executable.empty()) {
+        throw std::invalid_argument("QEMU executable path is empty");
+    }
+
+    if (config.elfPath.empty()) {
+        throw std::invalid_argument("QEMU ELF path is empty");
+    }
+
+    const std::filesystem::path elf(config.elfPath);
+    if (!std::filesystem::is_regular_file(elf)) {
+        throw std::invalid_argument("QEMU ELF is not a regular file: " + config.elfPath);
+    }
+    if (!config.serialOutputPath.empty()) {
+        const std::filesystem::path serialOutput(config.serialOutputPath);
+        const std::filesystem::path parent = serialOutput.parent_path();
+        if (serialOutput.filename().empty() || parent.empty() ||
+            !std::filesystem::is_directory(parent)) {
+            throw std::invalid_argument(
+                "QEMU serial output parent is not a directory: " +
+                config.serialOutputPath);
+        }
+    }
+
+    std::vector<std::string> arguments = buildArguments(config);
+    std::vector<char*> argumentPointers = makeArgumentPointers(arguments);
+
+    posix_spawn_file_actions_t fileActions;
+    posix_spawn_file_actions_t* fileActionsPointer = nullptr;
+    std::vector<BridgeFileDescriptorMapping> bridgeMappings;
+
+    const auto addBridgeMapping =
+        [&bridgeMappings](int source, int target) {
+            if (source >= 0) {
+                bridgeMappings.push_back({source, target, -1});
+            }
+        };
+    addBridgeMapping(
+        config.syncBridgeFileDescriptor,
+        kChildSyncBridgeFileDescriptor);
+    addBridgeMapping(
+        config.bridgeFileDescriptor,
+        kChildBridgeFileDescriptor);
+    addBridgeMapping(
+        config.analogBridgeFileDescriptor,
+        kChildAnalogBridgeFileDescriptor);
+    addBridgeMapping(
+        config.globalRAMFileDescriptor,
+        kChildGlobalRAMFileDescriptor);
+
+    const auto closeStagingFileDescriptors =
+        [&bridgeMappings]() noexcept {
+            for (const BridgeFileDescriptorMapping& mapping :
+                 bridgeMappings) {
+                if (mapping.staging >= 0) {
+                    (void)::close(mapping.staging);
+                }
+            }
+        };
+
+    if (!bridgeMappings.empty()) {
+        for (BridgeFileDescriptorMapping& mapping : bridgeMappings) {
+            mapping.staging = ::fcntl(
+                mapping.source,
+                F_DUPFD_CLOEXEC,
+                kFirstStagingFileDescriptor);
+            if (mapping.staging < 0) {
+                const int error = errno;
+                closeStagingFileDescriptors();
+                throw std::system_error(
+                    error,
+                    std::generic_category(),
+                    "failed to stage QEMU bridge fd");
+            }
+        }
+
+        int actionResult = posix_spawn_file_actions_init(&fileActions);
+        if (actionResult != 0) {
+            closeStagingFileDescriptors();
+            throw std::system_error(actionResult,
+                                    std::generic_category(),
+                                    "failed to initialize QEMU file actions");
+        }
+        fileActionsPointer = &fileActions;
+
+        for (const BridgeFileDescriptorMapping& mapping :
+             bridgeMappings) {
+            actionResult = posix_spawn_file_actions_adddup2(
+                &fileActions,
+                mapping.staging,
+                mapping.target);
+            if (actionResult == 0) {
+                actionResult = posix_spawn_file_actions_addclose(
+                    &fileActions,
+                    mapping.staging);
+            }
+            if (actionResult != 0) {
+                break;
+            }
+        }
+
+        if (actionResult != 0) {
+            posix_spawn_file_actions_destroy(&fileActions);
+            closeStagingFileDescriptors();
+            throw std::system_error(actionResult,
+                                    std::generic_category(),
+                                    "failed to configure QEMU bridge fd");
+        }
+    }
+
+    pid_t child = -1;
+    const int result = posix_spawnp(
+        &child,
+        config.executable.c_str(),
+        fileActionsPointer,
+        nullptr,
+        argumentPointers.data(),
+        environ);
+
+    if (fileActionsPointer != nullptr) {
+        posix_spawn_file_actions_destroy(&fileActions);
+    }
+    closeStagingFileDescriptors();
+
+    if (result != 0) {
+        throw std::system_error(result, std::generic_category(),
+                                "failed to launch QEMU for tile " +
+                                    std::to_string(config.tileId));
+    }
+
+    pid_ = child;
+}
+
+QemuExitStatus QemuProcess::decodeWaitStatus(int status)
+{
+    if (WIFEXITED(status)) {
+        return {true, WEXITSTATUS(status), 0};
+    }
+
+    if (WIFSIGNALED(status)) {
+        return {false, 0, WTERMSIG(status)};
+    }
+
+    throw std::runtime_error("QEMU returned an unsupported wait status");
+}
+
+std::optional<QemuExitStatus> QemuProcess::pollExit()
+{
+    if (!running()) {
+        return std::nullopt;
+    }
+
+    int status = 0;
+    pid_t result;
+    do {
+        result = waitpid(pid_, &status, WNOHANG);
+    } while (result < 0 && errno == EINTR);
+
+    if (result == 0) {
+        return std::nullopt;
+    }
+
+    if (result < 0) {
+        throw std::system_error(errno, std::generic_category(), "waitpid failed for QEMU");
+    }
+
+    pid_ = -1;
+    return decodeWaitStatus(status);
+}
+
+QemuExitStatus QemuProcess::waitForExit()
+{
+    int status = 0;
+    pid_t result;
+    do {
+        result = waitpid(pid_, &status, 0);
+    } while (result < 0 && errno == EINTR);
+
+    if (result < 0) {
+        throw std::system_error(errno, std::generic_category(), "waitpid failed for QEMU");
+    }
+
+    pid_ = -1;
+    return decodeWaitStatus(status);
+}
+
+void QemuProcess::terminate() noexcept
+{
+    if (!running()) {
+        return;
+    }
+
+    const pid_t child = pid_;
+    if (kill(child, SIGTERM) < 0 && errno != ESRCH) {
+        // Cleanup must continue even if SIGTERM could not be delivered.
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + kTerminateGracePeriod;
+    while (std::chrono::steady_clock::now() < deadline && running()) {
+        try {
+            if (pollExit().has_value()) {
+                return;
+            }
+        } catch (...) {
+            break;
+        }
+        std::this_thread::sleep_for(kTerminatePollInterval);
+    }
+
+    if (running()) {
+        if (kill(child, SIGKILL) < 0 && errno != ESRCH) {
+            // waitpid below remains the authoritative cleanup operation.
+        }
+
+        try {
+            (void)waitForExit();
+        } catch (...) {
+            pid_ = -1;
+        }
+    }
+}
+
+void QemuProcess::terminateAll() noexcept
+{
+    const std::lock_guard<std::mutex> lock(processRegistryMutex);
+
+    for (QemuProcess* process : processRegistry) {
+        if (process != nullptr && process->running()) {
+            const pid_t child = process->pid();
+            if (::kill(child, SIGTERM) < 0 && errno != ESRCH) {
+                // terminate() below remains authoritative.
+            }
+        }
+    }
+
+    const auto deadline =
+        std::chrono::steady_clock::now() + kTerminateGracePeriod;
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool anyRunning = false;
+        for (QemuProcess* process : processRegistry) {
+            if (process == nullptr || !process->running()) {
+                continue;
+            }
+            anyRunning = true;
+            try {
+                (void)process->pollExit();
+            } catch (...) {
+                // The final SIGKILL and wait pass remains authoritative.
+            }
+        }
+        if (!anyRunning) {
+            return;
+        }
+        std::this_thread::sleep_for(kTerminatePollInterval);
+    }
+
+    for (QemuProcess* process : processRegistry) {
+        if (process != nullptr && process->running()) {
+            const pid_t child = process->pid();
+            if (::kill(child, SIGKILL) < 0 && errno != ESRCH) {
+                // waitForExit() below remains authoritative.
+            }
+        }
+    }
+    for (QemuProcess* process : processRegistry) {
+        if (process == nullptr || !process->running()) {
+            continue;
+        }
+        try {
+            (void)process->waitForExit();
+        } catch (...) {
+            process->pid_ = -1;
+        }
+    }
+}
+
+} // namespace Mittens
+} // namespace SST

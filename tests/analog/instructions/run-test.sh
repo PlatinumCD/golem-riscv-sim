@@ -7,7 +7,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly ELF="${BUILD_ROOT}/tests/analog-instructions/analog-instructions.elf"
+readonly ELF="${TEST_RESULTS_ROOT}/analog-instructions/analog-instructions.elf"
 
 for executable in "${SST}" "${QEMU}"; do
     if [[ ! -x "${executable}" ]]; then
@@ -38,6 +38,12 @@ run_backend() {
         "ANALOG_INSTRUCTION_PASS: two asynchronous arrays and all five instructions" \
         "${output}"; then
         echo "${backend} analog instruction test did not report success" >&2
+        return 1
+    fi
+    if ! grep -Eq \
+        'analog_link_beats=10 .*analog_set=2 .*analog_input_words=32 ' \
+        "${output}"; then
+        echo "${backend} compact SetMatrix accounting was not exact" >&2
         return 1
     fi
 }

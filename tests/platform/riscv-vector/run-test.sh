@@ -7,7 +7,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly ELF="${BUILD_ROOT}/tests/riscv-vector/riscv-vector.elf"
+readonly ELF="${TEST_RESULTS_ROOT}/riscv-vector/riscv-vector.elf"
 
 for executable in "${QEMU}" "${SST}"; do
     if [[ ! -x "${executable}" ]]; then

@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/common.sh"
 readonly SUBMODULE="${PROJECT_ROOT}/third_party/cross-sim"
 readonly SOURCE="${PREPARED_SOURCE_ROOT}/cross-sim"
 readonly PYTHON="${CROSSSIM_PYTHON:-/usr/bin/python3}"
+require_owned_comparison_output "${CROSSSIM_SITE_PACKAGES}" "${INSTALL_ROOT}"
+require_owned_comparison_output "${SOURCE}" "${PREPARED_SOURCE_ROOT}"
 
 for command in find install; do
     require_command "${command}"

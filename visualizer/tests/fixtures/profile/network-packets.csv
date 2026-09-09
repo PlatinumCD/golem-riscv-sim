@@ -1,5 +1,0 @@
-source,packet_id,destination,route_id,execution_id,kind,words,protocol_words,payload_words,hops,word_hops,ready_tick,injection_tick,arrival_tick,endpoint_queue_ticks,transit_ticks
-0,1,63,100,0,frame-header,5,5,0,14,70,130000000,150000000,580000000,20000000,430000000
-0,2,63,100,0,frame-payload,512,0,512,14,7168,135000000,155000000,600000000,20000000,445000000
-9,3,18,101,0,frame-header,5,5,0,2,10,420000000,420000000,500000000,0,80000000
-9,4,18,101,0,frame-payload,128,0,128,2,256,425000000,425000000,520000000,0,95000000

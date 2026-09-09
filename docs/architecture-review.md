@@ -861,19 +861,19 @@ The safest overall characterization is:
 
 ## 16. Authoritative supporting documents
 
-- [`config/epoch-e.env`](config/epoch-e.env) records the current 100 ns MVM
+- [`src/config/epoch-e.env`](../src/config/epoch-e.env) records the current 100 ns MVM
   deployment parameters.
-- [`config/epoch-d.env`](config/epoch-d.env) records the frozen historical
+- [`src/config/epoch-d.env`](../src/config/epoch-d.env) records the frozen historical
   eight-cycle physical-word-network parameters.
-- [`docs/timing-model.md`](docs/timing-model.md) defines the detailed timing
+- [`timing-model.md`](timing-model.md) defines the detailed timing
   equations and measurement boundaries.
-- [`docs/platform-v0.1.md`](docs/platform-v0.1.md) defines the platform and
+- [`platform-v0.1.md`](platform-v0.1.md) defines the platform and
   device contract.
-- [`docs/vector-architecture.md`](docs/vector-architecture.md) defines the
+- [`vector-architecture.md`](vector-architecture.md) defines the
   RVV contract.
-- [`docs/analog-isa.md`](docs/analog-isa.md) defines the Golem analog
+- [`analog-isa.md`](analog-isa.md) defines the Golem analog
   instructions.
-- [`docs/architecture.md`](docs/architecture.md) provides the lower-level
+- [`architecture.md`](architecture.md) provides the lower-level
   implementation and data-path description.
 - [`research-goals.md`](research-goals.md) records the simulator-credibility and
   architectural-research goals.

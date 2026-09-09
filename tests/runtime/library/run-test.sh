@@ -5,7 +5,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
 readonly QEMU="${QEMU_SYSTEM_RISCV64:-${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64}"
-readonly ELF="${BUILD_ROOT}/tests/runtime-library/runtime-library.elf"
+readonly ELF="${TEST_RESULTS_ROOT}/runtime-library/runtime-library.elf"
 readonly OUTPUT="$(mktemp)"
 
 trap 'rm -f -- "${OUTPUT}"' EXIT

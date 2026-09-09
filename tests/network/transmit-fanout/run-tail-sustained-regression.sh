@@ -5,7 +5,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
 
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/transmit-fanout"
+readonly OUTPUT_DIR="${TEST_RESULTS_ROOT}/transmit-fanout"
 readonly WAVES="${MITTENS_TAIL_STRESS_WAVES:-4}"
 readonly PAYLOAD_WORDS="${MITTENS_TAIL_STRESS_WORDS:-64}"
 readonly TRIAL_DIR="${OUTPUT_DIR}/tail-sustained-${WAVES}-${PAYLOAD_WORDS}-32"
@@ -19,7 +19,7 @@ readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
 readonly TILE_COUNT=32
 readonly FANOUT=2
 readonly PAYLOAD_BURSTS=$(((PAYLOAD_WORDS + 4095) / 4096))
-readonly FRAME_WORDS=$((PAYLOAD_WORDS + 5))
+readonly FRAME_WORDS=$((PAYLOAD_WORDS + 7))
 readonly SST_THREADS="${MITTENS_TAIL_SST_THREADS:-16}"
 readonly SST_PARTITIONER="${MITTENS_TAIL_SST_PARTITIONER:-sst.simple}"
 
@@ -71,13 +71,13 @@ for ((tile = 0; tile < TILE_COUNT; ++tile)); do
             route_id=$((1000000 + (peer * WAVES + wave) * FANOUT + offset))
             task_id=$((100000 + (peer * WAVES + wave) * FANOUT + offset))
             arrived_words=$(awk -F, -v route="${route_id}" \
-                'NR > 1 && $2 == "arrive" && $6 == route {sum += $9} END {print sum + 0}' \
+                'NR > 1 && $2 == "arrive" && $6 == route {sum += $10} END {print sum + 0}' \
                 "${network_trace}")
             dma_bursts=$(awk -F, -v route="${route_id}" \
                 'NR > 1 && $2 == "complete" && $4 == route {count++} END {print count + 0}' \
                 "${dma_trace}")
             dma_words=$(awk -F, -v route="${route_id}" \
-                'NR > 1 && $2 == "complete" && $4 == route {sum += $7} END {print sum + 0}' \
+                'NR > 1 && $2 == "complete" && $4 == route {sum += $8} END {print sum + 0}' \
                 "${dma_trace}")
             if ((arrived_words != FRAME_WORDS)); then
                 echo "tile ${tile} route ${route_id}: expected ${FRAME_WORDS} arrived words, received ${arrived_words}" >&2

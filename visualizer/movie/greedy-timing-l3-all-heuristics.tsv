@@ -1,2 +1,0 @@
-# name	schedule	greedy_heuristic	balanced_reductions
-greedy-timing-l3-b8-all-heuristics	greedy-timing	transfer-cost,boundary-regret,compact-region,link-pressure,lookahead=3,beam=8,scope=diagonal	1

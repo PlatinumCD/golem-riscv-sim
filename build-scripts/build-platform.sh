@@ -46,7 +46,7 @@ cxx_flags=(
     -Wextra
     -Wpedantic
     "-I${RUNTIME_INCLUDE}"
-    "-I${PROJECT_ROOT}/platform"
+    "-I${PLATFORM_ROOT}"
 )
 
 build_tile() {
@@ -62,13 +62,13 @@ build_tile() {
     mkdir -p -- "${output_dir}"
 
     "${CLANG}" "${common_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/crt0.S" \
+        -c "${PLATFORM_STARTUP_ROOT}/crt0.S" \
         -o "${output_dir}/crt0.o"
     "${CLANGXX}" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/uart.cpp" \
+        -c "${PLATFORM_ROOT}/uart.cpp" \
         -o "${output_dir}/uart.o"
     "${CLANGXX}" "${cxx_flags[@]}" \
-        -c "${PROJECT_ROOT}/platform/platform-exit.cpp" \
+        -c "${PLATFORM_STARTUP_ROOT}/platform-exit.cpp" \
         -o "${output_dir}/platform-exit.o"
     "${CLANGXX}" "${cxx_flags[@]}" \
         "${application_flags[@]}" \
@@ -82,7 +82,7 @@ build_tile() {
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PROJECT_ROOT}/platform/tile.ld" \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
         "-Wl,-Map,${output_dir}/${image_name}.map" \
         "${output_dir}/crt0.o" \
         "${output_dir}/uart.o" \
@@ -107,97 +107,120 @@ build_tile() {
 
 build_hello() {
     build_tile \
-        "${BUILD_ROOT}/tests/hello" \
+        "${TEST_RESULTS_ROOT}/hello" \
         hello \
         "${PROJECT_ROOT}/tests/platform/hello/main.cpp"
 }
 
 build_riscv_vector() {
     build_tile \
-        "${BUILD_ROOT}/tests/riscv-vector" \
+        "${TEST_RESULTS_ROOT}/riscv-vector" \
         riscv-vector \
         "${PROJECT_ROOT}/tests/platform/riscv-vector/main.cpp"
 }
 
 build_cpu_timing_validation() {
     build_tile \
-        "${BUILD_ROOT}/tests/cpu-timing-validation" \
+        "${TEST_RESULTS_ROOT}/cpu-timing-validation" \
         cpu-timing-validation \
         "${PROJECT_ROOT}/tests/platform/cpu-timing/main.cpp"
 }
 
+build_qemu_ready_set_validation() {
+    build_tile \
+        "${TEST_RESULTS_ROOT}/qemu-ready-set" \
+        qemu-ready-set \
+        "${PROJECT_ROOT}/tests/platform/qemu-ready-set/main.cpp"
+    build_tile \
+        "${TEST_RESULTS_ROOT}/qemu-ready-set" \
+        qemu-ready-set-analog \
+        "${PROJECT_ROOT}/tests/platform/qemu-ready-set/main.cpp" \
+        -DMITTENS_READY_SET_ANALOG_FIRST=1
+}
+
 build_runtime_library() {
     build_tile \
-        "${BUILD_ROOT}/tests/runtime-library" \
+        "${TEST_RESULTS_ROOT}/runtime-library" \
         runtime-library \
         "${PROJECT_ROOT}/tests/runtime/library/main.cpp"
 }
 
 build_scratchpad_dma() {
     build_tile \
-        "${BUILD_ROOT}/tests/scratchpad-dma" \
+        "${TEST_RESULTS_ROOT}/scratchpad-dma" \
         scratchpad-dma \
         "${PROJECT_ROOT}/tests/memory/scratchpad-dma/main.cpp"
+    build_tile \
+        "${TEST_RESULTS_ROOT}/scratchpad-dma" \
+        scratchpad-dma-invalid-macro \
+        "${PROJECT_ROOT}/tests/memory/scratchpad-dma/main.cpp" \
+        -DMITTENS_SCRATCHPAD_DMA_INVALID_MACRO=1
 }
 
-build_memory_hierarchy_l1() {
-    build_tile \
-        "${BUILD_ROOT}/tests/memory-hierarchy-l1" \
-        memory-hierarchy-l1 \
-        "${PROJECT_ROOT}/tests/memory/private-l1/main.cpp"
+build_global_ram() {
+    local output_dir="${TEST_RESULTS_ROOT}/global-ram"
+    local tile_id
+    for tile_id in 0 1; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/memory/global-ram/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
 }
 
-build_memory_timing_validation() {
-    local output_dir="${BUILD_ROOT}/tests/memory-timing-validation"
+build_global_ram_exact() {
+    local output_dir="${TEST_RESULTS_ROOT}/global-ram-exact"
+    local tile_id
+    for tile_id in 0 1 2; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/memory/global-ram-exact/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
+}
 
-    build_tile \
-        "${output_dir}" \
-        memory-conflict \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_CONFLICT=1
-    build_tile \
-        "${output_dir}" \
-        memory-capacity \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_CAPACITY=1
-    build_tile \
-        "${output_dir}" \
-        memory-store-buffer \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_STORE_BUFFER=1
-    build_tile \
-        "${output_dir}" \
-        memory-vector-group \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_VECTOR_GROUP=1
-    build_tile \
-        "${output_dir}" \
-        memory-scalar-independent \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_SCALAR_INDEPENDENT=1
-    build_tile \
-        "${output_dir}" \
-        memory-scalar-dependent \
-        "${PROJECT_ROOT}/tests/memory/timing/main.cpp" \
-        -DMITTENS_MEMORY_TEST_SCALAR_DEPENDENT=1
+build_global_dma_macro_contention() {
+    local output_dir="${TEST_RESULTS_ROOT}/global-dma-macro-contention"
+    local tile_id
+    for tile_id in 0 1; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/memory/global-dma-macro-contention/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
+}
+
+build_epoch_barrier() {
+    local output_dir="${TEST_RESULTS_ROOT}/epoch-barrier"
+    local tile_id
+    for tile_id in 0 1; do
+        build_tile \
+            "${output_dir}" \
+            "tile${tile_id}" \
+            "${PROJECT_ROOT}/tests/runtime/epoch-barrier/main.cpp" \
+            "-DMITTENS_TILE_ID=${tile_id}"
+    done
 }
 
 build_analog_instructions() {
     build_tile \
-        "${BUILD_ROOT}/tests/analog-instructions" \
+        "${TEST_RESULTS_ROOT}/analog-instructions" \
         analog-instructions \
         "${PROJECT_ROOT}/tests/analog/instructions/main.cpp"
 }
 
 build_analog_ops() {
     build_tile \
-        "${BUILD_ROOT}/tests/analog-ops" \
+        "${TEST_RESULTS_ROOT}/analog-ops" \
         analog-ops \
         "${PROJECT_ROOT}/tests/analog/ops/main.cpp"
 }
 
 build_analog_timing_validation() {
-    local output_dir="${BUILD_ROOT}/tests/analog-timing-validation"
+    local output_dir="${TEST_RESULTS_ROOT}/analog-timing-validation"
 
     build_tile \
         "${output_dir}" \
@@ -212,7 +235,7 @@ build_analog_timing_validation() {
 }
 
 build_analog_mesh_2x2() {
-    local output_dir="${BUILD_ROOT}/tests/analog-mesh-2x2"
+    local output_dir="${TEST_RESULTS_ROOT}/analog-mesh-2x2"
     local tile_id
 
     for tile_id in {0..3}; do
@@ -225,7 +248,7 @@ build_analog_mesh_2x2() {
 }
 
 build_analog_mesh_2x2_dual_array() {
-    local output_dir="${BUILD_ROOT}/tests/analog-mesh-2x2-dual-array"
+    local output_dir="${TEST_RESULTS_ROOT}/analog-mesh-2x2-dual-array"
     local tile_id
 
     for tile_id in {0..3}; do
@@ -241,7 +264,7 @@ build_analog_route_2x2_variant() {
     local route="$1"
     shift
     local -a route_tiles=("$@")
-    local output_dir="${BUILD_ROOT}/tests/analog-route-2x2/${route}"
+    local output_dir="${TEST_RESULTS_ROOT}/analog-route-2x2/${route}"
     local position
     local tile_id
     local next_tile
@@ -276,7 +299,7 @@ build_analog_route_2x2() {
 }
 
 build_mesh_pair() {
-    local output_dir="${BUILD_ROOT}/tests/mesh-pair"
+    local output_dir="${TEST_RESULTS_ROOT}/mesh-pair"
     build_tile \
         "${output_dir}" \
         tile0-sender \
@@ -288,7 +311,7 @@ build_mesh_pair() {
 }
 
 build_mesh_3x3() {
-    local output_dir="${BUILD_ROOT}/tests/mesh-3x3"
+    local output_dir="${TEST_RESULTS_ROOT}/mesh-3x3"
     local tile_id
 
     build_tile \
@@ -311,7 +334,7 @@ build_mesh_3x3() {
 }
 
 build_mesh_pipeline() {
-    local output_dir="${BUILD_ROOT}/tests/mesh-pipeline"
+    local output_dir="${TEST_RESULTS_ROOT}/mesh-pipeline"
     local tile_id
     local -a successors expected_inputs expected_outputs
 
@@ -377,12 +400,12 @@ build_distributed_matvec_variant() {
 
 build_distributed_matvec() {
     build_distributed_matvec_variant \
-        "${BUILD_ROOT}/tests/distributed-matvec"
+        "${TEST_RESULTS_ROOT}/distributed-matvec"
 }
 
 build_distributed_matvec_reverse() {
     build_distributed_matvec_variant \
-        "${BUILD_ROOT}/tests/distributed-matvec-reverse" \
+        "${TEST_RESULTS_ROOT}/distributed-matvec-reverse" \
         -DMITTENS_REVERSE_SECOND_PASS=1
 }
 
@@ -391,10 +414,12 @@ case "${ACTION}" in
         build_hello
         build_riscv_vector
         build_cpu_timing_validation
+        build_qemu_ready_set_validation
         build_runtime_library
         build_scratchpad_dma
-        build_memory_hierarchy_l1
-        build_memory_timing_validation
+        build_global_ram_exact
+        build_global_dma_macro_contention
+        build_epoch_barrier
         build_analog_instructions
         build_analog_ops
         build_analog_timing_validation
@@ -409,10 +434,13 @@ case "${ACTION}" in
     hello) build_hello ;;
     riscv-vector) build_riscv_vector ;;
     cpu-timing-validation) build_cpu_timing_validation ;;
+    qemu-ready-set) build_qemu_ready_set_validation ;;
     runtime-library) build_runtime_library ;;
     scratchpad-dma) build_scratchpad_dma ;;
-    memory-hierarchy-l1) build_memory_hierarchy_l1 ;;
-    memory-timing-validation) build_memory_timing_validation ;;
+    global-ram) build_global_ram ;;
+    global-ram-exact) build_global_ram_exact ;;
+    global-dma-macro-contention) build_global_dma_macro_contention ;;
+    epoch-barrier) build_epoch_barrier ;;
     analog-instructions) build_analog_instructions ;;
     analog-ops) build_analog_ops ;;
     analog-timing-validation) build_analog_timing_validation ;;
@@ -425,7 +453,7 @@ case "${ACTION}" in
     distributed-matvec) build_distributed_matvec ;;
     distributed-matvec-reverse) build_distributed_matvec_reverse ;;
     *)
-        echo "usage: $0 [all|hello|riscv-vector|cpu-timing-validation|runtime-library|memory-hierarchy-l1|memory-timing-validation|analog-instructions|analog-ops|analog-timing-validation|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
+        echo "usage: $0 [all|hello|riscv-vector|cpu-timing-validation|qemu-ready-set|runtime-library|scratchpad-dma|global-ram|global-ram-exact|global-dma-macro-contention|epoch-barrier|analog-instructions|analog-ops|analog-timing-validation|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
         exit 2
         ;;
 esac

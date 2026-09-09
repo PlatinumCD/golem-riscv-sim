@@ -28,7 +28,7 @@ constexpr uint32_t kArrayRows = 256;
 constexpr uint32_t kArrayColumns = 512;
 constexpr uint32_t kMatrixWords = kArrayRows * kArrayColumns;
 constexpr uint32_t kFrameMagic = UINT32_C(0x474f4c4d);
-constexpr uint32_t kFrameHeaderWords = 5;
+constexpr uint32_t kFrameHeaderWords = 7;
 constexpr uint32_t kActivationRoute = 100;
 constexpr uint32_t kPartial0Route = 200;
 constexpr uint32_t kPartial1Route = 201;
@@ -144,6 +144,8 @@ unsigned long storeVector(float* output, uint32_t arrayId) {
         routeId,
         0,
         0,
+        UINT32_MAX,
+        UINT32_MAX,
         wordCount,
     };
     sendWordsBlocking(destination, header, kFrameHeaderWords);
@@ -172,13 +174,16 @@ unsigned long storeVector(float* output, uint32_t arrayId) {
         header[1] != expectedRoute ||
         header[2] != 0 ||
         header[3] != 0 ||
-        header[4] != wordCount) {
+        header[4] != UINT32_MAX ||
+        header[5] != UINT32_MAX ||
+        header[6] != wordCount) {
         return false;
     }
 
     while (!mesh_nic::try_start_receive_words(
         expectedSource,
         expectedRoute,
+        UINT64_MAX,
         destination,
         wordCount
     )) {
@@ -188,8 +193,12 @@ unsigned long storeVector(float* output, uint32_t arrayId) {
     while (true) {
         uint32_t source = 0;
         uint32_t route = 0;
-        if (mesh_nic::try_receive_words_completion(&source, &route)) {
-            return source == expectedSource && route == expectedRoute;
+        uint64_t logicalIteration = 0;
+        if (mesh_nic::try_receive_words_completion(
+                &source, &route, &logicalIteration)) {
+            return source == expectedSource &&
+                   route == expectedRoute &&
+                   logicalIteration == UINT64_MAX;
         }
         mesh_nic::wait_for_receive();
     }

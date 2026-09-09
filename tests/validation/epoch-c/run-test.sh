@@ -4,14 +4,14 @@ set -euo pipefail
 readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
-readonly EPOCH_MANIFEST="${PROJECT_ROOT}/config/epoch-c.env"
+readonly EPOCH_MANIFEST="${PROJECT_ROOT}/src/config/epoch-c.env"
 
 if [[ ! -f "${EPOCH_MANIFEST}" ]]; then
     echo "missing Epoch C manifest: ${EPOCH_MANIFEST}" >&2
     exit 1
 fi
 
-# shellcheck source=../../../config/epoch-c.env
+# shellcheck source=../../../src/config/epoch-c.env
 source "${EPOCH_MANIFEST}"
 
 readonly gates=(

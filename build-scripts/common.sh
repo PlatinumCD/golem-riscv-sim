@@ -6,9 +6,24 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly BUILD_ROOT="${GOLEM_BUILD_ROOT:-${PROJECT_ROOT}/build}"
-readonly INSTALL_ROOT="${GOLEM_INSTALL_ROOT:-${PROJECT_ROOT}/install}"
-readonly PREPARED_SOURCE_ROOT="${GOLEM_SOURCE_ROOT:-${BUILD_ROOT}/sources}"
+hardware_path_exports="$(python3 "${PROJECT_ROOT}/tools/hardware/hardware_paths.py" --shell)" || return 2
+eval "${hardware_path_exports}"
+unset hardware_path_exports
+readonly HARDWARE_TREE="${GOLEM_HARDWARE_TREE}"
+readonly HARDWARE_ROOT="${PROJECT_ROOT}/src"
+readonly BUILD_ROOT="${GOLEM_BUILD_ROOT}"
+readonly INSTALL_ROOT="${GOLEM_INSTALL_ROOT}"
+readonly PREPARED_SOURCE_ROOT="${GOLEM_SOURCE_ROOT}"
+readonly TEST_RESULTS_ROOT="${PROJECT_ROOT}/tests/results"
+
+require_owned_comparison_output() {
+    [[ "${HARDWARE_TREE}" == src ]] || return 0
+    local destination="$1" owner="$2"
+    case "$(realpath -m -- "${destination}")" in
+        "$(realpath -m -- "${owner}")/"*) return 0 ;;
+        *) echo "comparison output escapes its owner through a symlink: ${destination}" >&2; return 2 ;;
+    esac
+}
 readonly CROSSSIM_SITE_PACKAGES="${INSTALL_ROOT}/cross-sim/python"
 readonly COMPILER_PYTHON_ENV="${INSTALL_ROOT}/compiler-python"
 readonly COMPILER_PYTHON="${COMPILER_PYTHON_ENV}/bin/python"
@@ -19,10 +34,65 @@ else
     readonly BUILD_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)"
 fi
 
-# shellcheck source=../config/versions.env
-source "${PROJECT_ROOT}/config/versions.env"
-# shellcheck source=../config/toolchain.env
-source "${PROJECT_ROOT}/config/toolchain.env"
+readonly CONFIG_BUILD_ROOT="${HARDWARE_ROOT}/config/build"
+readonly QEMU_DEVICE_ROOT="${HARDWARE_ROOT}/qemu/devices"
+readonly QEMU_INSTRUCTION_ROOT="${HARDWARE_ROOT}/qemu/instructions"
+readonly SST_ELEMENT_ROOT="${HARDWARE_ROOT}/sst"
+readonly PLATFORM_ROOT="${HARDWARE_ROOT}/platform/devices"
+readonly PLATFORM_STARTUP_ROOT="${HARDWARE_ROOT}/platform/startup"
+readonly PLATFORM_RUNTIME_ROOT="${HARDWARE_ROOT}/platform/runtime"
+source "${CONFIG_BUILD_ROOT}/versions.env"
+# shellcheck source=../src/config/toolchain.env
+source "${CONFIG_BUILD_ROOT}/toolchain.env"
+
+# Resolve implementation files without flattening src's ownership directories.
+platform_source() {
+    local name="$1" directory
+    for directory in "${PLATFORM_ROOT}" "${PLATFORM_STARTUP_ROOT}" "${PLATFORM_RUNTIME_ROOT}"; do
+        if [[ -f "${directory}/${name}" ]]; then
+            printf '%s\n' "${directory}/${name}"
+            return 0
+        fi
+    done
+    echo "unknown platform source: ${name}" >&2
+    return 1
+}
+
+# Convert the integer byte-size forms used by linker scripts and SST (for
+# example 67108864, 64M, 64MiB, or 64MB) to an integer byte count.
+parse_byte_size() {
+    local value="${1^^}"
+    local number_text prefix unit multiplier number
+
+    if [[ ! "${value}" =~ ^([0-9]+)([KMGT]?)(I?B)?$ ]]; then
+        echo "invalid byte size: $1" >&2
+        return 2
+    fi
+    number_text="${BASH_REMATCH[1]}"
+    prefix="${BASH_REMATCH[2]}"
+    unit="${BASH_REMATCH[3]}"
+    if [[ -n "${unit}" && "${unit}" != B && "${unit}" != IB ]]; then
+        echo "invalid byte-size unit: $1" >&2
+        return 2
+    fi
+    case "${prefix}" in
+        "") multiplier=1 ;;
+        K) multiplier=1024 ;;
+        M) multiplier=1048576 ;;
+        G) multiplier=1073741824 ;;
+        T) multiplier=1099511627776 ;;
+        *)
+            echo "invalid byte-size prefix: $1" >&2
+            return 2
+            ;;
+    esac
+    number=$((10#${number_text}))
+    if ((number > 9223372036854775807 / multiplier)); then
+        echo "byte size exceeds the supported integer range: $1" >&2
+        return 2
+    fi
+    printf '%d\n' "$((number * multiplier))"
+}
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then

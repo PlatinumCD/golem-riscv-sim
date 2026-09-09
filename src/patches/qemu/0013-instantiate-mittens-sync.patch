@@ -1,0 +1,20 @@
+diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -42,6 +42,7 @@
+ #include "hw/intc/sifive_plic.h"
+ #include "hw/misc/sifive_test.h"
+ #include "hw/misc/mittens_analog.h"
++#include "hw/misc/mittens_sync.h"
+ #include "hw/misc/mittens_nic.h"
+ #include "hw/platform-bus.h"
+ #include "chardev/char.h"
+@@ -1513,5 +1514,8 @@ static void virt_machine_init(MachineState *machine)
+     /* SiFive Test MMIO device */
+     sifive_test_create(memmap[VIRT_TEST].base);
+ 
++    /* Mittens SST/QEMU execution synchronization */
++    mittens_sync_create();
++
+     /* Mittens SST mesh NIC */
+     mittens_nic_create(memmap[VIRT_MITTENS_NIC].base);

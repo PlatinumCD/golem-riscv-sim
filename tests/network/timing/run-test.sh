@@ -7,7 +7,7 @@ source "${TEST_DIR}/../../support/test-env.sh"
 
 readonly SST="${INSTALL_ROOT}/sst-core/bin/sst"
 readonly ELEMENT_LIBRARY="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library"
-readonly OUTPUT_ROOT="${BUILD_ROOT}/tests/network-timing-validation"
+readonly OUTPUT_ROOT="${TEST_RESULTS_ROOT}/network-timing-validation"
 readonly TRIALS="${OUTPUT_ROOT}/trials.tsv"
 readonly RESULTS="${OUTPUT_ROOT}/results.csv"
 readonly ANALYZER="${TEST_DIR}/analyze-results.py"

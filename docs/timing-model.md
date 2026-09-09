@@ -165,7 +165,10 @@ direction. Standard scalar load records also keep integer register dependency
 masks and the RISC-V instruction length. Mittens groups adjacent scalar loads
 only when the later address does not use an earlier load result. It groups
 cache-line fragments when every identity field matches one vector memory
-instruction.
+instruction. For the private scratchpad, an aligned eight-element `e32`
+unit-stride load or store is represented as one 32-byte CPU transaction,
+matching the configured 256-bit SPM port; the eight guest elements remain part
+of logical accounting.
 
 QEMU publishes every RISC-V `fence` as a protocol boundary.
 Mittens drains all older timed stores before it resumes the hart. Atomic
@@ -204,9 +207,10 @@ state, and post-marker cache hits and misses are measured independently. The
 profile reports the handshake count, access count, read and write byte counts,
 and charged initialization cycles.
 
-`tests/memory/timing` independently verifies the cache boundary. For the
-documented L1, links, and 50 ns lower-memory backend, it observes exact
-five-cycle hits and 61-cycle misses.
+The retired private-L1 timing test previously verified the cache boundary.
+For the documented L1, links, and 50 ns lower-memory backend, it observed exact
+five-cycle hits and 61-cycle misses. The following are historical cache results;
+the active memory tests now cover global RAM and scratchpad DMA.
 
 The conflict test matches four hits, six misses, and 386 wait cycles. The
 capacity test matches one hit, 514 misses, and 31,359 wait cycles. The store
@@ -608,6 +612,27 @@ directional word-hops =
 physical link bits =
     sum of Merlin send_bit_count on non-endpoint router ports
 ```
+
+Shared-memory latency uses the same non-overlap rule. Every completed global
+RAM request has four controller-owned timestamps and exactly three adjacent
+intervals:
+
+```text
+exact-readiness delay = readiness cycle - arrival cycle
+RAM queue delay       = service-start cycle - readiness cycle
+RAM service           = completion cycle - service-start cycle
+```
+
+`global-ram-requests.csv` records those timestamps and intervals; its column
+sums must equal the corresponding `readiness_delay_cycles`,
+`queue_delay_cycles`, and `service_cycles` SST statistics. Exact-execution
+teardown is a rendezvous, not a DMA, and is recorded separately in
+`global-ram-teardowns.csv`. Initialization release likewise has one
+controller-owned row per active tile in `memory-init-barrier.csv`. Tile-local
+scratchpad bank and DMA service is reported as `scratchpad_service_cycles` in
+both SST statistics and each enabled per-tile summary. The production launcher
+fails if any trace row, aggregate, tile coverage, or controller statistic does
+not reconcile.
 
 The first measures application traffic, the second measures topology-weighted
 communication work, and the third records what the modeled links actually

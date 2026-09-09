@@ -1,0 +1,245 @@
+#include "../bridge/sharedAnalogMemoryBridge.h"
+
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+#include <sys/mman.h>
+#include <unistd.h>
+
+using SST::Mittens::AnalogBridgeSubmission;
+using SST::Mittens::AnalogBridgeToken;
+using SST::Mittens::SharedAnalogMemoryBridge;
+
+namespace {
+
+AnalogBridgeToken publish(
+    MittensAnalogBridgeHeader* mapping,
+    std::uint32_t arrayId,
+    MittensAnalogCommand command,
+    const std::vector<std::uint32_t>& input)
+{
+    MittensAnalogBridgeChannel* const channel =
+        mittens_analog_channel(mapping, arrayId);
+    const std::uint32_t sequence =
+        mittens_analog_load_relaxed(&channel->write_index);
+    MittensAnalogBridgeSlot* const slot =
+        mittens_analog_slot(mapping, arrayId, sequence);
+
+    assert(mittens_analog_load_acquire(&slot->state) ==
+           MITTENS_ANALOG_SLOT_FREE);
+    assert(input.size() <= mapping->words_per_slot);
+
+    slot->sequence = sequence;
+    slot->command = command;
+    slot->input_word_count =
+        static_cast<std::uint32_t>(input.size());
+    slot->output_word_count = 0;
+    slot->status = MITTENS_ANALOG_STATUS_SUCCESS;
+    std::copy(
+        input.begin(),
+        input.end(),
+        mittens_analog_slot_words(slot));
+    mittens_analog_store_release(
+        &slot->state, MITTENS_ANALOG_SLOT_SUBMITTED);
+    mittens_analog_store_release(
+        &channel->write_index, sequence + UINT32_C(1));
+    return AnalogBridgeToken{arrayId, sequence};
+}
+
+void release(
+    MittensAnalogBridgeHeader* mapping,
+    const AnalogBridgeToken& token)
+{
+    MittensAnalogBridgeSlot* const slot =
+        mittens_analog_slot(
+            mapping, token.arrayId, token.sequence);
+    assert(mittens_analog_load_acquire(&slot->state) ==
+           MITTENS_ANALOG_SLOT_COMPLETED);
+    mittens_analog_store_release(
+        &slot->state, MITTENS_ANALOG_SLOT_FREE);
+}
+
+} // namespace
+
+int main()
+{
+    SharedAnalogMemoryBridge bridge;
+    bridge.create(7, 2, 2, 3);
+
+    assert(bridge.open());
+    assert(bridge.arrayCount() == 2);
+    assert(bridge.protocolError() ==
+           MITTENS_ANALOG_BRIDGE_ERROR_NONE);
+    assert(
+        bridge.mappingSize() ==
+        mittens_analog_bridge_size(2, 2, 3));
+
+    void* const address = mmap(
+        nullptr,
+        bridge.mappingSize(),
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        bridge.fileDescriptor(),
+        0);
+    assert(address != MAP_FAILED);
+    auto* const mapping =
+        static_cast<MittensAnalogBridgeHeader*>(address);
+
+    assert(mapping->magic == MITTENS_ANALOG_BRIDGE_MAGIC);
+    assert(mapping->version == MITTENS_ANALOG_BRIDGE_VERSION);
+    assert(mapping->structure_size == bridge.mappingSize());
+    assert(mapping->array_count == 2);
+    assert(mapping->array_rows == 2);
+    assert(mapping->array_columns == 3);
+    assert(mapping->queue_capacity ==
+           MITTENS_ANALOG_QUEUE_CAPACITY);
+    assert(mapping->words_per_slot == 6);
+    assert(mapping->link_width_bits ==
+           MITTENS_ANALOG_LINK_WIDTH_BITS);
+    assert(mapping->tile_id == 7);
+
+    for (std::uint32_t arrayId = 0;
+         arrayId < mapping->array_count;
+         ++arrayId) {
+        const MittensAnalogBridgeChannel* const channel =
+            mittens_analog_channel_const(mapping, arrayId);
+        assert(channel->write_index == 0);
+        assert(channel->accept_index == 0);
+        for (std::uint32_t sequence = 0;
+             sequence < MITTENS_ANALOG_QUEUE_CAPACITY;
+             ++sequence) {
+            const MittensAnalogBridgeSlot* const slot =
+                mittens_analog_slot_const(
+                    mapping, arrayId, sequence);
+            assert(slot->state == MITTENS_ANALOG_SLOT_FREE);
+            assert(slot->input_word_count == 0);
+            assert(slot->output_word_count == 0);
+            assert(slot->sequence == 0);
+            assert(slot->status == MITTENS_ANALOG_STATUS_SUCCESS);
+            assert(mittens_analog_slot_words_const(slot)[0] == 0);
+        }
+    }
+
+    const MittensAnalogCommand load{
+        MITTENS_ANALOG_OPERATION_LOAD_VECTOR,
+        0,
+        UINT64_C(0x80001000),
+        0,
+    };
+    const AnalogBridgeToken loadToken =
+        publish(mapping, 0, load, {1, 2, 3});
+
+    AnalogBridgeSubmission submission =
+        bridge.takeAndAcceptSubmission(loadToken);
+    assert(submission.token.arrayId == 0);
+    assert(submission.token.sequence == 0);
+    assert(submission.command.operation ==
+           MITTENS_ANALOG_OPERATION_LOAD_VECTOR);
+    assert(
+        submission.inputWords ==
+        std::vector<std::uint32_t>({1, 2, 3}));
+    assert(!bridge.nextSubmission(1).has_value());
+
+    const MittensAnalogBridgeSlot* slot =
+        mittens_analog_slot_const(mapping, 0, 0);
+    assert(mittens_analog_load_acquire(&slot->state) ==
+           MITTENS_ANALOG_SLOT_ACCEPTED);
+
+    // Deferred acceptance releases the channel for the following command
+    // while preserving the copied payload and the accepted first slot.
+    const MittensAnalogCommand followingCompute{
+        MITTENS_ANALOG_OPERATION_COMPUTE, 0, 0, 0};
+    const AnalogBridgeToken followingToken =
+        publish(mapping, 0, followingCompute, {});
+    assert(followingToken.sequence == loadToken.sequence + 1);
+    assert(bridge.nextSubmission(0).has_value());
+    assert(submission.inputWords ==
+           std::vector<std::uint32_t>({1, 2, 3}));
+
+    bridge.complete(
+        loadToken,
+        MITTENS_ANALOG_STATUS_SUCCESS,
+        {10, 11});
+    assert(mittens_analog_load_acquire(&slot->state) ==
+           MITTENS_ANALOG_SLOT_COMPLETED);
+    assert(slot->status == MITTENS_ANALOG_STATUS_SUCCESS);
+    assert(slot->output_word_count == 2);
+    assert(mittens_analog_slot_words_const(slot)[0] == 10);
+    assert(mittens_analog_slot_words_const(slot)[1] == 11);
+    release(mapping, loadToken);
+
+    bridge.markAccepted(followingToken);
+    bridge.complete(
+        followingToken, MITTENS_ANALOG_STATUS_SUCCESS, {});
+    release(mapping, followingToken);
+
+    // Separate array channels can publish and be accepted independently.
+    const MittensAnalogCommand compute0{
+        MITTENS_ANALOG_OPERATION_COMPUTE, 0, 0, 0};
+    const MittensAnalogCommand compute1{
+        MITTENS_ANALOG_OPERATION_COMPUTE, 0, 1, 0};
+    const AnalogBridgeToken token0 =
+        publish(mapping, 0, compute0, {});
+    const AnalogBridgeToken token1 =
+        publish(mapping, 1, compute1, {});
+    assert(bridge.nextSubmission(0).has_value());
+    assert(bridge.nextSubmission(1).has_value());
+    bridge.markAccepted(token0);
+    bridge.markAccepted(token1);
+    bridge.complete(token0, MITTENS_ANALOG_STATUS_SUCCESS, {});
+    bridge.complete(token1, MITTENS_ANALOG_STATUS_SUCCESS, {});
+    release(mapping, token0);
+    release(mapping, token1);
+
+    assert(bridge.protocolError() ==
+           MITTENS_ANALOG_BRIDGE_ERROR_NONE);
+    assert(munmap(address, bridge.mappingSize()) == 0);
+    bridge.close();
+    assert(!bridge.open());
+
+    // Creating a production-sized bridge must touch control pages, not every
+    // matrix payload page.  A full-mapping memset would make all pages
+    // resident and fail this regression.
+    SharedAnalogMemoryBridge sparseBridge;
+    sparseBridge.create(8, 4, 1024, 512);
+    void* const sparseAddress = mmap(
+        nullptr,
+        sparseBridge.mappingSize(),
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        sparseBridge.fileDescriptor(),
+        0);
+    assert(sparseAddress != MAP_FAILED);
+
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    assert(pageSize > 0);
+    const std::size_t pageCount =
+        (sparseBridge.mappingSize() +
+         static_cast<std::size_t>(pageSize) - 1) /
+        static_cast<std::size_t>(pageSize);
+    std::vector<unsigned char> residency(pageCount, 0);
+    assert(mincore(
+               sparseAddress,
+               sparseBridge.mappingSize(),
+               residency.data()) == 0);
+    const std::size_t residentPages =
+        static_cast<std::size_t>(std::count_if(
+            residency.begin(),
+            residency.end(),
+            [](unsigned char state) {
+                return (state & 1U) != 0;
+            }));
+    const std::size_t maximumControlPages =
+        1 + 4 * (1 + MITTENS_ANALOG_QUEUE_CAPACITY);
+    assert(residentPages <= maximumControlPages);
+
+    assert(munmap(
+               sparseAddress,
+               sparseBridge.mappingSize()) == 0);
+    sparseBridge.close();
+    return 0;
+}

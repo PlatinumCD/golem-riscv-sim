@@ -23,6 +23,11 @@ profile_directory = os.environ.get(
     "MITTENS_DEPLOYMENT_MEMORY_PROFILE", ""
 )
 tile_params = {
+    "cpu_clock": os.environ.get("MITTENS_DEPLOYMENT_CPU_CLOCK", "1GHz"),
+    "serial_output_directory": os.environ.get("MITTENS_DEPLOYMENT_SERIAL", ""),
+    "scratchpad_enabled": os.environ.get(
+        "MITTENS_DEPLOYMENT_SCRATCHPAD_ENABLED", "false"
+    ).lower() in ("1", "true", "yes"),
     "rx_dma_clock": os.environ.get(
         "MITTENS_DEPLOYMENT_RX_DMA_CLOCK", "1GHz"
     ),
@@ -44,6 +49,29 @@ if memory_backend == "memhierarchy":
             "profile_output_directory": profile_directory,
         }
     )
+barrier_tiles = os.environ.get("MITTENS_DEPLOYMENT_MEMORY_INIT_BARRIER_TILES", "")
+initialization_barrier = None
+if barrier_tiles:
+    if int(barrier_tiles) != 2:
+        raise RuntimeError(
+            "deployment-pair initialization barrier must contain both tiles"
+        )
+    initialization_barrier = {
+        "clock": "1GHz",
+        "release_cycles": 1,
+    }
+initialization_quantum = os.environ.get(
+    "MITTENS_DEPLOYMENT_MEMORY_INIT_INSTRUCTION_QUANTUM", ""
+)
+if initialization_quantum:
+    tile_params["memory_init_instruction_quantum"] = int(
+        initialization_quantum
+    )
+progress_watchdog_ms = os.environ.get(
+    "MITTENS_DEPLOYMENT_PROGRESS_WATCHDOG_MS", ""
+)
+if progress_watchdog_ms:
+    tile_params["progress_watchdog_ms"] = int(progress_watchdog_ms)
 
 build_mesh(
     width=2,
@@ -94,4 +122,5 @@ build_mesh(
             os.environ.get("MITTENS_DEPLOYMENT_L2_BANKS", "2")
         ),
     },
+    initialization_barrier=initialization_barrier,
 )

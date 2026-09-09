@@ -5,7 +5,7 @@ readonly TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../support/test-env.sh
 source "${TEST_DIR}/../../support/test-env.sh"
 
-readonly OUTPUT_DIR="${BUILD_ROOT}/tests/transmit-fanout"
+readonly OUTPUT_DIR="${TEST_RESULTS_ROOT}/transmit-fanout"
 readonly RESULTS_DIR="${OUTPUT_DIR}/results"
 readonly MODE="${MITTENS_FANOUT_MODE:-polling}"
 readonly QEMU="${INSTALL_ROOT}/qemu/bin/qemu-system-riscv64"
