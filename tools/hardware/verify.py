@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Run current host component checks; historical source comparison is opt-in."""
-import hashlib
+"""Run host component and hardware-tooling checks."""
 import argparse
-import json
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 
@@ -12,31 +9,9 @@ TOOLS = Path(__file__).resolve().parent
 COPY = TOOLS.parents[1] / 'src'
 
 
-def without_local_includes(text):
-    return re.sub(r'^#include "[^"]+"$', '#include "LOCAL"', text, flags=re.M)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check-copy-equivalence', action='store_true',
-                        help='Also require the pre-refactor include-only equivalence')
-    parser.add_argument('--reference-source', type=Path,
-                        help='Original-layout source snapshot, required only for copy equivalence')
-    args = parser.parse_args()
-    if args.check_copy_equivalence:
-        if args.reference_source is None or not args.reference_source.is_dir():
-            parser.error('--check-copy-equivalence requires an existing --reference-source directory')
-        entries = json.loads((COPY.parent / 'docs/hardware/history/source-path-map.json').read_text())
-        for entry in entries:
-            original, cleaned = args.reference_source / entry['original'], COPY / entry['cleaned']
-            if not original.is_file() or not cleaned.is_file():
-                parser.error(f'incompatible reference snapshot: {original} / {cleaned}')
-            assert hashlib.sha256(original.read_bytes()).hexdigest() == entry['sha256'], original
-            if cleaned.suffix in ('.cc', '.cpp', '.c', '.h', '.inc', '.S', '.ld', '.patch', '.env'):
-                assert without_local_includes(original.read_text()) == without_local_includes(cleaned.read_text()), cleaned
-        print(f'{len(entries)} historical copy entries verified.', flush=True)
-    elif args.reference_source:
-        parser.error('--reference-source requires --check-copy-equivalence')
+    parser.parse_args()
     cases = {
         'cpu_execution_ledger': [],
         'cpu_execution_controller': ['execution/cpuExecutionController.cc',

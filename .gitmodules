@@ -18,6 +18,3 @@
 [submodule "third_party/cross-sim"]
 	path = third_party/cross-sim
 	url = https://github.com/sandialabs/cross-sim.git
-[submodule "third_party/sculptor-mlir"]
-	path = third_party/sculptor-mlir
-	url = https://github.com/PlatinumCD/sculptor-mlir.git

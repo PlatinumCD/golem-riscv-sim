@@ -1,8 +1,7 @@
 # Simulator implementation
 
-`src/` contains the active hardware model, guest platform support and integration
-patches. Build orchestration, test runners and historical reports live outside
-this directory.
+`src/` contains the hardware model, guest platform support, and integration
+patches. Build orchestration and test runners live outside this directory.
 
 | Directory | Responsibility |
 |---|---|
@@ -31,5 +30,4 @@ currently requires a local study dependency; see the
 [communication-envelope wrapper](../tests/network/communication-envelope/README.md).
 
 - [Hardware tooling](../tools/hardware/README.md)
-- [Testing guide](../docs/testing.md)
-- [Hardware documentation and history](../docs/hardware/README.md)
+- [Architecture documentation](../docs/README.md)

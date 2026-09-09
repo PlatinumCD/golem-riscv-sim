@@ -31,7 +31,8 @@ bash tests/run-all.sh --suite hardware
 
 This rebuilds the project-owned hardware integration. It does not install the
 compiler toolchain, SST Core, or other shared dependencies. For a new machine,
-start with [the build guide](docs/building.md).
+run `bash bootstrap.sh check` to check host tools, and use
+`bash bootstrap.sh --help` for dependency build actions.
 
 ```bash
 bash tests/run-all.sh --list
@@ -59,15 +60,10 @@ Builds and installations go under `build/` and `install/`; hardware defaults
 are `build/src/` and `install/src/`. Test output normally goes under
 `tests/results/`. These generated directories are ignored.
 
-`studies/`, `tests/compiler/`, and `tests/models/sculptor-ra-tree/` are
-local-only directories excluded from Git tracking. Compiler-dependent tests
-elsewhere may still require them. Submodule edits also require separate commits.
-
 ## Documentation
 
 - [Architecture](docs/architecture.md): component ownership and data paths.
-- [Building](docs/building.md): prerequisites and build actions.
-- [Testing](docs/testing.md): test selection and execution.
+- [Hardware tooling](tools/hardware/README.md): build checks and test execution.
 - [Clock and counter semantics](src/sst/execution/TIMING.md): interpreting measurements.
 - [Guest interfaces](docs/platform-v0.1.md) and [scratchpad DMA](docs/platform-v0.2.md).
 - [RVV](docs/vector-architecture.md) and [analog instructions](docs/analog-isa.md).
