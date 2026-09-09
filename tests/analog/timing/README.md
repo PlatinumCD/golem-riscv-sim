@@ -33,4 +33,4 @@ Run:
 ```
 
 Raw traces, logs, summaries, and the measured-versus-expected table are
-written under `build/tests/analog-timing-validation/`.
+written under `tests/results/analog-timing-validation/` by default.

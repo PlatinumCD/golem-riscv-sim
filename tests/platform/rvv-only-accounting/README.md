@@ -26,5 +26,5 @@ Run it with:
 Results are written to:
 
 ```text
-build/tests/platform/rvv-only-accounting/results.csv
+tests/results/platform/rvv-only-accounting/results.csv
 ```

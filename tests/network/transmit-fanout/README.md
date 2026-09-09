@@ -1,81 +1,44 @@
-# Transmit fanout validation
+# Transmit fan-out regression
 
-This test sends 512-word tensors from tile 0 to tile 1 over a physical 32-bit
-link. It sweeps 1, 2, 4, 8, 16, and 24 routes at QEMU instruction quanta of
-1,000,000, 100,000, and 10,000.
+Tile 0 sends 512-word payloads to tile 1. The runner varies route count
+(1, 2, 4, 8, 16, 24) and instruction quantum (1,000,000, 100,000, 10,000)
+to check transmit synchronization and backpressure.
 
-Four modes are available:
+This is a two-tile transport regression, not a four-direction bandwidth test.
 
-- `polling`: preserved pre-fix results for the original busy-retry behavior;
-- `blocking`: one source task with the timestamped descriptor doorbell;
-- `overlap-blocking`: one independent source task per route, blocking policy;
-- `async`: the same independent-task graph with conservative task/transmit
-  overlap enabled.
+## Run
 
 ```bash
-MITTENS_FANOUT_MODE=blocking ./tests/network/transmit-fanout/run-test.sh
+MITTENS_FANOUT_MODE=blocking bash tests/network/transmit-fanout/run-test.sh
 ```
 
-Limit a diagnostic run without deleting other successful trials:
+The script accepts `polling` (the default), `blocking`, `overlap-blocking`,
+and `async`. These select existing guest binaries/task layouts; a mode name
+does not restore an older simulator implementation.
+
+For a smaller run:
 
 ```bash
-MITTENS_FANOUT_MODE=blocking \
-MITTENS_FANOUTS="8 24" \
+MITTENS_FANOUT_MODE=blocking MITTENS_FANOUTS="8 24" \
 MITTENS_FANOUT_QUANTA="1000000 10000" \
-./tests/network/transmit-fanout/run-test.sh
+bash tests/network/transmit-fanout/run-test.sh
 ```
 
-Each trial preserves its UART log, route manifest, router statistics, raw
-per-tile profile, joined report, and summary under
-`build/tests/transmit-fanout/results/`.
+Output goes under `tests/results/transmit-fanout/results/` by default,
+grouped by mode, route count, and quantum. Re-running a case replaces its
+raw CSV/report files; preserve a copy before re-running a comparison.
 
-## Route-tail regression
+## Focused regressions
 
-The focused regression uses the GPT-2 failure conditions: one source task,
-two 768-word routes, 16 network-buffer cells, RX-DMA queue depth 4, a 1,000
-instruction synchronization quantum, and the private-L1 memhierarchy backend.
-It requires all 775 frame words and one reassembled payload DMA burst for both routes.
+| Script | Case |
+|---|---|
+| run-tail-regression.sh | Two routes with partial final bursts |
+| run-tail-contention-regression.sh | Eight producers converging on one destination |
+| run-tail-bidirectional-regression.sh | Mirrored peers sending and receiving |
+| run-tail-sustained-regression.sh | Repeated transfer waves |
+| run-receive-order-regression.sh | Delayed receive and same-source ordering |
+| run-receive-head-blocking-regression.sh | Blocked receive-head ownership |
+| run-software-payload-regression.sh | Software-consumed payloads |
 
-```bash
-./tests/network/transmit-fanout/run-tail-regression.sh
-```
-
-The contended variant launches eight simultaneous producers on a 9x1 mesh.
-All 16 routes converge on the final link into tile 8.
-
-```bash
-./tests/network/transmit-fanout/run-tail-contention-regression.sh
-```
-
-The bidirectional variant maps 32 tiles onto an 8x4 mesh. Each tile sends two
-768-word routes to its mirrored peer while receiving two routes in return.
-
-```bash
-./tests/network/transmit-fanout/run-tail-bidirectional-regression.sh
-```
-
-This regression uses 16 SST threads by default. Set
-`MITTENS_TAIL_SST_THREADS` to test a different thread count.
-
-The sustained regression repeats 64-word transfers for four task waves. It
-checks 256 routes and 16,384 payload words. Set `MITTENS_TAIL_STRESS_WAVES`
-or `MITTENS_TAIL_STRESS_WORDS` to increase the traffic scale:
-
-```bash
-./tests/network/transmit-fanout/run-tail-sustained-regression.sh
-```
-
-## Receive-order regression
-
-The focused receive-order gate sends eight independent one-word frames from
-each of two converging sources while the destination waits 250,000 guest cycles
-before polling, then pauses once more immediately before its first RX DMA
-submission. It verifies that at least five headers from both sources reached
-the tile before the first RX DMA, stretches RX-DMA setup to force a real wait,
-then requires every frame to complete without a zero-tick NIC receive wakeup.
-This catches SST reporting a header as guest-visible while QEMU is correctly
-hiding it behind an active DMA from the same source.
-
-```bash
-./tests/network/transmit-fanout/run-receive-order-regression.sh
-```
+Run scripts from the repository root using their full paths.
+Configuration details live in each runner and its simulation file.

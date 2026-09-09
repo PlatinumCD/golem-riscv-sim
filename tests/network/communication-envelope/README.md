@@ -1,17 +1,20 @@
-# Communication envelope regression
+# Communication envelope wrapper
 
-Nine fixed hardware cases from the organized
-[communication envelope study](../../../studies/compute-communication/communication-envelope/README.md):
-delayed RX, T2 fan-out, same-link T4, full duplex, integrated RVV+TX+RX,
-both repeated bank-phase controls, 16 KiB-plus-tail descriptors, and bounded-queue backpressure. This entry point
-does not run the complete study or any compiler/model workload.
+This entry point delegates to the local-only communication-envelope study in
+`studies/compute-communication/communication-envelope/`. It does not contain
+a self-contained hardware test.
+
+The study's regression selection covers delayed receive, fan-out, shared-link
+traffic, duplex traffic, concurrent RVV/DMA, bank placement, transfer tails,
+and queue backpressure.
 
 ```bash
-bash tests/network/communication-envelope/run-test.sh
 bash tests/run-all.sh --case network/communication-envelope
 ```
 
-The RVV and bank-phase cases retain coverage for the repaired QEMU accounting
-and injection-lane ordering failures. The runner retains failed logs, continues
-independent cases, and returns nonzero on any required failure. Passing transfer
-and accounting checks must not be confused with demonstrating peak client rates.
+**Requires the local studies tree.** That tree is ignored by Git, but this
+wrapper is still registered in the hardware suite. A checkout without it
+cannot execute this case. Keeping the regression independent of the studies
+tree requires a separate code change.
+
+Passing transfer and accounting checks does not establish peak client rates.

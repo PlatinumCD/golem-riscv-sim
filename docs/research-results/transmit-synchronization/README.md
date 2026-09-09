@@ -1,8 +1,12 @@
-# Transmit synchronization study
+# Historical transmit synchronization results
 
-This study validates and repairs the QEMU/SST transmit synchronization path.
+This report records an earlier repair of the QEMU/SST transmit synchronization path.
 It separates physical 32-bit link service from guest-side polling caused by a
 full four-entry shared-memory transmit ring.
+
+The numbers and figures below are preserved historical evidence, not a current
+benchmark result. The task-graph deployment and regeneration scripts used for
+this comparison were retired during the RA-tree migration.
 
 ## Result
 
@@ -71,20 +75,10 @@ out-of-task execution.
 
 ![Mesh traffic and stalls](figures/06-mesh-traffic-stall-heatmaps.svg)
 
-## Reproduce
+## Current regression
 
-Run the four fanout matrices:
-
-```bash
-MITTENS_FANOUT_MODE=polling ./tests/network/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=blocking ./tests/network/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=overlap-blocking ./tests/network/transmit-fanout/run-test.sh
-MITTENS_FANOUT_MODE=async ./tests/network/transmit-fanout/run-test.sh
-```
-
-This is a historical result set from the retired task-graph deployment path.
-Its source deployment and regeneration scripts were removed during the
-RA-tree migration. Preserve these recorded results as provenance; do not use
-them as a current compiler validation procedure.
+See [the transmit fan-out test](../../../tests/network/transmit-fanout/README.md)
+for current commands. Its mode names do not reproduce the old simulator
+implementation or regenerate this historical comparison.
 
 All plotted time is SST simulated time, not simulator wall-clock time.

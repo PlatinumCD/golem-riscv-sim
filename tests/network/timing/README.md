@@ -1,7 +1,8 @@
-# Isolated network timing validation
+# Merlin network timing regression
 
-This suite validates the 32-bit, 1 GHz Platform v0.1 mesh without QEMU,
+This suite validates a 32-bit, 1 GHz Merlin mesh without QEMU,
 runtime, receive-DMA, or application work inside the measured interval.
+Its formulas apply to this Merlin configuration, not the Mittens wormhole router.
 SST-only probes inject packets at the same exact simulation cycle and record
 both Merlin's head-flit callback and the cycle when the packet's tail has
 crossed the destination link. The latter is the point at which a Mittens tile
@@ -47,5 +48,5 @@ The test produces raw receipts, router statistics, logs, a trial manifest,
 and the joined predicted-versus-measured table under:
 
 ```text
-build/tests/network-timing-validation/
+tests/results/network-timing-validation/
 ```

@@ -1,6 +1,6 @@
 # Register-only instruction accounting
 
-This is Test 4. It executes arithmetic only in registers inside a task-trace
+This test executes arithmetic only in registers inside a task-trace
 start/finish interval:
 
 - scalar: eight repeated `fadd.s` operations per iteration;
@@ -12,6 +12,11 @@ operations in the measured interval. The runner requires
 `scratchpad_service_cycles = 0` and records total elapsed cycles, guest CPU
 cycles, measured-region counts, synchronization counts, and the non-guest
 elapsed fraction in `results.csv`.
+
+Only `measured_cycles` and `measured_instructions` use the task interval.
+The scalar/vector totals and synchronization counters cover the whole run.
+The CSV field `bridge_overhead_cycles` is calculated as total elapsed cycles
+minus guest CPU cycles; it does not directly measure bridge service time.
 
 Run it with:
 

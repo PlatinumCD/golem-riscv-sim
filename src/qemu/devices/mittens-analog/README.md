@@ -3,7 +3,7 @@
 The `mittens-analog` QOM device is the QEMU side of a tile-local analog
 accelerator. It has no guest MMIO window. The five Golem custom RISC-V
 instructions call it through the helper in
-[`../../qemu/golem-analog`](../../qemu/golem-analog).
+[instruction helper](../../instructions/golem-analog/README.md).
 
 An analog-enabled `mittens.tile` creates a geometry-sized shared `memfd`,
 duplicates it to child descriptor 43, and launches QEMU with:

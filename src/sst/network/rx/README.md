@@ -20,11 +20,10 @@ arbiter. Bank and write-port conflicts therefore still serialize service.
 The bridge burst queue remains bounded and functional completion ownership
 is unchanged. This does not duplicate scratchpad capacity or write ports.
 
-Validation:
+## Tests
 
-- `studies/compute-communication/hardware-communication-characterization/run-multi-rx.sh`:
-  1–4 one-hop senders × R1/R2/R4, full payload verification and exact flit
-  counts, with traces checking simultaneous local outputs.
+Paths below are relative to the repository root.
+
 - `src/sst/tests/scratchpad_observer_test.cpp`: concurrent RX writes to
   separate banks versus the same bank.
 - `src/sst/tests/rx_controller_regression.sh`: software-owned payloads,

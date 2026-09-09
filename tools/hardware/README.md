@@ -19,7 +19,10 @@ python3 tools/hardware/pin-baseline.py LABEL
 python3 tools/hardware/regression.py --reference-install /absolute/baseline/install
 ```
 
-SST component tests remain in `src/sst/tests/`; `verify.py` invokes them there.
-Only tooling-owned Python tests moved into this directory. `build/src` and
-`install/src` remain the default output roots. Historical run manifests retain
-their original command paths and are not rewritten.
+Run these commands from the repository root. `COMMAND`, `LABEL`, and the
+reference-install path are placeholders. Baseline capture writes a snapshot;
+it is not part of ordinary verification.
+
+`verify.py` compiles selected host component tests from `src/sst/tests/` and
+runs the tooling tests. It does not run a full SST simulation suite.
+Hardware builds default to `build/src/` and `install/src/`.

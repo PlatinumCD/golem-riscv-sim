@@ -1,16 +1,18 @@
-# Epoch C component validation
+# Historical Epoch C runner
 
-This foreground-only runner executes the five evidence gates required by the
-frozen Epoch C baseline:
+This runner belongs to an earlier five-gate baseline, including a private-L1
+test that is no longer part of the hardware suite.
 
-1. scalar/RVV CPU throughput and synchronization-quantum invariance;
-2. mesh serialization, distance, and contention;
-3. end-to-end analog command and shared-link timing;
-4. controlled private-L1 timing; and
-5. deployment-transmit synchronization and backpressure.
+It is not a current acceptance command: `run-test.sh` still expects
+`src/config/epoch-c.env`, while the preserved preset is now in
+`src/config/architectures/epoch-c.env`. Moving that path alone would not
+restore the removed gates.
 
-It does not build or run the GPT-2 scheduling sweep.
+For current validation, use:
 
 ```bash
-./tests/validation/epoch-c/run-test.sh
+bash tests/run-all.sh --suite hardware
 ```
+
+See the [hardware suite registry](../../../tools/hardware/hardware_suite.py)
+for its actual cases and prerequisites.

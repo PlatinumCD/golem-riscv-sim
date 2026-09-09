@@ -41,7 +41,7 @@ tests/analog/producer-mvm-recombine-distance/run-sweep.sh
 Outputs are under:
 
 ```text
-build/tests/producer-mvm-recombine-distance/
+tests/results/producer-mvm-recombine-distance/
 ├── configurations.tsv
 ├── configurations/<name>/tile-*.elf
 └── runs/
