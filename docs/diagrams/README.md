@@ -1,7 +1,7 @@
 # Architecture diagrams
 
-These SVGs document an earlier Platform v0.1 integration. They are editable
-source diagrams, not an up-to-date specification of every configurable resource.
+These SVGs are editable source diagrams of the tile and mesh boundaries. They
+are illustrative, not a complete specification of every configurable resource.
 
 - [Single tile](single-tile-uml.svg): guest, QEMU, bridge, SST, and analog boundaries.
 - [Mesh](mesh-topology.svg): a 3×3 example with a route from tile 0 to tile 8.

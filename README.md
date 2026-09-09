@@ -65,7 +65,7 @@ are `build/src/` and `install/src/`. Test output normally goes under
 - [Architecture](docs/architecture.md): component ownership and data paths.
 - [Hardware tooling](tools/hardware/README.md): build checks and test execution.
 - [Clock and counter semantics](src/sst/execution/TIMING.md): interpreting measurements.
-- [Guest interfaces](docs/platform-v0.1.md) and [scratchpad DMA](docs/platform-v0.2.md).
+- [Platform](docs/platform.md): guest-visible devices, scratchpad, DMA, and communication.
 - [RVV](docs/vector-architecture.md) and [analog instructions](docs/analog-isa.md).
 
 Simulated time is not host runtime. Service and stall counters can overlap;

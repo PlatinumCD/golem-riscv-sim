@@ -68,7 +68,7 @@ only identifies which instructions may read or write memory; it does not
 encode an element type or transfer length.
 
 `mvm.mv` requires the source output extent to equal the destination input
-extent. Because every platform-v0.1 array has the same geometry, this currently
+extent. Because configured arrays on a tile share the same geometry, this currently
 requires `analog_array_rows == analog_array_columns`.
 
 ## LLVM intrinsic interface
@@ -109,7 +109,7 @@ the compiler from treating the operations as removable pure computation and
 expresses their guest-memory ordering requirements.
 
 LLVM does not define accelerator latency, asynchronous queues, or instruction
-retirement behavior. Platform v0.1 supplies the asynchronous execution
+retirement behavior. The platform supplies the asynchronous execution
 contract:
 
 - every analog array has an independent ordered command stream;
@@ -127,7 +127,7 @@ contract:
   source/destination stream for `mvm.mv`.
 
 Commands within one array stream remain in issue order, so the array ID is
-sufficient for platform-v0.1 dependency tracking and no command ID is encoded.
+sufficient for per-array dependency tracking and no command ID is encoded.
 SST remains responsible for each array's modeled transfer and compute time.
 With `N` active arrays, the tile still advances at most one 256-bit beat in
 one direction during one cycle. Maximum aggregate tile-to-array bandwidth is

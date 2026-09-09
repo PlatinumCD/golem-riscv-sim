@@ -3,8 +3,7 @@
 | Document | Scope |
 |---|---|
 | [System architecture](architecture.md) | Tile components, ownership, and data paths |
-| [Platform interface](platform-v0.1.md) | Guest-visible devices and communication interface |
-| [Scratchpad and DMA](platform-v0.2.md) | Private scratchpad and explicit memory transfers |
+| [Platform](platform.md) | Guest-visible devices, scratchpad, DMA, and communication |
 | [Vector architecture](vector-architecture.md) | RISC-V vector geometry and execution contract |
 | [Analog ISA](analog-isa.md) | Custom matrix-compute instructions |
 | [Timing model](timing-model.md) | Modeled timing, counters, and limitations |

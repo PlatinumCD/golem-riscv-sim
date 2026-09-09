@@ -1,7 +1,7 @@
-# Golem Vector Architecture v0.1
+# Golem vector architecture
 
-This document is the normative vector-processor contract for a conforming
-Golem Platform v0.1 tile. It fixes the architectural vector geometry and the
+This document is the vector-processor contract for a conforming Golem tile. It
+fixes the architectural vector geometry and the
 boundary between the scalar CPU, standard RISC-V Vector Extension, custom
 Golem analog accelerator, QEMU functional execution, and SST timing model.
 
@@ -10,7 +10,7 @@ forbidden, recommended, and optional behavior respectively.
 
 ## Fixed architectural contract
 
-| Property | Golem v0.1 value |
+| Property | Current Golem value |
 | --- | --- |
 | Base ISA | RV64 |
 | Standard ISA | `RV64GCV` |
@@ -130,7 +130,7 @@ Shared tile analog link: 256 bits = 8 float32 words
 
 This equality does not create a direct architectural connection between a
 vector register and an analog array, and it does not multiply analog
-bandwidth by the number of arrays. Platform v0.1 continues to use the
+bandwidth by the number of arrays. The platform continues to use the
 memory-based Golem analog commands:
 
 ```text
@@ -145,7 +145,7 @@ Analog command path:
 `mvm.set`, `mvm.l`, `mvm`, `mvm.s`, and `mvm.mv` remain asynchronous
 array-command operations with general-purpose-register operands. Direct
 vector-register-to-array instructions would be a future ISA revision and
-must not be assumed by v0.1 software or compiler lowering.
+must not be assumed by software or compiler lowering.
 
 ## Mesh and task-runtime invariants
 
@@ -158,7 +158,7 @@ RVV is tile-local and does not change the network contract:
 - vectorized local computation must explicitly store data before the existing
   runtime or NIC can route it.
 
-The tile task and tensor ABI remains memory-based. Platform v0.1 introduces no
+The tile task and tensor ABI remains memory-based. The platform introduces no
 platform-specific vector calling convention and relies on LLVM's RISC-V ABI
 behavior for compiler-generated code.
 
@@ -182,8 +182,8 @@ one hart and one bare-metal program for the lifetime of the simulation.
 
 Mittens exposes `riscv_vector_enabled`, `riscv_vector_length_bits`, and
 `riscv_vector_element_bits` for validation and architectural experiments.
-A conforming Golem v0.1 run must use `true`, `256`, and `64`. Other accepted
-values describe an experimental non-v0.1 processor and require a matching
+A conforming current run must use `true`, `256`, and `64`. Other accepted
+values describe an experimental processor configuration and require a matching
 compiler target.
 
 ## Compiler contract
@@ -264,7 +264,7 @@ issue-width comparison. Item 7 remains future work: the current model
 preserves the vector issue limit but does not yet assign distinct latency and
 occupancy to individual vector operations.
 
-## Explicit non-goals for v0.1
+## Explicit non-goals
 
 - New custom vector opcodes.
 - Direct RVV-register/analog-array transfers.

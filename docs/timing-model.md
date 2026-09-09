@@ -1,6 +1,6 @@
 # Timing model
 
-Platform v0.1 synchronizes every managed QEMU tile to the SST event schedule.
+The platform synchronizes every managed QEMU tile to the SST event schedule.
 SST is the time authority; QEMU is the functional RISC-V instruction executor.
 
 ## CPU synchronization
@@ -544,7 +544,7 @@ The current implementation supports deterministic measurements of:
   cross-tile overlap;
 - analog transfer and configured compute cycles;
 - shared-link contention and overlap between independent analog computes; and
-- end-to-end Platform v0.1 simulated completion time.
+  - end-to-end simulated completion time.
 
 Native and CrossSim runs with identical architectural behavior should have the
 same simulated CPU timeline even if their host runtimes differ.

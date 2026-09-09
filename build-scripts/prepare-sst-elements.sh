@@ -40,7 +40,7 @@ if [[ "${HARDWARE_TREE}" == src ]]; then
         "${DESTINATION}/include/mittens/MemoryMap.h"
 fi
 
-# Platform v0.1 needs the Merlin network, Mittens tile, and optional
+# The simulator needs the Merlin network, Mittens tile, and optional
 # memHierarchy memory timing element.
 while IFS= read -r -d '' directory; do
     element_name="$(basename -- "${directory}")"
