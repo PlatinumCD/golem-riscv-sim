@@ -1,66 +1,98 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="650" viewBox="0 0 800 650" role="img" aria-labelledby="title desc">
-  <title id="title">Single tile architecture</title>
-  <desc id="desc">A RISC-V processor with scalar and vector execution connects to a banked scratchpad and optional analog arrays. Send and receive engines connect the scratchpad to a network interface and mesh router.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="790" viewBox="0 0 940 790" role="img" aria-labelledby="title desc">
+  <title id="title">Single tile, network DMA, and shared main memory</title>
+  <desc id="desc">The processor shares a banked scratchpad with TX DMA, RX DMA, and global-memory DMA. TX DMA feeds bounded send FIFOs; receive queues feed RX DMA. The network interface connects to an external mesh router. Global-memory DMA connects separately to a shared memory controller and main memory, bypassing the mesh.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <marker id="end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M 1 1 L 9 5 L 1 9 Z" fill="#526477"/>
     </marker>
+    <marker id="start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 9 1 L 1 5 L 9 9 Z" fill="#526477"/>
+    </marker>
     <style>
-      text { font-family: Arial, Helvetica, sans-serif; fill: #233446; font-size: 17px; text-anchor: middle; }
-      .label { font-size: 14px; fill: #526477; }
-      .wire { fill: none; stroke: #526477; stroke-width: 2; marker-end: url(#arrow); }
-      .both { marker-start: url(#arrow); }
+      text { font-family: Arial, Helvetica, sans-serif; fill: #233446; font-size: 18px; text-anchor: middle; }
+      .small { font-size: 14px; fill: #526477; }
+      .wire { fill: none; stroke: #526477; stroke-width: 2; marker-end: url(#end); }
+      .both { marker-start: url(#start); }
       .box { fill: #fff; stroke: #a3b1bf; stroke-width: 1.5; }
+      .queue { fill: #f0f4fa; stroke: #96abc4; stroke-width: 1.5; }
     </style>
   </defs>
-  <rect width="800" height="650" fill="#fff"/>
-  <rect x="36" y="20" width="728" height="583" rx="16" fill="#f8fafc" stroke="#c5ced8" stroke-width="1.5"/>
-  <text x="67" y="49" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:2px">TILE</text>
+  <rect width="940" height="790" fill="#fff"/>
+  <rect x="24" y="20" width="610" height="591" rx="16" fill="#f8fafc" stroke="#c5ced8" stroke-width="1.5"/>
+  <text x="49" y="49" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:2px">TILE</text>
 
-  <rect class="box" x="185" y="68" width="340" height="102" rx="9"/>
-  <text x="355" y="96">RISC-V processor</text>
-  <rect x="203" y="113" width="141" height="39" rx="5" fill="#e9eff7"/>
-  <rect x="356" y="113" width="151" height="39" rx="5" fill="#e9eff7"/>
-  <text x="273" y="138" class="label">Scalar</text>
-  <text x="431" y="138" class="label">Vector · RVV</text>
+  <rect class="box" x="85" y="75" width="325" height="105" rx="9"/>
+  <text x="247" y="106">RISC-V processor</text>
+  <rect x="101" y="125" width="132" height="36" rx="5" fill="#e9eff7"/>
+  <rect x="244" y="125" width="149" height="36" rx="5" fill="#e9eff7"/>
+  <text x="167" y="149" class="small">Scalar</text>
+  <text x="318" y="149" class="small">Vector · RVV</text>
+  <path class="wire both" d="M 413 127 H 450" stroke-dasharray="5 4"/>
+  <rect x="453" y="85" width="157" height="85" rx="9" fill="#faf7f1" stroke="#b6a888" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="531" y="118">Analog arrays</text>
+  <text x="531" y="145" class="small">Optional</text>
 
-  <path class="wire both" d="M 525 119 H 568" stroke-dasharray="5 4"/>
-  <rect x="570" y="77" width="164" height="84" rx="9" fill="#faf7f1" stroke="#b6a888" stroke-width="1.5" stroke-dasharray="5 4"/>
-  <text x="652" y="110">Analog arrays</text>
-  <text x="652" y="137" class="label">Optional</text>
+  <path class="wire both" d="M 247 183 V 222"/>
+  <rect x="85" y="225" width="525" height="105" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
+  <text x="347" y="257">Scratchpad</text>
+  <rect class="box" x="105" y="276" width="126" height="34" rx="4"/>
+  <rect class="box" x="245" y="276" width="126" height="34" rx="4"/>
+  <rect class="box" x="463" y="276" width="126" height="34" rx="4"/>
+  <text x="168" y="299" class="small">Bank 0</text>
+  <text x="308" y="299" class="small">Bank 1</text>
+  <text x="416" y="299">…</text>
+  <text x="526" y="299" class="small">Last bank</text>
 
-  <path class="wire both" d="M 355 172 V 208"/>
-  <rect x="160" y="211" width="390" height="103" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
-  <text x="355" y="243">Scratchpad</text>
-  <rect x="181" y="261" width="106" height="34" rx="4" fill="#fff" stroke="#b1c9bd"/>
-  <rect x="297" y="261" width="106" height="34" rx="4" fill="#fff" stroke="#b1c9bd"/>
-  <rect x="448" y="261" width="81" height="34" rx="4" fill="#fff" stroke="#b1c9bd"/>
-  <text x="234" y="284" class="label">Bank 0</text>
-  <text x="350" y="284" class="label">Bank 1</text>
-  <text x="425" y="284">…</text>
-  <text x="488" y="284" class="label">Bank n</text>
+  <path class="wire" d="M 162 331 V 368"/>
+  <path class="wire" d="M 362 368 V 332"/>
+  <rect class="box" x="85" y="371" width="155" height="65" rx="8"/>
+  <rect class="box" x="285" y="371" width="155" height="65" rx="8"/>
+  <text x="162" y="398">TX DMA</text>
+  <text x="162" y="420" class="small">1, 2, or 4 lanes</text>
+  <text x="362" y="398">RX DMA</text>
+  <text x="362" y="420" class="small">1, 2, or 4 lanes</text>
 
-  <path class="wire" d="M 245 314 V 351"/>
-  <path class="wire" d="M 465 351 V 316"/>
-  <rect class="box" x="160" y="354" width="170" height="54" rx="8"/>
-  <rect class="box" x="380" y="354" width="170" height="54" rx="8"/>
-  <text x="245" y="386">Send engines</text>
-  <text x="465" y="386">Receive engines</text>
+  <path class="wire" d="M 162 437 V 465"/>
+  <path class="wire" d="M 362 465 V 438"/>
+  <rect class="queue" x="85" y="468" width="155" height="55" rx="6"/>
+  <rect class="queue" x="285" y="468" width="155" height="55" rx="6"/>
+  <path d="M 93 478 V 513 M 100 478 V 513 M 108 478 V 513 M 293 478 V 513 M 300 478 V 513 M 308 478 V 513" stroke="#b4c3d5" fill="none"/>
+  <text x="172" y="491" style="font-size:16px">Send FIFOs</text>
+  <text x="172" y="511" class="small">Bounded · per lane</text>
+  <text x="372" y="491" style="font-size:16px">Receive queues</text>
+  <text x="372" y="511" class="small">Bounded</text>
+  <path class="wire" d="M 162 524 V 547"/>
+  <path class="wire" d="M 362 547 V 525"/>
+  <rect class="box" x="85" y="550" width="355" height="43" rx="8"/>
+  <text x="262" y="578">Network interface · NIC</text>
 
-  <path class="wire" d="M 245 408 V 439"/>
-  <path class="wire" d="M 465 439 V 410"/>
-  <rect class="box" x="160" y="442" width="390" height="47" rx="8"/>
-  <text x="355" y="472">Network interface</text>
+  <path class="wire both" d="M 540 333 V 368"/>
+  <rect class="box" x="475" y="371" width="135" height="65" rx="8"/>
+  <text x="542" y="398" style="font-size:16px">Global-memory</text>
+  <text x="542" y="422" style="font-size:16px">DMA</text>
+  <path class="wire both" d="M 613 403 H 706"/>
+  <text x="670" y="366" class="small">Separate</text>
+  <text x="670" y="385" class="small">DMA link</text>
 
-  <path class="wire both" d="M 355 491 V 521"/>
-  <rect x="265" y="524" width="180" height="50" rx="8" fill="#e9eff7" stroke="#96abc4" stroke-width="1.5"/>
-  <text x="355" y="555">Mesh router</text>
-  <path class="wire both" d="M 263 549 H 91"/>
-  <text x="106" y="534" class="label">West</text>
-  <path class="wire both" d="M 447 549 H 702"/>
-  <text x="686" y="534" class="label">East</text>
-  <path class="wire both" d="M 410 522 V 511 H 620 V 429"/>
-  <text x="620" y="413" class="label">North</text>
-  <path class="wire both" d="M 355 576 V 614"/>
-  <text x="355" y="637" class="label">South</text>
+  <text x="809" y="326" style="font-size:14px;font-weight:bold;letter-spacing:1px">SHARED MAIN MEMORY</text>
+  <rect class="box" x="709" y="350" width="200" height="111" rx="9"/>
+  <text x="809" y="380">Memory controller</text>
+  <rect class="queue" x="726" y="398" width="166" height="43" rx="5"/>
+  <text x="809" y="425" style="font-size:16px">Request queues</text>
+  <path class="wire both" d="M 809 464 V 506"/>
+  <rect x="709" y="509" width="200" height="74" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
+  <text x="809" y="540">Main memory</text>
+  <text x="809" y="563" class="small">Shared across tiles</text>
+
+  <path class="wire both" d="M 262 596 V 671"/>
+  <rect x="172" y="674" width="180" height="53" rx="8" fill="#e9eff7" stroke="#96abc4" stroke-width="1.5"/>
+  <text x="262" y="707">Mesh router</text>
+  <path class="wire both" d="M 169 701 H 60"/>
+  <text x="80" y="684" class="small">West</text>
+  <path class="wire both" d="M 355 701 H 531"/>
+  <text x="515" y="684" class="small">East</text>
+  <path class="wire both" d="M 312 671 V 647 H 480 V 626"/>
+  <text x="480" y="618" class="small">North</text>
+  <path class="wire both" d="M 262 730 V 763"/>
+  <text x="303" y="770" class="small">South</text>
 </svg>
