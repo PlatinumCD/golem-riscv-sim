@@ -88,6 +88,7 @@ libmittens_la_SOURCES = \
 	network/receiveDMAEngine.h \
 	network/receiveDMAEngine.cc \
 	network/rx/rxController.h \
+	network/rx/receiveQueueOrder.h \
 	network/rx/rxController.cc \
 	network/tx/txController.h \
 	network/tx/txController.cc \
@@ -142,6 +143,7 @@ EXTRA_DIST = \
 	tests/analog_bridge_test.cpp \
 	tests/nic_bridge_test.cpp \
 	tests/receive_dma_engine_test.cpp \
+	tests/receive_queue_order_test.cpp \
 	tests/scratchpad_timing_model_test.cpp \
 	tests/performance_profile_test.cpp \
 	tests/performance_profile.py \

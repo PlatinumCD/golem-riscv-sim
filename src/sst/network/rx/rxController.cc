@@ -1,5 +1,6 @@
 #include "sst_config.h"
 #include "rxController.h"
+#include "receiveQueueOrder.h"
 
 #include <algorithm>
 #include <exception>
@@ -554,25 +555,14 @@ void RxController::releaseCompletedReceiveFrames(std::uint32_t source)
                                         static_cast<unsigned>(source));
             }
         }
-        auto insertion = std::find_if(readyReceiveBursts_.begin(), readyReceiveBursts_.end(),
+        auto insertion = receivePayloadInsertionPoint(readyReceiveBursts_,
                                       [&](const ReadyReceiveBurst& receive)
                                       {
-                                          return receive.softwareVisible &&
-                                                 receive.source == source &&
+                                          return receive.source == source &&
                                                  receive.routeId == frame.routeId &&
                                                  receive.executionId == frame.executionId &&
                                                  receive.logicalIteration == frame.logicalIteration;
                                       });
-        if (insertion != readyReceiveBursts_.end())
-        {
-            ++insertion;
-        }
-        else
-        {
-            insertion = std::find_if(readyReceiveBursts_.begin(), readyReceiveBursts_.end(),
-                                     [](const ReadyReceiveBurst& receive)
-                                     { return receive.softwareVisible; });
-        }
         for (std::size_t offset = frame.queuedWords; offset < frame.payload.size();
              offset += MITTENS_BRIDGE_BURST_WORD_CAPACITY)
         {

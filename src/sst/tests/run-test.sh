@@ -96,6 +96,11 @@ mkdir -p -- "${HOST_TEST_DIR}"
     -o "${RECEIVE_DMA_ENGINE_TEST}"
 "${RECEIVE_DMA_ENGINE_TEST}"
 
+"${HOST_CXX}" -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+    -I"${PROJECT_ROOT}/src/sst" "${TEST_DIR}/receive_queue_order_test.cpp" \
+    -o "${RECEIVE_DMA_ENGINE_TEST}-queue-order"
+"${RECEIVE_DMA_ENGINE_TEST}-queue-order"
+
 "${HOST_CXX}" \
     -std=c++17 \
     -Wall \
