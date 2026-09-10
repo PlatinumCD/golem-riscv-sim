@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="940" height="790" viewBox="0 0 940 790" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="672" viewBox="0 0 940 790" role="img" aria-labelledby="title desc">
   <title id="title">Single tile, network DMA, and shared main memory</title>
   <desc id="desc">The processor shares a banked scratchpad with TX DMA, RX DMA, and global-memory DMA. TX DMA feeds bounded send FIFOs; receive queues feed RX DMA. The network interface connects to an external mesh router. Global-memory DMA connects separately to a shared memory controller and main memory, bypassing the mesh.</desc>
   <defs>
@@ -15,13 +15,18 @@
       .both { marker-start: url(#start); }
       .box { fill: #fff; stroke: #a3b1bf; stroke-width: 1.5; }
       .queue { fill: #f0f4fa; stroke: #96abc4; stroke-width: 1.5; }
+      .compute { fill: #eaf0fb; stroke: #8da7cf; }
+      .tx { fill: #e6f4f2; stroke: #73a9a1; }
+      .rx { fill: #efebfa; stroke: #a394c3; }
+      .memory { fill: #fff3df; stroke: #c5a36a; }
+      .network { fill: #e6effb; stroke: #8da7cf; }
     </style>
   </defs>
   <rect width="940" height="790" fill="#fff"/>
   <rect x="24" y="20" width="610" height="591" rx="16" fill="#f8fafc" stroke="#c5ced8" stroke-width="1.5"/>
   <text x="49" y="49" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:2px">TILE</text>
 
-  <rect class="box" x="85" y="75" width="325" height="105" rx="9"/>
+  <rect class="box compute" x="85" y="75" width="325" height="105" rx="9"/>
   <text x="247" y="106">RISC-V processor</text>
   <rect x="101" y="125" width="132" height="36" rx="5" fill="#e9eff7"/>
   <rect x="244" y="125" width="149" height="36" rx="5" fill="#e9eff7"/>
@@ -45,8 +50,8 @@
 
   <path class="wire" d="M 162 331 V 368"/>
   <path class="wire" d="M 362 368 V 332"/>
-  <rect class="box" x="85" y="371" width="155" height="65" rx="8"/>
-  <rect class="box" x="285" y="371" width="155" height="65" rx="8"/>
+  <rect class="box tx" x="85" y="371" width="155" height="65" rx="8"/>
+  <rect class="box rx" x="285" y="371" width="155" height="65" rx="8"/>
   <text x="162" y="398">TX DMA</text>
   <text x="162" y="420" class="small">1, 2, or 4 lanes</text>
   <text x="362" y="398">RX DMA</text>
@@ -54,20 +59,19 @@
 
   <path class="wire" d="M 162 437 V 465"/>
   <path class="wire" d="M 362 465 V 438"/>
-  <rect class="queue" x="85" y="468" width="155" height="55" rx="6"/>
-  <rect class="queue" x="285" y="468" width="155" height="55" rx="6"/>
-  <path d="M 93 478 V 513 M 100 478 V 513 M 108 478 V 513 M 293 478 V 513 M 300 478 V 513 M 308 478 V 513" stroke="#b4c3d5" fill="none"/>
-  <text x="172" y="491" style="font-size:16px">Send FIFOs</text>
-  <text x="172" y="511" class="small">Bounded · per lane</text>
-  <text x="372" y="491" style="font-size:16px">Receive queues</text>
-  <text x="372" y="511" class="small">Bounded</text>
+  <rect class="queue tx" x="85" y="468" width="155" height="55" rx="6"/>
+  <rect class="queue rx" x="285" y="468" width="155" height="55" rx="6"/>
+  <text x="162" y="491" style="font-size:16px">Send queues</text>
+  <text x="162" y="511" class="small">One per TX lane</text>
+  <text x="362" y="491" style="font-size:16px">Receive queues</text>
+  <text x="362" y="511" class="small">Limited space</text>
   <path class="wire" d="M 162 524 V 547"/>
   <path class="wire" d="M 362 547 V 525"/>
-  <rect class="box" x="85" y="550" width="355" height="43" rx="8"/>
+  <rect class="box network" x="85" y="550" width="355" height="43" rx="8"/>
   <text x="262" y="578">Network interface · NIC</text>
 
   <path class="wire both" d="M 540 333 V 368"/>
-  <rect class="box" x="475" y="371" width="135" height="65" rx="8"/>
+  <rect class="box memory" x="475" y="371" width="135" height="65" rx="8"/>
   <text x="542" y="398" style="font-size:16px">Global-memory</text>
   <text x="542" y="422" style="font-size:16px">DMA</text>
   <path class="wire both" d="M 613 403 H 706"/>
@@ -75,7 +79,7 @@
   <text x="670" y="385" class="small">DMA link</text>
 
   <text x="809" y="326" style="font-size:14px;font-weight:bold;letter-spacing:1px">SHARED MAIN MEMORY</text>
-  <rect class="box" x="709" y="350" width="200" height="111" rx="9"/>
+  <rect class="box memory" x="709" y="350" width="200" height="111" rx="9"/>
   <text x="809" y="380">Memory controller</text>
   <rect class="queue" x="726" y="398" width="166" height="43" rx="5"/>
   <text x="809" y="425" style="font-size:16px">Request queues</text>
@@ -84,15 +88,16 @@
   <text x="809" y="540">Main memory</text>
   <text x="809" y="563" class="small">Shared across tiles</text>
 
-  <path class="wire both" d="M 262 596 V 671"/>
-  <rect x="172" y="674" width="180" height="53" rx="8" fill="#e9eff7" stroke="#96abc4" stroke-width="1.5"/>
-  <text x="262" y="707">Mesh router</text>
-  <path class="wire both" d="M 169 701 H 60"/>
-  <text x="80" y="684" class="small">West</text>
-  <path class="wire both" d="M 355 701 H 531"/>
-  <text x="515" y="684" class="small">East</text>
-  <path class="wire both" d="M 312 671 V 647 H 480 V 626"/>
-  <text x="480" y="618" class="small">North</text>
-  <path class="wire both" d="M 262 730 V 763"/>
-  <text x="303" y="770" class="small">South</text>
+  <path class="wire both" d="M 262 596 V 650 H 525 V 671"/>
+  <text x="365" y="640" class="small">Tile connection</text>
+  <rect class="box network" x="500" y="674" width="180" height="53" rx="8"/>
+  <text x="590" y="707">Mesh router</text>
+  <path class="wire both" d="M 497 701 H 410"/>
+  <text x="430" y="684" class="small">West</text>
+  <path class="wire both" d="M 683 701 H 770"/>
+  <text x="750" y="684" class="small">East</text>
+  <path class="wire both" d="M 590 671 V 633"/>
+  <text x="590" y="625" class="small">North</text>
+  <path class="wire both" d="M 590 730 V 763"/>
+  <text x="633" y="770" class="small">South</text>
 </svg>

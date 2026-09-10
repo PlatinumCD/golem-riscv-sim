@@ -19,8 +19,9 @@ A tile is one compute unit with its own processor and local memory. It contains:
   goes there. The memory is divided into banks, allowing independent accesses
   when their read and write ports are available.
 - **TX and RX DMA engines** that send and receive scratchpad data while the
-  processor can continue computing. TX feeds bounded send queues; RX takes
-  arriving data from receive queues. Both share the scratchpad with the processor.
+  processor can continue computing. Each TX lane has its own send queue; RX takes
+  arriving data from receive queues. These queues have limited space: when full,
+  they make incoming data wait. Both engines share the scratchpad with the processor.
 - **A network interface** that connects those engines to the tile's mesh router,
   shown outside the tile boundary.
 - **Global-memory DMA** that transfers data between the scratchpad and shared
