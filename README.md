@@ -1,87 +1,66 @@
-# Golem RISC-V Simulator
+# RISC-V Tile Simulator
 
-Golem simulates a mesh of RISC-V tiles with vector execution, private banked
-scratchpads, DMA communication, and optional analog matrix-compute arrays.
+This project simulates a grid of RISC-V tiles. Each tile runs a program,
+performs scalar and vector computation, and keeps local data in a scratchpad.
+Tiles exchange data through a mesh network. Optional analog arrays provide
+matrix computation.
 
-QEMU executes each tile's bare-metal program. SST models instruction time,
-memory service, network traffic, and accelerator timing. The CPU is an
-instruction-accounting model, not a detailed processor pipeline.
+## Architecture
 
-## Hardware model
+### Inside one tile
 
-- **Compute:** scalar RISC-V and RVV, with configurable vector length and scalar issue width.
-- **Local memory:** banked, noncoherent scratchpad with separate read/write ports.
-- **Communication:** 1, 2, or 4 TX and RX streams sharing the existing scratchpad and network resources.
-- **Network:** a configurable 2-D mesh with XY routing, finite buffers, and backpressure.
-- **Global memory:** explicit DMA transfers through a shared memory controller.
-- **Analog:** configurable arrays with native or CrossSim numerical backends.
+![Single tile architecture](docs/diagrams/single-tile.svg)
 
-Hardware settings belong to the simulation configuration. Study-specific
-capacities, clock rates, and bandwidths are not fixed properties of the machine.
-See the [parameter reference](docs/parameters.md).
+A tile is one compute unit with its own processor and local memory. It contains:
 
-## First run
+- **A RISC-V processor** that runs the tile's program. Scalar instructions work
+  on individual values; vector instructions work on several values at once.
+- **A scratchpad** that holds the tile's local data. The program decides what
+  goes there. The memory is divided into banks, allowing independent accesses
+  when their read and write ports are available.
+- **Send and receive engines** that move data between the scratchpad and other
+  tiles while the processor can continue computing. They share the scratchpad
+  with the processor.
+- **A router** that connects the tile to its neighbors and forwards messages
+  through the grid.
+- **Optional analog arrays** for matrix computation.
 
-Use an AArch64 Linux host with the build tools checked by `bootstrap.sh check`.
-From a fresh checkout:
+You can vary the processor's vector width and scalar issue rate, the scratchpad's
+capacity, banking, ports and access timing, the number of simultaneous sends
+and receives, and the analog arrays' dimensions and timing.
+
+### Connecting tiles
+
+Tiles form a two-dimensional mesh. Messages pass through neighboring routers
+to reach another tile's scratchpad. You can vary the grid dimensions, link
+bandwidth, router delay, and queue capacity. Transfers that need the same busy
+link must wait.
+
+Tiles can also transfer data to and from shared global memory through a memory
+controller.
+
+### Running the simulation
+
+QEMU runs each tile's program; SST calculates simulated execution and transfer
+time. Processor timing is based on instruction accounting, not a detailed
+processor pipeline.
+
+## Build and run
+
+This project has only been tested on ARM processors so far.
+The first command checks the required build tools:
 
 ```bash
-git clone https://github.com/PlatinumCD/golem-riscv-sim.git
-cd golem-riscv-sim
 bash bootstrap.sh check
 JOBS=8 bash bootstrap.sh build
 bash tests/run-all.sh --case platform/hello
 ```
 
-`build` acquires and builds the shared dependencies, then builds the current
-hardware. The hello test boots one bare-metal tile and prints
-`Golem: single tile booted`. See [tests/](tests/README.md) for the coverage map.
+Run these from the repository root. The build prepares the dependencies and
+simulator. The test then boots one tile and prints `Golem: single tile booted`.
 
-After changing simulator code:
+## Learn more
 
-```bash
-JOBS=8 bash bootstrap.sh build-hardware
-bash tests/run-all.sh --suite hardware
-```
-
-`build-hardware` reuses installed dependencies. The build prints its source,
-build, and installation paths; tests check that the loaded simulator matches
-the current source. `bash bootstrap.sh --help` lists individual build actions.
-
-```bash
-bash tests/run-all.sh --list
-bash tests/run-all.sh --case component
-bash tests/run-group.sh network
-python3 -B tools/hardware/verify.py
-```
-
-## Source layout
-
-| Directory | Contents |
-|---|---|
-| [src/](src/README.md) | QEMU devices, SST models, bridge protocols, and guest support |
-| [tools/hardware/](tools/hardware/README.md) | Build checks, test runner, and baseline comparisons |
-| [tools/analysis/](tools/analysis/README.md) | Performance, progress, and result analysis |
-| [tools/compiler/](tools/compiler/README.md) | Optional compiler artifact checks |
-| [tests/](tests/README.md) | Integration and regression tests |
-| build-scripts/ | Dependency preparation and build scripts |
-| docs/ | Architecture and interface documentation |
-| third_party/ | Upstream submodules |
-
-Shared dependencies use `build/<dependency>/` and `install/<dependency>/`.
-The current hardware uses `build/src/` and `install/src/`.
-Test output goes under `tests/results/`; all these outputs are ignored.
-
-For optional compiler integration, provide the Sculptor source directory with
-`GOLEM_SCULPTOR_SOURCE=/absolute/path` when running `bash bootstrap.sh compiler`.
-
-## Documentation
-
-- [Architecture](docs/architecture.md): component ownership and data paths.
-- [Hardware tooling](tools/hardware/README.md): build checks and test execution.
-- [Clock and counter semantics](src/sst/execution/TIMING.md): interpreting measurements.
-- [Platform](docs/platform.md): guest-visible devices, scratchpad, DMA, and communication.
-- [RVV](docs/vector-architecture.md) and [analog instructions](docs/analog-isa.md).
-
-Simulated time is not host runtime. Service and stall counters can overlap;
-do not add them together and call the sum elapsed time.
+- [Understand the machine](docs/architecture.md): components and how data moves between them.
+- [Configure the machine](docs/parameters.md): parameter names, units, and defaults.
+- [Run the tests](tests/README.md): what is checked and how to run it.
