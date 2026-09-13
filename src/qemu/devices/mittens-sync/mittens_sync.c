@@ -42,6 +42,7 @@ typedef struct MittensSyncDeviceState {
     MittensSyncBridge *bridge;
     uint64_t accounted_executed;
     uint64_t vector_instructions_executed;
+    uint64_t fetch_vector_baseline;
     uint64_t memory_instruction_program_counter;
     uint32_t memory_instruction_source_register_mask;
     uint32_t memory_instruction_destination_register_mask;
@@ -49,6 +50,7 @@ typedef struct MittensSyncDeviceState {
     int64_t accounted_remaining;
     bool terminal_event_published;
     bool memory_timing;
+    bool instruction_fetch_timing;
     bool memory_init_batching;
     bool memory_access_batching;
     bool scratchpad_access_batching;
@@ -107,6 +109,20 @@ DECLARE_INSTANCE_CHECKER(
 
 static MittensSyncDeviceState *mittens_sync_instance;
 
+static uint64_t mittens_sync_current_executed(void);
+static uint64_t mittens_sync_preinstruction_executed(void);
+static bool mittens_sync_flush_memory_batch(uint32_t event_flags,
+                                            bool wait_for_resume);
+static void mittens_sync_set_error(
+    enum MittensSyncBridgeError error, const char *message);
+static void mittens_sync_publish_event(
+    uint32_t reason, uint32_t flags, uint32_t array_id,
+    uint64_t analog_sequence, uint32_t task_id, uint64_t execution_id,
+    uint32_t rx_dma_source, uint32_t rx_dma_route_id,
+    uint32_t rx_dma_word_count, uint64_t memory_address,
+    uint32_t memory_size, uint32_t memory_flags,
+    uint64_t instructions_executed, bool wait_for_resume);
+
 void helper_mittens_sync_vector_instruction(void)
 {
     MittensSyncDeviceState *s = mittens_sync_instance;
@@ -132,6 +148,75 @@ void helper_mittens_sync_memory_instruction(
         destination_register_mask;
     s->memory_instruction_length = instruction_length;
     s->memory_instruction_program_counter = program_counter;
+}
+
+void helper_mittens_sync_instruction_fetch(
+    uint64_t program_counter,
+    uint32_t instruction_length)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+
+    if (s == NULL || s->bridge == NULL || !s->instruction_fetch_timing ||
+        s->terminal_event_published || instruction_length == 0) {
+        return;
+    }
+    /* The opt-in model is SPM instruction fetch only.  Do not silently run
+     * an enabled guest outside the modeled fetch domain. */
+    if (!mittens_sync_scratchpad_contains(program_counter, instruction_length)) {
+        mittens_sync_set_error(
+            MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE,
+            "instruction fetch fell outside the configured scratchpad");
+        if (current_cpu != NULL) {
+            cpu_loop_exit(current_cpu);
+        }
+        return;
+    }
+    /* This helper is emitted at the start of a one-instruction TB.  The
+     * boundary therefore reports the count before the instruction, while
+     * QEMU's normal icount/vector ledger remains unchanged. */
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_INSTRUCTION_FETCH,
+        MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX, 0, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, 0,
+        program_counter, instruction_length,
+        MITTENS_SYNC_MEMORY_FLAG_NONE,
+        mittens_sync_preinstruction_executed(), true);
+    s->fetch_vector_baseline = s->vector_instructions_executed;
+    /* Dependency metadata belongs to this instruction only. In particular,
+     * code rewritten at the same PC must not inherit a prior scalar access. */
+    s->memory_instruction_program_counter = UINT64_MAX;
+    s->memory_instruction_length = 0;
+    s->memory_instruction_source_register_mask = 0;
+    s->memory_instruction_destination_register_mask = 0;
+}
+
+/* End the current vector memory instruction before another instruction can
+ * execute or fetch. This is transaction assembly, not instruction batching. */
+void helper_mittens_sync_vector_memory_end(void)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+    if (s != NULL && s->instruction_fetch_timing) {
+        (void)mittens_sync_flush_memory_batch(
+            MITTENS_SYNC_EVENT_FLAG_NONE, true);
+    }
+}
+
+void helper_mittens_sync_instruction_fence(void)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+
+    if (s == NULL || s->bridge == NULL || !s->instruction_fetch_timing ||
+        s->terminal_event_published) {
+        return;
+    }
+    /* QEMU invalidates translated blocks for FENCE.I; this event invalidates
+     * the modeled instruction cache at the same architectural boundary. */
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_INSTRUCTION_FENCE,
+        MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX, 0, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, 0,
+        0, 0, MITTENS_SYNC_MEMORY_FLAG_NONE,
+        mittens_sync_preinstruction_executed(), true);
 }
 
 static void mittens_sync_wake(uint32_t *state)
@@ -168,6 +253,16 @@ static uint64_t mittens_sync_current_executed(void)
     unaccounted =
         (uint64_t)(s->accounted_remaining - remaining);
     return s->accounted_executed + unaccounted;
+}
+
+static uint64_t mittens_sync_preinstruction_executed(void)
+{
+    uint64_t executed = mittens_sync_current_executed();
+
+    /* icount charges the current one-instruction TB before entering its
+     * helper.  Fetch and FENCE.I events are architectural pre-execution
+     * boundaries, so remove exactly that current instruction charge. */
+    return executed == 0 ? 0 : executed - 1;
 }
 
 static void mittens_sync_set_error(
@@ -360,6 +455,9 @@ static bool mittens_sync_flush_memory_batch(
         return false;
     }
     count = s->memory_batch_count;
+    if (s->instruction_fetch_timing) {
+        event_flags |= MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY;
+    }
     mittens_sync_publish_event_raw(
         MITTENS_SYNC_STOP_MEMORY_BATCH,
         event_flags,
@@ -507,6 +605,15 @@ bool mittens_sync_memory_timing_enabled(void)
     return s != NULL && s->bridge != NULL &&
            !s->terminal_event_published &&
            (s->memory_timing || s->scratchpad_enabled);
+}
+
+bool mittens_sync_instruction_fetch_timing_enabled(void)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+
+    return s != NULL && s->bridge != NULL &&
+           !s->terminal_event_published && s->instruction_fetch_timing &&
+           s->scratchpad_enabled;
 }
 
 bool mittens_sync_memory_initialization_active(void)
@@ -977,6 +1084,8 @@ void mittens_sync_yield_memory(
     const bool scratchpad =
         s != NULL && s->scratchpad_enabled &&
         mittens_memory_contains(s->scratchpad_base, s->scratchpad_size, physical_address);
+    const bool vector_transaction = scratchpad && s->instruction_fetch_timing &&
+        s->vector_instructions_executed != s->fetch_vector_baseline;
 
     if (!mittens_sync_memory_timing_enabled() ||
         (!scratchpad && !s->memory_timing)) {
@@ -1008,7 +1117,7 @@ void mittens_sync_yield_memory(
         return;
     }
     if ((!scratchpad && s->memory_access_batching) ||
-        (scratchpad && s->scratchpad_access_batching)) {
+        (scratchpad && s->scratchpad_access_batching) || vector_transaction) {
         MittensSyncMemoryAccess *access;
         MittensSyncMemoryAccess *previous;
         const uint64_t instructions_executed =
@@ -1048,7 +1157,7 @@ void mittens_sync_yield_memory(
          * configured limit counts logical accesses, not compact records, so
          * compaction cannot change simulated request arbitration.
          */
-        if (s->memory_batch_logical_count ==
+        if (!vector_transaction && s->memory_batch_logical_count ==
             s->memory_access_batch_records) {
             (void)mittens_sync_flush_memory_batch(
                 MITTENS_SYNC_EVENT_FLAG_NONE, true);
@@ -1064,7 +1173,7 @@ void mittens_sync_yield_memory(
          */
         previous = s->memory_batch_count == 0 ? NULL :
             &s->memory_batch[s->memory_batch_count - 1];
-        if (scratchpad && s->scratchpad_access_run_compaction &&
+        if (scratchpad && (s->scratchpad_access_run_compaction || vector_transaction) &&
             previous != NULL && size != 0 &&
             previous->size == size &&
             previous->repeat_count != 0 &&
@@ -2160,6 +2269,11 @@ static Property mittens_sync_properties[] = {
         UINT64_C(34359738368)),
     DEFINE_PROP_BOOL(
         "memory-timing", MittensSyncDeviceState, memory_timing, false),
+    DEFINE_PROP_BOOL(
+        "instruction-fetch-timing",
+        MittensSyncDeviceState,
+        instruction_fetch_timing,
+        false),
     DEFINE_PROP_BOOL(
         "memory-init-batching",
         MittensSyncDeviceState,

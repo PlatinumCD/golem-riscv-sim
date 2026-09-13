@@ -35,8 +35,8 @@ class MeasurementTests(unittest.TestCase):
         self.config_path.parent.mkdir()
         self.config = {'schema_version': 1, 'parameters': {
             key: {'value': value, 'category': 'hardware'} for key, value in {
-                'tile_id': 7, 'launch_mode': 'managed', 'memory_backend': 'memhierarchy',
-                'scratchpad_enabled': True, 'analog_array_count': 1, 'network_size': 8,
+                'tile_id': 7, 'launch_mode': 'managed',
+                'analog_array_count': 1, 'network_size': 8,
                 'tx_dma_streams': 1, 'profile_mode': 'trace', 'cpu_clock': '500MHz',
                 'rx_dma_clock': '2GHz', 'analog_link_clock': '250MHz',
                 # An external mesh clock is NOT an observed NIC/router factor.
@@ -80,6 +80,7 @@ class MeasurementTests(unittest.TestCase):
         self.data['metrics'] += [dict(name='stop_unknown', **metric(2)), dict(name='stop_unknown', **metric(9)),
                                  dict(name='wait_unknown_ticks', **metric(3, semantics=('tick', 'sst', 'interval_sum'))),
                                  dict(name='wait_unknown_ticks', **metric(8, semantics=('tick', 'sst', 'interval_sum')))]
+        self.unavailable([n for n in checker.METRICS if n.startswith('memory_')])
         self.csv_override = None
         self.payloads = {}
 
@@ -121,13 +122,11 @@ class MeasurementTests(unittest.TestCase):
         self.good()
 
     def test_resources_disabled_are_null_not_zero(self):
-        self.config_value('scratchpad_enabled', False)
         self.config_value('analog_array_count', 0)
-        self.config_value('memory_backend', 'native')
         self.config_value('launch_mode', 'disabled')
         self.config_value('profile_mode', 'summary')
         # network_size stays nonzero: it is NOT proof of attachment.
-        names = [n for n in checker.METRICS if n.startswith(('scratchpad_', 'analog_', 'memory_', 'network_', 'transmit_', 'physical_global_dma_'))]
+        names = [n for n in checker.METRICS if n.startswith(('analog_', 'memory_', 'network_', 'transmit_', 'physical_global_dma_'))]
         names += ['receive_dma_active_cycles', 'instructions', 'vector_instructions', 'cpu_cycles',
                   'synchronization_grants', 'synchronization_events']
         self.unavailable(names)

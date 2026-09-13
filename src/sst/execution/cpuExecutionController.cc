@@ -529,18 +529,25 @@ void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
 
 void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
 {
+    const bool instructionLocalVector =
+        (event.flags & MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY) != 0;
     const bool standaloneBatch = event.stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH;
     const bool fusedEvent = (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0;
     if (memoryBatchEnvelope_.has_value() || event.memoryBatch.empty() ||
         (standaloneBatch && fusedEvent) || (!standaloneBatch && !fusedEvent) ||
-        (standaloneBatch && (event.flags & ~MITTENS_SYNC_EVENT_FLAG_QUANTUM_END) != 0))
+        (instructionLocalVector && (!config_.scratchpadBoot || !standaloneBatch)) ||
+        (standaloneBatch && (event.flags & ~(MITTENS_SYNC_EVENT_FLAG_QUANTUM_END |
+                                           MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY)) != 0))
     {
         output_.fatal(0, -1, "tile %u received an invalid or nested memory batch\n",
                       static_cast<unsigned>(config_.tileId));
     }
     const bool scratchpadBatch =
         (event.memoryBatch.front().flags & MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD) != 0;
-    if (scratchpadBatch && (!config_.scratchpadAccessBatching || !host_.scratchpadAvailable()))
+    if (!scratchpadBatch)
+        throw std::invalid_argument("memory transactions must target SPM");
+    if (scratchpadBatch && ((!config_.scratchpadAccessBatching && !instructionLocalVector) ||
+                           !host_.scratchpadAvailable()))
     {
         output_.fatal(0, -1,
                       "tile %u received a scratchpad batch while scratchpad access "
@@ -552,13 +559,29 @@ void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
     std::uint64_t batchLogicalAccesses = 0;
     for (const MittensSyncMemoryAccess& access : event.memoryBatch)
     {
+        const auto& first = event.memoryBatch.front();
+        if (instructionLocalVector &&
+            (!scratchpadBatch || access.instruction_length != 0 ||
+             access.vector_instructions_executed == 0 ||
+             access.instructions_executed != event.instructionsExecuted ||
+             access.vector_instructions_executed != event.vectorInstructionsExecuted ||
+             access.instructions_executed != first.instructions_executed ||
+             access.vector_instructions_executed != first.vector_instructions_executed ||
+             access.program_counter != first.program_counter ||
+             ((access.flags ^ first.flags) & MITTENS_SYNC_MEMORY_FLAG_WRITE) != 0 ||
+             access.return_address != first.return_address))
+        {
+            output_.fatal(0, -1, "tile %u vector transaction crosses an instruction boundary\n",
+                          static_cast<unsigned>(config_.tileId));
+        }
         const bool accessIsScratchpad = (access.flags & MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD) != 0;
         const bool contiguousRun = (access.flags & MITTENS_SYNC_MEMORY_FLAG_CONTIGUOUS_RUN) != 0;
         const bool vectorTransaction =
             (access.flags & MITTENS_SYNC_MEMORY_FLAG_VECTOR_TRANSACTION) != 0;
         const bool repeatInvalid =
             access.repeat_count == 0 || contiguousRun != (access.repeat_count > 1) ||
-            (contiguousRun && (!accessIsScratchpad || !config_.scratchpadAccessRunCompaction)) ||
+            (contiguousRun && (!accessIsScratchpad ||
+                              (!config_.scratchpadAccessRunCompaction && !instructionLocalVector))) ||
             (vectorTransaction &&
              (!accessIsScratchpad || !contiguousRun || access.size != sizeof(std::uint32_t) ||
               access.repeat_count != 8 || access.address % 32 != 0));
@@ -603,11 +626,7 @@ void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
     memoryBatchLogicalAccesses_ += batchLogicalAccesses;
     memoryBatchEnvelope_ = event;
     memoryBatchScratchpad_ = scratchpadBatch;
-    memoryBatchRecords_ =
-        scratchpadBatch ? event.memoryBatch
-                        : coalesceMemoryAccesses(event.memoryBatch, config_.memoryCacheLineSize);
-    memoryBatchIndex_ = 0;
-    memoryBatchGroupEndIndex_ = 0;
+    memoryBatchRecords_ = event.memoryBatch;
     ++synchronizationEvents_;
     ++synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_BATCH];
     if (fusedEvent)
@@ -643,10 +662,6 @@ void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
             startLocalQemuLookahead(event);
         }
     }
-    else
-    {
-        scheduleNextMemoryBatchStep();
-    }
 }
 
 void CpuExecutionController::clearMemoryBatchState()
@@ -654,8 +669,6 @@ void CpuExecutionController::clearMemoryBatchState()
     memoryBatchEnvelope_.reset();
     memoryBatchRecords_.clear();
     memoryBatchScratchpad_ = false;
-    memoryBatchIndex_ = 0;
-    memoryBatchGroupEndIndex_ = 0;
 }
 
 void CpuExecutionController::scheduleScratchpadMemoryBatch()
@@ -702,100 +715,9 @@ void CpuExecutionController::scheduleScratchpadMemoryBatch()
         output_.fatal(0, -1, "tile %u scratchpad batch timing went backwards\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    memoryBatchIndex_ = memoryBatchRecords_.size();
     clearMemoryBatchState();
     replacePending(std::move(envelope));
     scheduleCpuSyncEvent(scratchpadTimingCycle_ - startCycle);
-}
-
-void CpuExecutionController::scheduleNextMemoryBatchStep()
-{
-    if (!memoryBatchEnvelope_.has_value() || memoryBatchScratchpad_)
-    {
-        output_.fatal(0, -1, "tile %u attempted to advance an inactive memory batch\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (memoryBatchIndex_ < memoryBatchRecords_.size())
-    {
-        const MittensSyncMemoryAccess& access = memoryBatchRecords_[memoryBatchIndex_];
-        memoryBatchGroupEndIndex_ = memoryBatchIndex_ + 1;
-        if ((access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE) == 0)
-        {
-            std::uint32_t producedRegisterMask = access.destination_register_mask;
-            while (memoryBatchGroupEndIndex_ < memoryBatchRecords_.size() &&
-                   memoryBatchGroupEndIndex_ - memoryBatchIndex_ < config_.memoryLoadQueueEntries)
-            {
-                const MittensSyncMemoryAccess& previous =
-                    memoryBatchRecords_[memoryBatchGroupEndIndex_ - 1];
-                const MittensSyncMemoryAccess& next =
-                    memoryBatchRecords_[memoryBatchGroupEndIndex_];
-                const bool vectorFragment = sameDynamicMemoryInstruction(access, next);
-                const bool independentScalar =
-                    canExtendScalarLoadGroup(previous, next, producedRegisterMask);
-                if (!vectorFragment && !independentScalar)
-                {
-                    break;
-                }
-                producedRegisterMask |= next.destination_register_mask;
-                ++memoryBatchGroupEndIndex_;
-            }
-        }
-        QemuSyncEvent event = *memoryBatchEnvelope_;
-        event.instructionsExecuted = access.instructions_executed;
-        event.vectorInstructionsExecuted = access.vector_instructions_executed;
-        event.stopReason = MITTENS_SYNC_STOP_MEMORY_ACCESS;
-        event.flags = MITTENS_SYNC_EVENT_FLAG_NONE;
-        event.analogSequence = access.program_counter;
-        event.executionId = access.return_address;
-        event.memoryAddress = access.address;
-        event.memorySize = access.size;
-        event.memoryFlags = access.flags & MITTENS_SYNC_MEMORY_FLAG_WRITE;
-        event.memoryBatch.clear();
-        const std::uint64_t cycles = accountCpuTo(event, true);
-        ++synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_ACCESS];
-        replacePending(std::move(event));
-        scheduleCpuSyncEvent(cycles);
-        return;
-    }
-
-    QemuSyncEvent event = *memoryBatchEnvelope_;
-    event.memoryBatch.clear();
-    const bool fusedEvent = (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0;
-    event.flags &= ~MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH;
-    const std::uint64_t cycles =
-        accountCpuTo(event, fusedEvent && event.stopReason != MITTENS_SYNC_STOP_QUANTUM_END);
-    clearMemoryBatchState();
-    replacePending(std::move(event));
-    scheduleCpuSyncEvent(cycles);
-}
-
-void CpuExecutionController::advanceMemoryBatchAccess()
-{
-    if (!memoryBatchEnvelope_.has_value() || memoryBatchIndex_ >= memoryBatchRecords_.size())
-    {
-        output_.fatal(0, -1, "tile %u completed an access outside a memory batch\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    completeWait();
-    pendingSyncEvent_.reset();
-    ++memoryBatchIndex_;
-    memoryBatchGroupEndIndex_ = 0;
-    scheduleNextMemoryBatchStep();
-}
-
-void CpuExecutionController::advanceMemoryBatchGroup()
-{
-    if (!memoryBatchEnvelope_.has_value() || memoryBatchGroupEndIndex_ <= memoryBatchIndex_ ||
-        memoryBatchGroupEndIndex_ > memoryBatchRecords_.size())
-    {
-        output_.fatal(0, -1, "tile %u completed an invalid memory request group\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    completeWait();
-    pendingSyncEvent_.reset();
-    memoryBatchIndex_ = memoryBatchGroupEndIndex_;
-    memoryBatchGroupEndIndex_ = 0;
-    scheduleNextMemoryBatchStep();
 }
 
 void CpuExecutionController::beginGlobalDMASubmitBatch(const QemuSyncEvent& event)
@@ -1278,6 +1200,8 @@ bool CpuExecutionController::waitIsProfiled(std::uint32_t reason) const noexcept
 {
     switch (reason)
     {
+    case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
+    case MITTENS_SYNC_STOP_INSTRUCTION_FENCE:
     case MITTENS_SYNC_STOP_NIC_TRANSMIT:
     case MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT:
     case MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT:
@@ -1349,6 +1273,9 @@ std::uint64_t CpuExecutionController::accountCpuTo(std::uint64_t instructions,
         }
         throw std::runtime_error(detail.str());
     }
+    const auto prepaid = std::min(prepaidInstructionIssueCycles_, cycles);
+    prepaidInstructionIssueCycles_ -= prepaid;
+    cycles -= prepaid;
     scratchpadTimingCycle_ = Timing::add(scratchpadTimingCycle_, cycles);
     return cycles;
 }
@@ -1356,6 +1283,10 @@ const char* syncStopReasonName(std::uint32_t reason)
 {
     switch (reason)
     {
+    case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
+        return "instruction-fetch";
+    case MITTENS_SYNC_STOP_INSTRUCTION_FENCE:
+        return "instruction-fence";
     case MITTENS_SYNC_STOP_NONE:
         return "none";
     case MITTENS_SYNC_STOP_QUANTUM_END:
@@ -1435,6 +1366,7 @@ CpuExecutionController::Statistics CpuExecutionController::statistics() const
     result.globalDMAWaitBatchTransportRecords_ = globalDMAWaitBatchTransportRecords_;
     result.globalDMAMacroRunTransportRecords_ = globalDMAMacroRunTransportRecords_;
     result.taskFinishEvents_ = taskFinishEvents_;
+    result.unretiredInstructionFetches_ = unretiredInstructionFetches_;
     result.waitTicks_ = waitTicks_;
     result.activeWaitStartTick_ = activeWaitStartTick_;
     result.activeWaitReason_ = activeWaitReason_;
@@ -1538,22 +1470,14 @@ void CpuExecutionController::applyResult(const CpuDeviceResult& result)
     if (result.delay)
         scheduleCpuSyncEvent(result.delay->value);
 }
-void CpuExecutionController::completeMemory(std::uint64_t step, bool group)
+void CpuExecutionController::completeMemory(std::uint64_t step)
 {
     requireStep(step);
     if (!pendingDelayElapsed())
         return;
     if (!pendingSyncEvent_ || pendingSyncEvent_->stopReason != MITTENS_SYNC_STOP_MEMORY_ACCESS)
         throw std::logic_error("memory completion has no pending CPU access");
-    if (memoryBatchEnvelope_)
-    {
-        if (group)
-            advanceMemoryBatchGroup();
-        else
-            advanceMemoryBatchAccess();
-    }
-    else
-        resumeAndCaptureQemu();
+    resumeAndCaptureQemu();
 }
 void CpuExecutionController::completeDevice(std::uint64_t step)
 {
@@ -1563,6 +1487,15 @@ void CpuExecutionController::completeDevice(std::uint64_t step)
     if (!pendingSyncEvent_)
         throw std::logic_error("device completion has no pending CPU event");
     const auto reason = pendingSyncEvent_->stopReason;
+    if (reason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH)
+    {
+        // Exceptions can redirect the PC without retiring the previously
+        // fetched instruction. Its lookup time has already elapsed, but its
+        // unused issue credit must not pay for a later instruction as well.
+        if (prepaidInstructionIssueCycles_ != 0)
+            unretiredInstructionFetches_ = Timing::add(unretiredInstructionFetches_, 1);
+        prepaidInstructionIssueCycles_ = 1;
+    }
     if (reason == MITTENS_SYNC_STOP_MEMORY_ACCESS)
     {
         completeMemory(step);
@@ -1715,12 +1648,19 @@ bool CpuExecutionController::processPendingSyncEvent()
                                event.memoryFlags,           {},
                                {scratchpadTimingCycle_}};
         action.step = step;
-        if (memoryBatchEnvelope_ && memoryBatchGroupEndIndex_ > memoryBatchIndex_ + 1)
-            action.group.assign(memoryBatchRecords_.begin() + memoryBatchIndex_,
-                                memoryBatchRecords_.begin() + memoryBatchGroupEndIndex_);
         result = dispatchDevice(host_.memory, action);
         break;
     }
+    case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
+    case MITTENS_SYNC_STOP_INSTRUCTION_FENCE:
+        if (!config_.scratchpadBoot || !host_.instruction || event.flags != 0 ||
+            event.memoryFlags != 0)
+            throw std::runtime_error("unexpected or malformed instruction-cache event");
+        result = dispatchDevice(host_.instruction,
+                                CpuInstructionAction{event.memoryAddress, event.memorySize,
+                                    reason == MITTENS_SYNC_STOP_INSTRUCTION_FENCE,
+                                    {scratchpadTimingCycle_}, step});
+        break;
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH:

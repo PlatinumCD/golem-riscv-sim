@@ -28,37 +28,6 @@ namespace Mittens
 namespace
 {
 
-// SST owns the request only after send(); constructor failures and rejected
-// issues release it without a Tile-side pending collection.
-class StandardMemoryRequest final : public MemoryAccessController::PreparedRequest
-{
-  public:
-    StandardMemoryRequest(SST::Interfaces::StandardMem* port, std::uint64_t address,
-                          std::uint32_t bytes, bool write)
-        : port_(port)
-    {
-        if (write)
-            request_ = std::make_unique<SST::Interfaces::StandardMem::Write>(
-                address, bytes, std::vector<std::uint8_t>(bytes, 0));
-        else
-            request_ = std::make_unique<SST::Interfaces::StandardMem::Read>(address, bytes);
-        id_ = request_->getID();
-    }
-    std::uint64_t id() const noexcept override
-    {
-        return id_;
-    }
-    void send() override
-    {
-        port_->send(request_.release());
-    }
-
-  private:
-    SST::Interfaces::StandardMem* port_;
-    std::unique_ptr<SST::Interfaces::StandardMem::Request> request_;
-    std::uint64_t id_;
-};
-
 constexpr auto kSyncWaitTimeout = std::chrono::milliseconds(50);
 constexpr std::uint32_t kDeploymentFrameMagic = UINT32_C(0x474f4c4d);
 constexpr std::size_t kDeploymentFrameHeaderWords = 7;
@@ -200,7 +169,6 @@ std::atomic<std::uint64_t> memoryInitializationExecutionProgressEpoch{0};
 Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     : SST::Component(id), config_(Configuration::read(params)),
       output_("mittens: ", config_.verbosity, 0, SST::Output::STDOUT), network_(nullptr),
-      memoryInterface_(nullptr),
       taskTrace_(config_.tileId, config_.taskTraceDirectory,
                  [this](const std::string& text) { output_.output("%s", text.c_str()); }),
       state_(LifecycleState::Constructed)
@@ -351,20 +319,6 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
             new SST::Interfaces::SimpleNetwork::Handler<Tile, &Tile::handleNetworkReceive>(this));
     }
 
-    if (config_.memoryBackend == "memhierarchy")
-    {
-        memoryClockTimeBase_ = getTimeConverter(config_.cpuClock);
-        memoryInterface_ = loadUserSubComponent<SST::Interfaces::StandardMem>(
-            "memoryIF", SST::ComponentInfo::SHARE_NONE, memoryClockTimeBase_,
-            new SST::Interfaces::StandardMem::Handler<Tile, &Tile::handleMemoryResponse>(this));
-        if (memoryInterface_ == nullptr)
-        {
-            output_.fatal(CALL_INFO, -1,
-                          "tile %u requires a StandardMem memoryIF when "
-                          "memory_backend=memhierarchy\n",
-                          static_cast<unsigned>(config_.tileId));
-        }
-    }
     if (config_.networkSize != 0 && config_.tileId >= config_.networkSize)
     {
         output_.fatal(CALL_INFO, -1, "tile ID %u is outside network_size %u\n",
@@ -401,6 +355,8 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         }
         globalDMALink_ = configureLink(
             "globalDMA", new SST::Event::Handler<Tile, &Tile::handleGlobalDMAEvent>(this));
+        if (config_.scratchpadBoot && globalDMALink_ == nullptr)
+            output_.fatal(CALL_INFO, -1, "scratchpad_boot requires the globalDMA link\n");
         memoryInitializationBarrierLink_ = configureLink(
             "memoryInitBarrier",
             new SST::Event::Handler<Tile, &Tile::handleMemoryInitializationBarrierEvent>(this));
@@ -533,13 +489,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
             config_.tileId,
             config_.networkSize,
             config_.receiveDMAQueueDepth,
-            config_.receiveDMAWidthBits,
-            config_.receiveDMASetupCycles,
-            config_.scratchpadEnabled,
             config_.scratchpadBytes,
-            config_.memoryGuestBase,
-            config_.memoryTileStride,
-            config_.memoryCacheLineSize,
             config_.networkTailDelivery,
             config_.meshLinkWidthBits,
             kDeploymentFrameMagic,
@@ -550,7 +500,6 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         RxController::Resources{
             bridge_,
             network_,
-            memoryInterface_,
             scratchpadTimingModel.get(),
             performanceProfile_,
             output_,
@@ -583,21 +532,6 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
                                   { output_.verbose(CALL_INFO, level, 0, "%s", text.c_str()); }};
     MemoryAccessController::Host memoryHost;
     memoryHost.now = [this] { return Timing::Ticks{getCurrentSimCycle()}; };
-    memoryHost.context = [this]
-    {
-        const auto context = taskTrace_.context();
-        return MemoryAccessController::Context{context.task.value_or(UINT32_MAX), context.execution,
-                                               context.task ? "task" : "runtime"};
-    };
-    if (memoryInterface_)
-        memoryHost.prepare =
-            [port = memoryInterface_](std::uint64_t address, std::uint32_t bytes, bool write)
-        { return std::make_unique<StandardMemoryRequest>(port, address, bytes, write); };
-    memoryHost.pending = [this] { return cpu_->pending(); };
-    memoryHost.hasMemoryReplay = [this] { return cpu_->hasMemoryReplay(); };
-    memoryHost.completeMemory = [this](std::uint64_t step, bool group)
-    { cpu_->completeMemory(step, group); };
-    memoryHost.retry = [this] { return cpu_->processPendingSyncEvent(); };
     memoryAccess_ = std::make_unique<MemoryAccessController>(
         config_, Timing::Clock<Timing::Cpu>(getTimeConverter(config_.cpuClock).getFactor()),
         std::move(scratchpadTimingModel), performanceProfile_, diagnostics, std::move(memoryHost));
@@ -664,42 +598,15 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     barriers_ =
         std::make_unique<InitializationBarrierClient>(config_, diagnostics, std::move(barrierHost));
 
-    output_.verbose(
-        CALL_INFO, 1, 0,
-        "configured tile %u (qemu=%s, elf=%s, qemu_control_memory=%s, "
-        "memory_backend=%s/init-batch-%s/memory-access-batch-%s/scratchpad-access-batch-%s/"
-        "run-compact-%s/event-batch-%s/global-dma-submit-batch-%s/global-dma-macro-%s/"
-        "analog-command-batch-%s-%u/%uB-cycle/setup-%llu, launch=%s, cpu_clock=%s, issue_width=%u, "
-        "sync_quantum=%llu, qemu_ready_set=%u/runtime-%s/lookahead-%s/spin-%uus, "
-        "rvv=%s/vlen-%u/elen-%u, network=%s, network_size=%u, mesh_link=%s/%u-bit/packet-%u-words, "
-        "rx_dma=%s/%u-bit/setup-%llu/queue-%u)\n",
-        static_cast<unsigned>(config_.tileId), config_.qemuPath.c_str(),
-        config_.elfPath.empty() ? "<unset>" : config_.elfPath.c_str(), config_.memory.c_str(),
-        config_.memoryBackend.c_str(), config_.memoryInitializationBatching ? "on" : "off",
-        config_.memoryAccessBatching ? "on" : "off",
-        config_.scratchpadAccessBatching ? "on" : "off",
-        config_.scratchpadAccessRunCompaction ? "on" : "off",
-        config_.memoryEventBatching ? "on" : "off", config_.globalDMASubmitBatching ? "on" : "off",
-        config_.globalDMAMacroExecution ? "on" : "off",
-        config_.analogCommandBatching ? "on" : "off",
-        static_cast<unsigned>(config_.memoryAccessBatchRecords),
-        static_cast<unsigned>(config_.memoryInitializationBytesPerCycle),
-        static_cast<unsigned long long>(config_.memoryInitializationLatencyCycles),
-        config_.launchMode.c_str(), config_.cpuClock.c_str(),
-        static_cast<unsigned>(config_.cpuIssueWidth),
-        static_cast<unsigned long long>(config_.syncInstructionQuantum),
-        static_cast<unsigned>(config_.qemuReadySetWorkers),
-        config_.qemuRuntimeReadySet ? "on" : "off", config_.qemuLocalLookahead ? "on" : "off",
-        static_cast<unsigned>(config_.qemuCaptureSpinMicroseconds),
-        config_.riscvVectorEnabled ? "enabled" : "disabled",
-        static_cast<unsigned>(config_.riscvVectorLengthBits),
-        static_cast<unsigned>(config_.riscvVectorElementBits),
-        network_ == nullptr ? "detached" : "attached", static_cast<unsigned>(config_.networkSize),
-        config_.meshLinkClock.c_str(), static_cast<unsigned>(config_.meshLinkWidthBits),
-        static_cast<unsigned>(config_.networkPacketWords), config_.receiveDMAClock.c_str(),
-        static_cast<unsigned>(config_.receiveDMAWidthBits),
-        static_cast<unsigned long long>(config_.receiveDMASetupCycles),
-        static_cast<unsigned>(config_.receiveDMAQueueDepth));
+    output_.verbose(CALL_INFO, 1, 0,
+        "configured tile %u (elf=%s, launch=%s, cpu=%s, issue=%u, "
+        "RVV=%u-bit, I-cache=%uB, mesh=%ux%u, link=%s/%u-bit, TX=%u, RX=%u)\n",
+        config_.tileId, config_.elfPath.empty() ? "<unset>" : config_.elfPath.c_str(),
+        config_.launchMode.c_str(), config_.cpuClock.c_str(), config_.cpuIssueWidth,
+        config_.riscvVectorEnabled ? config_.riscvVectorLengthBits : 0,
+        config_.instructionCacheBytes, config_.meshWidth, config_.meshHeight,
+        config_.meshLinkClock.c_str(), config_.meshLinkWidthBits,
+        config_.transmitDMAStreams, config_.receiveDMAStreams);
 
     output_.verbose(CALL_INFO, 1, 0,
                     "configured tile %u scratchpad (%s, bytes=%llu, banks=%u, "
@@ -801,6 +708,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     host.validateInitialDevice = [this](const QemuSyncEvent& e)
     { analog_->validateInitialCpuDevice(e); };
     host.memory = [this](const CpuMemoryAction& a) { return memoryAccess_->executeCpuMemory(a); };
+    host.instruction = [this](const CpuInstructionAction& a) { return memoryAccess_->executeInstruction(a); };
     host.analog = [this](const CpuAnalogAction& a) { return analog_->executeCpuAnalog(a); };
     host.network = [this](const CpuNetworkAction& a) { return executeCpuNetwork(a); };
     host.globalDMA = [this](const CpuGlobalDMAAction& a)
@@ -846,10 +754,6 @@ void Tile::init(unsigned phase)
     {
         network_->init(phase);
     }
-    if (memoryInterface_ != nullptr)
-    {
-        memoryInterface_->init(phase);
-    }
 
     output_.verbose(CALL_INFO, 3, 0, "tile %u init phase %u\n",
                     static_cast<unsigned>(config_.tileId), phase);
@@ -857,10 +761,6 @@ void Tile::init(unsigned phase)
 
 void Tile::complete(unsigned phase)
 {
-    if (memoryInterface_ != nullptr)
-    {
-        memoryInterface_->complete(phase);
-    }
 }
 
 void Tile::setup()
@@ -877,6 +777,17 @@ void Tile::setup()
         {
             syncBridge_.create(config_.tileId);
             globalRAMFileDescriptor_.reset(GlobalRAMBacking::duplicate(config_.globalRAMBytes));
+            if (config_.scratchpadBoot)
+            {
+                bootGlobalOffset_ = Timing::multiply(config_.tileId, config_.scratchpadBytes);
+                if (bootGlobalOffset_ > config_.globalRAMBytes ||
+                    config_.scratchpadBytes > config_.globalRAMBytes - bootGlobalOffset_)
+                    throw std::invalid_argument("shared RAM cannot hold this tile's boot slot");
+                bootImage_ = loadScratchpadBootImage(
+                    config_.elfPath, MITTENS_SCRATCHPAD_BASE, config_.scratchpadBytes);
+                seedScratchpadBootImage(globalRAMFileDescriptor_.get(), bootGlobalOffset_,
+                                       *bootImage_);
+            }
         }
         catch (const std::exception& error)
         {
@@ -900,10 +811,6 @@ void Tile::setup()
                           static_cast<unsigned>(config_.tileId), error.what());
         }
     }
-    if (memoryInterface_ != nullptr)
-    {
-        memoryInterface_->setup();
-    }
     deviceNotification([&] { analog_->setup(); });
 
     state_ = LifecycleState::Setup;
@@ -925,17 +832,6 @@ void Tile::setup()
                 config_.riscvVectorEnabled,
                 config_.riscvVectorLengthBits,
                 config_.riscvVectorElementBits,
-                config_.memoryBackend == "memhierarchy",
-                config_.memoryInitializationBatching,
-                config_.memoryAccessBatching,
-                config_.scratchpadAccessBatching,
-                config_.scratchpadAccessRunCompaction,
-                config_.memoryEventBatching,
-                config_.globalDMASubmitBatching,
-                config_.globalDMAMacroExecution,
-                config_.analogCommandBatching,
-                config_.memoryAccessBatchRecords,
-                config_.scratchpadEnabled,
                 MITTENS_SCRATCHPAD_BASE,
                 config_.scratchpadBytes,
                 syncBridge_.fileDescriptor(),
@@ -982,6 +878,8 @@ void Tile::handleCpuSyncEvent(SST::Event* event)
     delete event;
     try
     {
+        if (!advanceScratchpadBoot())
+            return;
         cpu_->onWake(generation, scheduled);
     }
     catch (const std::exception& error)
@@ -1016,11 +914,73 @@ void Tile::handleGlobalDMAEvent(SST::Event* rawEvent)
             auto* e = dynamic_cast<GlobalDMAEvent*>(rawEvent);
             if (!e)
                 throw std::runtime_error("invalid global DMA event type");
+            if (bootImage_)
+            {
+                const auto& segment = bootImage_->segments.at(bootSegment_);
+                if (!bootReadPending_ || !e->completion() || e->tileId() != config_.tileId ||
+                    e->executionId() != 0 || e->tokenId() != bootSegment_ ||
+                    e->direction() != GlobalDMADirection::GlobalRAMToScratchpad ||
+                    e->requestFlags() != GlobalDMARequestNone ||
+                    e->globalOffset() != bootGlobalOffset_ + segment.spmOffset ||
+                    e->scratchpadOffset() != segment.spmOffset ||
+                    e->byteCount() != segment.bytes.size())
+                    throw std::runtime_error("unexpected scratchpad boot DMA completion");
+                bootReadPending_ = false;
+                const auto now = cpuDomain().ceil({getCurrentSimCycle()}).value;
+                const auto write = memoryAccess_->reserveDMA(
+                    now, segment.spmOffset, segment.bytes.size(), true);
+                bootWriteCompletion_ = write.completionCycle;
+                cpuSyncLink_->send(write.completionCycle -
+                                       cpuDomain().floor({getCurrentSimCycle()}).value,
+                                   cpuWakeEvent(kCpuWakeInitial));
+                return;
+            }
             globalDMA_->onCompletion(
                 GlobalDMAMessage(e->tileId(), e->executionId(), e->tokenId(), e->logicalIteration(),
                                  e->globalOffset(), e->scratchpadOffset(), e->byteCount(),
                                  e->direction(), e->requestFlags(), e->completion()));
         });
+}
+
+void Tile::submitBootSegment()
+{
+    const auto& segment = bootImage_->segments.at(bootSegment_);
+    if (segment.bytes.empty() || segment.bytes.size() > UINT32_MAX)
+        throw std::invalid_argument("unsupported scratchpad boot segment size");
+    bootReadPending_ = true;
+    auto* request = new GlobalDMAEvent(
+        config_.tileId, 0, static_cast<std::uint32_t>(bootSegment_), 0,
+        bootGlobalOffset_ + segment.spmOffset, segment.spmOffset,
+        static_cast<std::uint32_t>(segment.bytes.size()),
+        GlobalDMADirection::GlobalRAMToScratchpad);
+    request->markBootLoad();
+    globalDMALink_->send(request);
+}
+
+bool Tile::advanceScratchpadBoot()
+{
+    if (!bootImage_)
+        return true;
+    if (bootReadPending_)
+        return false;
+    const auto now = cpuDomain().floor({getCurrentSimCycle()}).value;
+    if (bootWriteCompletion_)
+    {
+        if (now < *bootWriteCompletion_)
+            return false;
+        bootWriteCompletion_.reset();
+        ++bootSegment_;
+    }
+    if (bootSegment_ < bootImage_->segments.size())
+    {
+        submitBootSegment();
+        return false;
+    }
+    output_.output("SCRATCHPAD_BOOT tile=%u bytes=%llu cycles=%llu\n", config_.tileId,
+                   static_cast<unsigned long long>(bootImage_->loadedByteCount),
+                   static_cast<unsigned long long>(now));
+    bootImage_.reset();
+    return true;
 }
 void Tile::handleMemoryInitializationBarrierEvent(SST::Event* rawEvent)
 {
@@ -1080,30 +1040,6 @@ void Tile::handleTransmitDMAEvent(SST::Event* event)
     checkBridgeError();
     resumeTransmitWaitIfReady();
     signalExitedTileIfDrained();
-}
-
-void Tile::handleMemoryResponse(SST::Interfaces::StandardMem::Request* request)
-{
-    const auto invalidation = rx_->handleInvalidationResponse(request);
-    if (invalidation != RxController::InvalidationResult::Unhandled)
-    {
-        if (invalidation == RxController::InvalidationResult::Authorized)
-        {
-            resumeReceiveWaitIfReady();
-            resumeTransmitWaitIfReady();
-        }
-        return;
-    }
-    std::unique_ptr<SST::Interfaces::StandardMem::Request> owned(request);
-    deviceNotification(
-        [&]
-        {
-            if (!request)
-                throw std::runtime_error("null memory response");
-            const auto id = request->getID();
-            owned.reset();
-            memoryAccess_->onResponse(id);
-        });
 }
 
 bool Tile::observeQemuExit()
@@ -1386,7 +1322,7 @@ TileMeasurementSnapshot Tile::measurementSnapshot() const
     data.scratchpad = memoryAccess_->scratchpadStatistics();
     data.finishTick = getCurrentSimCycle();
     data.cpuAvailable = managedLaunch();
-    data.memoryAvailable = memoryInterface_ != nullptr;
+    data.memoryAvailable = false; // No separate CPU data-memory transport.
     data.globalDMAAvailable = globalDMALink_ != nullptr;
     data.analogAvailable = analog_->enabled();
     data.networkAvailable = network_ != nullptr;
@@ -1522,12 +1458,21 @@ void Tile::finish()
     {
         network_->finish();
     }
-    if (memoryInterface_ != nullptr)
-    {
-        memoryInterface_->finish();
-    }
 
     const ScratchpadTimingStatistics scratchpad = memoryAccess_->scratchpadStatistics();
+    if (config_.scratchpadBoot)
+    {
+        const auto cache = memoryAccess_->instructionStatistics();
+        output_.output("INSTRUCTION_CACHE tile=%u accesses=%llu hits=%llu misses=%llu "
+                       "fill_bytes=%llu stall_cycles=%llu invalidations=%llu unretired_fetches=%llu\n",
+            config_.tileId, static_cast<unsigned long long>(cache.fetches),
+            static_cast<unsigned long long>(cache.hits),
+            static_cast<unsigned long long>(cache.misses),
+            static_cast<unsigned long long>(cache.fillBytes),
+            static_cast<unsigned long long>(memoryAccess_->instructionStallCycles()),
+            static_cast<unsigned long long>(memoryAccess_->instructionInvalidations()),
+            static_cast<unsigned long long>(cpu_->statistics().unretiredInstructionFetches_));
+    }
     scratchpadServiceStatistic_->addData(scratchpad.activeCycles);
     scratchpadReadServiceStatistic_->addData(scratchpad.readServiceCycles);
     scratchpadWriteServiceStatistic_->addData(scratchpad.writeServiceCycles);
@@ -1557,7 +1502,8 @@ void Tile::finish()
     if (cpu_)
         cpu_->stop();
     bridge_.close();
-    analog_->close();
+    if (analog_)
+        analog_->close();
     syncBridge_.close();
     globalRAMFileDescriptor_.reset();
 
@@ -1587,7 +1533,8 @@ void Tile::emergencyShutdown()
     if (cpu_)
         cpu_->stop();
     bridge_.close();
-    analog_->close();
+    if (analog_)
+        analog_->close();
     syncBridge_.close();
     globalRAMFileDescriptor_.reset();
 }

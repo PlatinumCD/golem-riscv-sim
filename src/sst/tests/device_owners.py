@@ -15,7 +15,8 @@ def main():
     parser.add_argument('--sanitize', action='store_true')
     args = parser.parse_args()
     output = Path(tempfile.mkdtemp(prefix='golem-device-owners-'))
-    sources = ['memory/memoryAccessController.cc', 'memory/globalDMAClient.cc',
+    sources = ['memory/memoryAccessController.cc', 'memory/instructionCache.cc',
+               'memory/globalDMAClient.cc',
                'synchronization/initializationBarrierClient.cc',
                'memory/scratchpad/scratchpadTimingModel.cc',
                'analog/analogController.cc', 'analog/analogDevice.cc',

@@ -8,6 +8,7 @@ processes; they are not physical links in the simulated machine.
 | 41 | [SyncTileBridge.h](include/mittens/SyncTileBridge.h) | Instruction grants, stop events, and resume |
 | 42 | [NICTileBridge.h](include/mittens/NICTileBridge.h) | Network payloads and receive authorization |
 | 43 | [AnalogTileBridge.h](include/mittens/AnalogTileBridge.h) | Analog commands, operands, and results |
+| 44 | [Global RAM backing](../sst/memory/globalRAMBacking.h) | Shared-memory file backing; not a control protocol |
 
 Only fd 41 controls guest execution. Publishing data on fd 42 or 43 does not
 resume a hart.
@@ -31,8 +32,10 @@ until its consumer releases it.
   transfer timing, computation, and completion. Per-array queues share one
   modeled tile-wide analog link.
 
-Memory-event records describe accesses, not ownership of guest RAM.
-QEMU retains functional data while SST models service and contention.
+Memory-event records describe instruction fetches and data accesses. QEMU
+retains functional bytes while SST models service and contention. With
+scratchpad boot, code/data/stack addresses refer to SPM; host backing is not
+additional storage the program can use.
 
 ## Changing the ABI
 

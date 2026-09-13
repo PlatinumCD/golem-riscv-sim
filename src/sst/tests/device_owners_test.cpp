@@ -18,13 +18,6 @@ template<class F> void rejects(F&& f) {
 }
 
 struct MemoryFixture {
-    struct Request final : MemoryAccessController::PreparedRequest {
-        std::uint64_t number;
-        unsigned& sent;
-        Request(std::uint64_t n,unsigned& s):number(n),sent(s) {}
-        std::uint64_t id() const noexcept override { return number; }
-        void send() override { ++sent; }
-    };
     TileConfiguration config;
     PerformanceProfile profile;
     std::uint64_t now=100, next=0;
@@ -35,22 +28,13 @@ struct MemoryFixture {
     std::unique_ptr<MemoryAccessController> memory;
     ScratchpadTimingModel* shared=nullptr;
     explicit MemoryFixture(std::uint32_t latency=3) {
-        config.memoryStoreBufferEntries=2;
-        config.memoryTileStride=0;
         config.scratchpadBytes=4096;
-        config.memoryCacheLineSize=64;
         ScratchpadTimingConfiguration spm;
         spm.capacityBytes=4096; spm.latencyCycles=latency;
         auto scheduler=std::make_unique<ScratchpadTimingModel>(spm);
         shared=scheduler.get(); // Same construction-time service borrow as RX/TX.
         MemoryAccessController::Host host;
         host.now=[this] { return Timing::Ticks{now}; };
-        host.context=[this] { ++contexts; return MemoryAccessController::Context{7,91,"task"}; };
-        host.prepare=[this](std::uint64_t,std::uint32_t,bool) { return std::make_unique<Request>(++next,sent); };
-        host.pending=[this] { return pending; };
-        host.hasMemoryReplay=[this] { return replay; };
-        host.completeMemory=[this](std::uint64_t step,bool group) { completions.emplace_back(step,group); };
-        host.retry=[this] { ++retries; return false; };
         memory=std::make_unique<MemoryAccessController>(config,Timing::Clock<Timing::Cpu>(10),
             std::move(scheduler),profile,DeviceDiagnostics{},std::move(host));
     }
@@ -65,48 +49,11 @@ struct MemoryFixture {
 
 void memoryRequests() {
     MemoryFixture f;
-    auto first=f.action(1,true);
-    auto result=f.memory->executeCpuMemory(first);
-    assert(result.complete && result.reportBlockedAfterCompletion && f.sent==1);
-    auto second=f.action(2,true,0x80002000);
-    assert(!f.memory->executeCpuMemory(second).complete && f.sent==2);
-    f.memory->onResponse(1); // Frees full buffer; retires the CURRENT blocking store.
-    assert((f.completions==std::vector<std::pair<std::uint64_t,bool>>{{2,false}}));
-    f.pending->stopReason=MITTENS_SYNC_STOP_MEMORY_FENCE;
-    f.memory->onResponse(2); // Released store's later ack only retries, never retires.
-    assert(f.completions.size()==1 && f.retries==1 && f.memory->storesDrained());
-    rejects([&] { f.memory->onResponse(2); });
-    assert(f.memory->statistics().memoryResponses_==2 && f.memory->pendingCount()==0);
-    assert(f.contexts==2);
-    auto snapshot=f.memory->statistics(); snapshot.memoryRequests_=100;
-    assert(snapshot.memoryRequests_==100 && f.memory->statistics().memoryRequests_==2);
-
-    auto store=f.action(3,true);
-    assert(f.memory->executeCpuMemory(store).complete);
-    auto load=f.action(4);
-    assert(!f.memory->executeCpuMemory(load).complete && f.sent==3); // RAW hazard.
-    f.memory->onResponse(3);
-    assert(f.retries==2);
-    assert(!f.memory->executeCpuMemory(load).complete && f.sent==4);
-    f.memory->onResponse(4);
-    assert(f.completions.back()==std::make_pair(std::uint64_t(4),false));
-
-    f.replay=true;
-    auto group=f.action(5);
-    MittensSyncMemoryAccess a{};
-    a.address=0x80003000; a.size=4; a.repeat_count=1; a.program_counter=0x123;
-    a.return_address=0x456;
-    auto b=a; b.address+=64;
-    group.group={a,b};
-    assert(!f.memory->executeCpuMemory(group).complete && f.sent==6);
-    f.memory->onResponse(6);
-    assert(f.completions.size()==2 && f.memory->pendingCount()==1);
-    assert(!f.memory->executeCpuMemory(group).complete && f.sent==6);
-    f.memory->onResponse(5);
-    assert(f.completions.back()==std::make_pair(std::uint64_t(5),true));
-    rejects([&] { f.memory->onResponse(5); });
-    auto bad=f.action(6); bad.size=0;
-    rejects([&] { f.memory->executeCpuMemory(bad); });
+    auto oldRAM=f.action(1);
+    rejects([&] { f.memory->executeCpuMemory(oldRAM); });
+    auto invalid=f.action(2,false,MITTENS_SCRATCHPAD_BASE+4096);
+    invalid.flags=MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD;
+    rejects([&] { f.memory->executeCpuMemory(invalid); });
     assert(f.memory->pendingCount()==0);
 }
 

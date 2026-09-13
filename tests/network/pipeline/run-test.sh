@@ -54,7 +54,7 @@ require_packet_count() {
         -v port="${port}" \
         -v expected="${expected}" '
             $1 == router &&
-            $2 == "send_packet_count" &&
+            $2 == "packets_forwarded" &&
             $3 == port {
                 found = 1
                 total += $7
@@ -67,21 +67,21 @@ require_packet_count() {
 }
 
 # One-hop serpentine computation stages.
-require_packet_count router_0_0 port0 1
-require_packet_count router_1_0 port0 1
-require_packet_count router_2_0 port2 1
-require_packet_count router_2_1 port1 1
-require_packet_count router_1_1 port1 1
-require_packet_count router_0_1 port2 1
-require_packet_count router_0_2 port0 1
-require_packet_count router_1_2 port0 1
+require_packet_count router_0_0 east 1
+require_packet_count router_1_0 east 1
+require_packet_count router_2_0 south 1
+require_packet_count router_2_1 west 1
+require_packet_count router_1_1 west 1
+require_packet_count router_0_1 south 1
+require_packet_count router_0_2 east 1
+require_packet_count router_1_2 east 1
 
 # Four-hop result return from tile 8 to tile 0.
-require_packet_count router_2_2 port1 1
-require_packet_count router_1_2 port1 1
-require_packet_count router_0_2 port3 1
-require_packet_count router_0_1 port3 1
-require_packet_count router_0_0 port4 1
+require_packet_count router_2_2 west 1
+require_packet_count router_1_2 west 1
+require_packet_count router_0_2 north 1
+require_packet_count router_0_1 north 1
+require_packet_count router_0_0 local0 1
 
 echo "3x3 computation pipeline passed with ${GOLEM_SST_THREADS} SST thread(s); final float32 result: 36.0"
 echo "router statistics: ${STATISTICS}"

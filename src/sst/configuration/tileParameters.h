@@ -41,13 +41,9 @@
       "network_packet_words", 16, "hardware",                                                    \
       "Maximum 32-bit words in one SST network request. This value must not exceed "             \
       "the endpoint buffer capacity",                                                            \
-      "16")                                                                                      \
-    X(bool, networkTailDelivery,                                                                 \
-      "network_tail_delivery", false, "hardware",                                                \
-      "The network interface delivers a request only after its tail flit arrives",               \
-      "false")
+      "16")
 
-// Guest and data-memory configuration.
+// Guest program.
 #define MITTENS_TILE_MEMORY_PARAMETERS(X)                                                        \
     X(std::string, qemuPath,                                                                     \
       "qemu_path", "qemu-system-riscv64", "execution",                                           \
@@ -56,106 +52,30 @@
     X(std::string, elfPath,                                                                      \
       "elf", "", "workload",                                                                     \
       "Bare-metal ELF image loaded by QEMU",                                                     \
-      "")                                                                                        \
-    X(std::string, memory,                                                                       \
-      "memory", "16M", "hardware",                                                               \
-      "Small non-architectural QEMU control memory assigned to this tile",                       \
-      "16M")                                                                                     \
-    X(std::string, memoryBackend,                                                                \
-      "memory_backend", "native", "hardware",                                                    \
-      "Data-memory timing backend: native, memhierarchy, or streaming",                          \
-      "native")                                                                                  \
-    X(std::uint64_t, memoryGuestBase,                                                            \
-      "memory_guest_base", 0, "hardware",                                                        \
-      "Guest physical base used for tile-namespaced timing addresses; zero preserves "           \
-      "guest addresses",                                                                         \
-      "0")                                                                                       \
-    X(std::uint64_t, memoryTileStride,                                                           \
-      "memory_tile_stride", 0, "hardware",                                                       \
-      "Per-tile timing-address stride; zero preserves guest addresses",                          \
-      "0")                                                                                       \
-    X(std::uint32_t, memoryCacheLineSize,                                                        \
-      "memory_cache_line_size", 64, "hardware",                                                  \
-      "Cache line size used for receive-DMA invalidation",                                       \
-      "64")                                                                                      \
-    X(std::uint32_t, memoryLoadQueueEntries,                                                     \
-      "memory_load_queue_entries", 8, "hardware",                                                \
-      "Timed load-queue capacity for grouped nonblocking loads",                                 \
-      "8")                                                                                       \
-    X(std::uint32_t, memoryStoreBufferEntries,                                                   \
-      "memory_store_buffer_entries", 1, "hardware",                                              \
-      "Timed CPU store-buffer capacity; one preserves blocking behavior",                        \
-      "1")
+      "")
 
-// Replay batching and initialization.
-#define MITTENS_TILE_EXECUTION_PARAMETERS(X)                                                     \
-    X(bool, memoryInitializationBatching,                                                        \
-      "memory_init_batching", false, "execution",                                                \
-      "Aggregate pre-runtime data accesses into one fd 41 initialization handshake",             \
-      "false")                                                                                   \
-    X(bool, memoryAccessBatching,                                                                \
-      "memory_access_batching", false, "execution",                                              \
-      "Batch fd 41 transport while replaying each ordinary runtime access through "              \
-      "MemHierarchy",                                                                            \
-      "false")                                                                                   \
-    X(bool, scratchpadAccessBatching,                                                            \
-      "scratchpad_access_batching", false, "execution",                                          \
-      "Batch fd 41 transport while replaying every runtime scratchpad access through "           \
-      "ScratchpadTimingModel",                                                                   \
-      "false")                                                                                   \
-    X(bool, scratchpadAccessRunCompaction,                                                       \
-      "scratchpad_access_run_compaction", false, "execution",                                    \
-      "Compact adjacent fragments from one dynamic scratchpad instruction while "                \
-      "preserving logical timing and accounting",                                                \
-      "false")                                                                                   \
-    X(bool, memoryEventBatching,                                                                 \
-      "memory_event_batching", false, "execution",                                               \
-      "Fuse a pending memory-access batch with its immediately following "                       \
-      "synchronization event",                                                                   \
-      "false")                                                                                   \
-    X(bool, globalDMASubmitBatching,                                                             \
-      "global_dma_submit_batching", false, "execution",                                          \
-      "Batch ordered nonblocking global-RAM DMA submissions across fd 41 while "                 \
-      "preserving each physical descriptor and modeled CPU boundary",                            \
-      "false")                                                                                   \
-    X(bool, globalDMAMacroExecution,                                                             \
-      "global_dma_macro_execution", false, "execution",                                          \
-      "Replay compiler-certified ordered global-RAM DMA event tapes from one fd-41 "             \
-      "envelope without changing physical timing",                                               \
-      "false")                                                                                   \
-    X(bool, analogCommandBatching,                                                               \
-      "analog_command_batching", false, "execution",                                             \
-      "Batch proven nonblocking analog submissions across fd 41 while replaying every"           \
-      " command at its original modeled CPU boundary",                                           \
-      "false")                                                                                   \
-    X(std::uint32_t, memoryAccessBatchRecords,                                                   \
-      "memory_access_batch_records", 16, "execution",                                            \
-      "Maximum logical memory accesses before flushing one bounded fd 41 record batch",          \
-      "16")                                                                                      \
-    X(std::uint32_t, memoryInitializationBytesPerCycle,                                          \
-      "memory_init_bytes_per_cycle", 32, "hardware",                                             \
-      "Aggregate initialization bandwidth in bytes per CPU cycle",                               \
-      "32")                                                                                      \
-    X(std::uint64_t, memoryInitializationLatencyCycles,                                          \
-      "memory_init_latency_cycles", 2, "hardware",                                               \
-      "One-time aggregate initialization latency in CPU cycles",                                 \
-      "2")                                                                                       \
-    X(std::uint64_t, memoryInitializationInstructionQuantum,                                     \
-      "memory_init_instruction_quantum", UINT64_C(67108864), "execution",                        \
-      "Maximum instructions SST grants QEMU during pre-runtime initialization",                  \
-      "67108864")                                                                                \
-    X(std::uint32_t, memoryInitializationBarrierTiles,                                           \
-      "memory_init_barrier_tiles", 0, "hardware",                                                \
-      "Number of active tiles that must finish pre-runtime initialization before any "           \
-      "tile enters runtime; zero disables the deployment barrier",                               \
-      "0")
+
+// Executable scratchpad and its instruction cache. No data cache is added.
+#define MITTENS_TILE_INSTRUCTION_PARAMETERS(X)                                                    \
+    X(std::uint32_t, instructionCacheBytes,                                                       \
+      "instruction_cache_bytes", 8192, "hardware",                                                \
+      "Instruction cache capacity in bytes, backed by scratchpad",                                \
+      "8192")                                                                                     \
+    X(std::uint32_t, instructionCacheLineBytes,                                                   \
+      "instruction_cache_line_bytes", 64, "hardware",                                             \
+      "Instruction cache line size in bytes",                                                     \
+      "64")                                                                                       \
+    X(std::uint32_t, instructionCacheWays,                                                        \
+      "instruction_cache_ways", 2, "hardware",                                                    \
+      "Instruction cache associativity",                                                          \
+      "2")                                                                                        \
+    X(std::uint64_t, instructionCacheHitCycles,                                                   \
+      "instruction_cache_hit_cycles", 1, "hardware",                                              \
+      "Instruction cache lookup latency in CPU cycles",                                           \
+      "1")
 
 // Private noncoherent scratchpad.
 #define MITTENS_TILE_SCRATCHPAD_PARAMETERS(X)                                                    \
-    X(bool, scratchpadEnabled,                                                                   \
-      "scratchpad_enabled", false, "hardware",                                                   \
-      "Enable the private noncoherent tile scratchpad",                                          \
-      "false")                                                                                   \
     X(std::uint64_t, scratchpadBytes,                                                            \
       "scratchpad_bytes", 256 * 1024, "hardware",                                                \
       "Private scratchpad capacity in bytes",                                                    \
@@ -213,38 +133,17 @@
       "1GHz")                                                                                    \
     X(std::uint32_t, cpuIssueWidth,                                                              \
       "cpu_issue_width", 1, "hardware",                                                          \
-      "Scalar front-end issue width: 1, 2, or 4 instructions per cycle; vector issue "           \
-      "remains one per cycle",                                                                   \
+      "Scalar issue width; executable-SPM fetch accounting currently requires 1",                                                                   \
       "1")                                                                                       \
     X(std::uint64_t, syncInstructionQuantum,                                                     \
       "sync_instruction_quantum", 1000, "execution",                                             \
       "Maximum instructions SST grants QEMU at once",                                            \
       "1000")                                                                                    \
-    X(std::uint32_t, qemuReadySetWorkers,                                                        \
-      "qemu_ready_set_workers", 1, "execution",                                                  \
-      "Bounded host worker count for deterministic same-frontier initial QEMU grants;"           \
-      " one preserves serial execution",                                                         \
-      "1")                                                                                       \
-    X(bool, qemuRuntimeReadySet,                                                                 \
-      "qemu_runtime_ready_set", false, "execution",                                              \
-      "Use the deterministic ready-set executor for independently runnable runtime "             \
-      "QEMU captures",                                                                           \
-      "false")                                                                                   \
-    X(bool, qemuLocalLookahead,                                                                  \
-      "qemu_local_lookahead", false, "execution",                                                \
-      "Compute the next QEMU stop asynchronously after a standalone private "                    \
-      "scratchpad batch while preserving its modeled commit frontier",                           \
-      "false")                                                                                   \
     X(std::uint32_t, qemuCaptureSpinMicroseconds,                                                \
       "qemu_capture_spin_us", 0, "execution",                                                    \
       "Host-only busy-poll interval before an SST-to-QEMU capture falls back to futex"           \
       " sleep",                                                                                  \
-      "0")                                                                                       \
-    X(std::string, qemuReadySetIndependenceProof,                                                \
-      "qemu_ready_set_independence_proof", "", "execution",                                      \
-      "Frozen materialization-audit SHA-256 required when initial QEMU grants run "              \
-      "concurrently",                                                                            \
-      "")
+      "0")
 
 // RISC-V Vector Extension.
 #define MITTENS_TILE_RVV_PARAMETERS(X)                                                           \
@@ -291,8 +190,7 @@
       "false")                                                                                   \
     X(std::uint32_t, transmitDMAFIFOBytes,                                                       \
       "tx_dma_fifo_bytes", 128, "hardware",                                                      \
-      "Bounded source-Scratchpad-to-NIC FIFO capacity in bytes; zero disables timed "            \
-      "TX DMA",                                                                                  \
+      "Per-lane source-SPM-to-NIC FIFO bytes, at least one scratchpad DMA beat",                   \
       "128")                                                                                     \
     X(std::uint32_t, transmitDMAStreams,                                                         \
       "tx_dma_streams", 1, "hardware",                                                           \
@@ -369,7 +267,7 @@
 #define MITTENS_TILE_PARAMETERS(X)                                                                   \
     MITTENS_TILE_TOPOLOGY_PARAMETERS(X)                                                              \
     MITTENS_TILE_MEMORY_PARAMETERS(X)                                                                \
-    MITTENS_TILE_EXECUTION_PARAMETERS(X)                                                             \
+    MITTENS_TILE_INSTRUCTION_PARAMETERS(X)                                                           \
     MITTENS_TILE_SCRATCHPAD_PARAMETERS(X)                                                            \
     MITTENS_TILE_GLOBAL_PARAMETERS(X)                                                                \
     MITTENS_TILE_CPU_PARAMETERS(X)                                                                   \

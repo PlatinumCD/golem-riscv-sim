@@ -1,25 +1,18 @@
-# Golem architecture
+# Architecture documentation
 
-These documents describe implemented components. Deployment builders can override
-component defaults.
+Start with the [project overview](../README.md), then choose the question you
+need answered. The default machine executes code from SPM through an instruction
+cache; shared main memory is reached by explicit DMA.
 
-| Document | Scope |
+| Question | Read |
 |---|---|
-| [System architecture](architecture.md) | Components, ownership, and data paths |
-| [Platform](platform.md) | Guest devices, scratchpad, DMA, and communication |
-| [Vector architecture](vector-architecture.md) | RVV geometry, compiler target, and timing limits |
-| [Analog ISA](analog-isa.md) | Custom matrix-compute instructions |
-| [Timing model](timing-model.md) | CPU, memory, DMA, mesh, and analog timing |
-| [Parameters](parameters.md) | Generated parameter reference |
-| [Diagrams](diagrams/README.md) | Current tile and mesh boundaries |
+| What is in a tile, and how are tiles connected? | [System architecture](architecture.md) |
+| How does a program boot, use memory, and send data? | [Programming interface](platform.md) |
+| How are execution and transfer cycles calculated? | [Timing model](timing-model.md) |
+| What does RVV support, and what timing is modeled? | [Vector architecture](vector-architecture.md) |
+| How do the analog instructions work? | [Analog ISA](analog-isa.md) |
+| What are the exact tile parameter names and defaults? | [Parameter reference](parameters.md) |
 
-Start with [source ownership](../src/README.md),
-[tile parameters](../src/sst/configuration/tileParameters.h), and
-[network configuration](../src/sst/configuration/networkConfiguration.cc).
-The [bridge headers](../src/bridge/include/mittens/) define transport protocols;
-their versions are independent of ISA versions.
-
-Documentation describes current interfaces and limits, not implementation history.
-Defaults come from source; experiment settings must be identified separately.
-Resource service and stall counters are not elapsed runtime and must not be
-summed as if they were sequential.
+For implementation work, use the [source map](../src/README.md).
+For validation, use the [test guide](../tests/README.md).
+[Diagram sources](diagrams/README.md) are the same drawings used by the overview.

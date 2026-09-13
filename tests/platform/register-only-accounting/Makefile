@@ -2,6 +2,8 @@ TEST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PROJECT_ROOT := $(abspath $(TEST_DIR)/../../..)
 
 include $(PROJECT_ROOT)/tests/support/platform.mk
+# The deliberately unrolled 80,000 scalar instructions exceed 256 KiB.
+TEST_SPM_LINK_FLAGS += -Wl,--defsym,SPM_BYTES=524288
 LLVM ?= $(if $(GOLEM_LLVM_DIR),$(GOLEM_LLVM_DIR),$(INSTALL_ROOT)/llvm)
 TARGET ?= riscv64-unknown-elf
 CPU ?= golem-analog
@@ -56,17 +58,17 @@ $(OUTPUT_DIR)/rvv.o: $(TEST_DIR)/main.cpp \
 define LINK_ELF
 	$(CLANGXX) $(COMMON_FLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 		-fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
-		-Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld -Wl,-Map,$@.map \
+		$(TEST_SPM_LINK_FLAGS) -Wl,-T,$(PLATFORM_STARTUP_ROOT)/scratchpad.ld -Wl,-Map,$@.map \
 		$(COMMON_OBJECTS) $< -o $@
 	@echo "built $@"
 endef
 
 $(OUTPUT_DIR)/scalar.elf: $(OUTPUT_DIR)/scalar.o $(COMMON_OBJECTS) \
-	$(PLATFORM_STARTUP_ROOT)/tile.ld $(TEST_DIR)/Makefile
+	$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(TEST_DIR)/Makefile
 	$(LINK_ELF)
 
 $(OUTPUT_DIR)/rvv.elf: $(OUTPUT_DIR)/rvv.o $(COMMON_OBJECTS) \
-	$(PLATFORM_STARTUP_ROOT)/tile.ld $(TEST_DIR)/Makefile
+	$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(TEST_DIR)/Makefile
 	$(LINK_ELF)
 
 clean:

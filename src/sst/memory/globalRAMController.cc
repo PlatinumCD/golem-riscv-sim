@@ -296,7 +296,7 @@ bool GlobalRAMController::isTeardown(const GlobalDMAEvent& event) const noexcept
 
 bool GlobalRAMController::requestIsSchedulable(GlobalDMAEvent& event)
 {
-    if (dependencyMode_ == DependencyMode::BulkBarrier)
+    if (dependencyMode_ == DependencyMode::BulkBarrier || event.bootLoad())
     {
         return true;
     }
@@ -683,7 +683,13 @@ void GlobalRAMController::handleRequest(SST::Event* rawEvent)
         delete rawEvent;
         output_.fatal(CALL_INFO, -1, "invalid global DMA request\n");
     }
-    if (dependencyMode_ == DependencyMode::BulkBarrier)
+    if (event->bootLoad())
+    {
+        if (event->executionId() != 0 || event->requestFlags() != GlobalDMARequestNone ||
+            event->direction() != GlobalDMADirection::GlobalRAMToScratchpad)
+            output_.fatal(CALL_INFO, -1, "invalid program boot DMA request\n");
+    }
+    else if (dependencyMode_ == DependencyMode::BulkBarrier)
     {
         if (event->requestFlags() != GlobalDMARequestNone)
         {
@@ -777,7 +783,8 @@ void GlobalRAMController::handleRequest(SST::Event* rawEvent)
         exactExecution(event->executionId())
             .waitersByBegin.emplace(event->globalOffset(), &pending);
     }
-    if (demandWriteBurstLimit_ != 0 && dependencyMode_ == DependencyMode::ExactDependencies)
+    if (!event->bootLoad() && demandWriteBurstLimit_ != 0 &&
+        dependencyMode_ == DependencyMode::ExactDependencies)
     {
         ExactExecutionState& execution = exactExecution(event->executionId());
         if (event->direction() == GlobalDMADirection::ScratchpadToGlobalRAM)

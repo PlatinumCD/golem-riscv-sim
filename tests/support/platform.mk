@@ -8,3 +8,6 @@ BUILD_ROOT ?= $(if $(GOLEM_BUILD_ROOT),$(GOLEM_BUILD_ROOT),$(PROJECT_ROOT)/build
 INSTALL_ROOT ?= $(if $(GOLEM_INSTALL_ROOT),$(GOLEM_INSTALL_ROOT),$(PROJECT_ROOT)/install/src)
 PLATFORM_ROOT := $(PROJECT_ROOT)/src/platform/devices
 PLATFORM_STARTUP_ROOT := $(PROJECT_ROOT)/src/platform/startup
+
+# Fixed-address DMA fixtures own the low 64 KiB; code must not overlap them.
+TEST_SPM_LINK_FLAGS := -Wl,--defsym,SPM_CODE_OFFSET=65536

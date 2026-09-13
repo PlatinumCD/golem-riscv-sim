@@ -22,5 +22,5 @@ $(OUTPUT_DIR)/memory.o: $(PROJECT_ROOT)/src/platform/runtime/freestanding-memory
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 $(OUTPUT_DIR)/tile%.o: $(TEST_DIR)/main.cpp $(CONFIG) | $(OUTPUT_DIR)
 	$(CXX) $(CXXFLAGS) -DTILE_ID=$* -c $< -o $@
-$(OUTPUT_DIR)/tile%.elf: $(OUTPUT_DIR)/tile%.o $(COMMON) $(PLATFORM_STARTUP_ROOT)/tile.ld
-	$(CXX) $(FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none -Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld $(COMMON) $< -o $@
+$(OUTPUT_DIR)/tile%.elf: $(OUTPUT_DIR)/tile%.o $(COMMON) $(PLATFORM_STARTUP_ROOT)/scratchpad.ld
+	$(CXX) $(FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none -Wl,--defsym,SPM_BYTES=524288,--defsym,SPM_CODE_OFFSET=196608 -Wl,-T,$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(COMMON) $< -o $@

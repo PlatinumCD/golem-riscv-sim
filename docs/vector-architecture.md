@@ -14,7 +14,7 @@ does not have a detailed pipeline timing model.
 | Vector registers | 32 |
 | VLEN / `vlenb` | 256 bits / 32 bytes |
 | ELEN | 64 bits |
-| CPU issue width | 1, 2, or 4; default 1 |
+| CPU issue width | 1 in the executable-SPM path |
 | Vector issue limit | One retired vector instruction per CPU cycle |
 
 At LMUL=1, a register holds 32 eight-bit, 16 sixteen-bit, eight 32-bit,
@@ -60,13 +60,20 @@ Occupancy carries across ordinary quantum ends; device boundaries close the
 region. Vector configuration instructions count as vector instructions.
 Arithmetic dependencies, operation latency, and vector-length-dependent
 occupancy are not modeled.
+The current scratchpad-boot path requires issue width 1 and disables
+cross-instruction batching and QEMU ready-set/local-lookahead execution.
 
 ## Memory, analog, and mesh
 
-Vector loads and stores use guest memory. Enabled scratchpad accesses pass
-through the bank/port timing model shared by CPU and DMA clients. Optional
-StandardMem timing handles ordinary RAM accesses. Memory timing is implemented
-separately from vector arithmetic timing; see the [timing model](timing-model.md).
+Vector loads and stores access SPM through the bank/port timing model shared
+with instruction-cache fills and DMA clients. At VLEN=256, an aligned e32,m1
+operation with eight active elements is one 32-byte transaction. This does not
+require cross-instruction batching. Other alignments, masks, strides and partial
+faults must be evaluated separately.
+
+Arithmetic works in registers. Its instruction count and SPM service work are
+different costs; an eightfold reduction in memory requests is not a promise
+of eightfold end-to-end speedup. See the [timing model](timing-model.md).
 
 Analog commands use general-purpose-register operands and memory buffers,
 not an implicit vector-register connection. The
@@ -81,7 +88,9 @@ runtime/NIC transfers; registers are never transferred implicitly.
 
 ## Validation entry points
 
-[RVV platform tests](../tests/platform/riscv-vector/run-test.sh) exercise
-functional execution and compiler output.
-[CPU timing tests](../tests/platform/cpu-timing/run-test.sh) exercise instruction
-accounting and issue width. Neither establishes a detailed vector pipeline model.
+[SPM/I-cache tests](../tests/platform/scratchpad-icache/README.md) check actual
+vector transaction widths, instruction counts and fault behavior at multiple
+grant sizes. [Large-code tests](../tests/platform/icache-working-set/README.md)
+check cache capacity and refills. The [test guide](../tests/README.md) identifies
+which entry points target the default architecture. None establishes a
+detailed vector arithmetic pipeline model.

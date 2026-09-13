@@ -12,11 +12,9 @@
 #include <vector>
 
 #include <sst/core/interfaces/simpleNetwork.h>
-#include <sst/core/interfaces/stdMem.h>
 #include <sst/core/output.h>
 
 #include "../packetEvent.h"
-#include "../receiveDMAEngine.h"
 #include "../../bridge/sharedMemoryBridge.h"
 #include "../../execution/clockDomain.h"
 #include "../../memory/addressRegion.h"
@@ -26,7 +24,7 @@
 namespace SST::Mittens
 {
 
-// Owns RX protocol state and ordinary-RAM DMA timing. Shared resources remain
+// Owns RX protocol state; SPM writes use the shared bank/port arbiter. Resources remain
 // owned by the component; no callback grants access to component/guest state.
 class RxController final
 {
@@ -36,13 +34,7 @@ class RxController final
         std::uint32_t tileId;
         std::uint32_t networkSize;
         std::uint32_t receiveDMAQueueDepth;
-        std::uint32_t receiveDMAWidthBits;
-        std::uint64_t receiveDMASetupCycles;
-        bool scratchpadEnabled;
         std::uint64_t scratchpadBytes;
-        std::uint64_t memoryGuestBase;
-        std::uint64_t memoryTileStride;
-        std::uint32_t memoryCacheLineSize;
         bool networkTailDelivery;
         std::uint32_t meshLinkWidthBits;
         std::uint32_t deploymentFrameMagic;
@@ -55,7 +47,6 @@ class RxController final
     {
         SharedMemoryBridge& bridge;
         SST::Interfaces::SimpleNetwork* network;
-        SST::Interfaces::StandardMem* memory;
         ScratchpadTimingModel* scratchpad;
         PerformanceProfile& profile;
         SST::Output& output;
@@ -86,13 +77,6 @@ class RxController final
     using Counters = RxCounters;
     using Status = RxStatus;
 
-    enum class InvalidationResult
-    {
-        Unhandled,
-        Pending,
-        Authorized
-    };
-
     RxController(Configuration config, Resources resources, Host host);
     RxController(const RxController&) = delete;
     RxController& operator=(const RxController&) = delete;
@@ -102,8 +86,6 @@ class RxController final
     // True means authorization was published. The caller then checks RX waits
     // followed by TX waits, after all RX references have left scope.
     bool onDMACompletion();
-    // Takes ownership of request only when the result is not Unhandled.
-    InvalidationResult handleInvalidationResponse(SST::Interfaces::StandardMem::Request* request);
     void registerReceiveDMA(const ReceiveClaim& claim);
     void registerReceiveSoftwareClaim(const ReceiveClaim& claim);
     void scheduleReceiveDMABursts();
@@ -115,8 +97,7 @@ class RxController final
     Status status() const;
 
     // Terminal only: not guest exit, which may still service RX while TX drains.
-    // Freeze state until destruction and suppress new work/authorization. Late
-    // invalidation replies are still recognized and consumed.
+    // Freeze state until destruction and suppress new work/authorization.
     void shutdown() noexcept
     {
         stopped_ = true;
@@ -146,8 +127,6 @@ class RxController final
         std::uint64_t startCycle;
         std::uint64_t completionCycle;
         std::uint64_t serviceCycles;
-        std::uint32_t invalidationLines;
-        std::uint32_t invalidationResponsesPending;
         bool completionObserved;
         bool authorized;
     };
@@ -235,7 +214,6 @@ class RxController final
     const Configuration config_;
     Resources resources_;
     Host host_;
-    std::vector<ReceiveDMAEngine> receiveDMAEngines_;
     std::vector<std::uint64_t> receiveLaneAvailable_;
     std::unordered_map<std::uint32_t, std::uint64_t> receiveSourceAvailable_;
     Counters counters_;
@@ -243,8 +221,6 @@ class RxController final
     std::uint64_t networkReceiveNextAvailableTick_ = 0;
     std::unordered_map<std::uint64_t, std::deque<IncomingRouteTag>> incomingRouteExecutions_;
     std::unordered_map<std::uint32_t, std::deque<ReceiveDMADescriptor>> receiveDMADescriptors_;
-    std::unordered_map<SST::Interfaces::StandardMem::Request::id_t, std::uint32_t>
-        receiveDMAInvalidations_;
     std::deque<PendingNetworkReceive> pendingNetworkReceives_;
     std::unordered_map<std::uint32_t, IncomingFrameAssembly> incomingFrameAssemblies_;
     std::unordered_map<std::uint32_t, std::deque<IncomingFrameAssembly>> completedReceiveFrames_;

@@ -113,6 +113,20 @@ mkdir -p -- "${HOST_TEST_DIR}"
     -o "${SCRATCHPAD_TIMING_MODEL_TEST}"
 "${SCRATCHPAD_TIMING_MODEL_TEST}"
 
+"${HOST_CXX}" -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+    -I"${PROJECT_ROOT}/src/sst" -I"${PROJECT_ROOT}/src/bridge/include" \
+    "${PROJECT_ROOT}/src/sst/memory/instructionCache.cc" \
+    "${PROJECT_ROOT}/src/sst/memory/scratchpad/scratchpadTimingModel.cc" \
+    "${TEST_DIR}/instruction_cache_test.cpp" \
+    -o "${HOST_TEST_DIR}/instruction-cache-test"
+"${HOST_TEST_DIR}/instruction-cache-test"
+
+"${HOST_CXX}" -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+    "${PROJECT_ROOT}/src/sst/memory/scratchpadBootImage.cc" \
+    "${TEST_DIR}/scratchpad_boot_image_test.cpp" \
+    -o "${HOST_TEST_DIR}/scratchpad-boot-image-test"
+"${HOST_TEST_DIR}/scratchpad-boot-image-test"
+
 "${HOST_CXX}" \
     -std=c++17 \
     -Wall \
@@ -297,7 +311,7 @@ assert receipts == [
         "destination": "3",
         "payload_words": "48",
         "injection_tick": "100000",
-        "head_arrival_tick": "334000",
+        "delivery_tick": "334000",
         "completion_tick": "334000",
         "latency_ticks": "234000",
     },
@@ -306,7 +320,7 @@ assert receipts == [
         "destination": "3",
         "payload_words": "48",
         "injection_tick": "100000",
-        "head_arrival_tick": "300000",
+        "delivery_tick": "300000",
         "completion_tick": "300000",
         "latency_ticks": "200000",
     },

@@ -20,6 +20,14 @@ struct CpuAnalogAction
     std::uint32_t reason, array, flags;
     std::uint64_t sequence;
 };
+struct CpuInstructionAction
+{
+    std::uint64_t address;
+    std::uint32_t bytes;
+    bool invalidate;
+    Timing::Cycles<Timing::Cpu> cursor;
+    std::uint64_t step;
+};
 struct CpuNetworkAction
 {
     std::uint32_t reason, flags, source, route, words;

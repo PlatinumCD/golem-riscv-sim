@@ -16,33 +16,7 @@ ROUTER_PORTS = 5
 LINK_LATENCY = "10ns"
 WORD_BYTES = 4
 WORD_BITS = WORD_BYTES * 8
-MEMORY_BACKENDS = ("native", "memhierarchy", "streaming")
-MESH_ROUTER_BACKENDS = ("merlin", "mittens")
-GUEST_RAM_BASE = 0x80000000
-DEFAULT_MEMORY_HIERARCHY = {
-    "topology": "private_l1",
-    "l1_size": "32KiB",
-    "l1_associativity": 4,
-    "cache_line_size": 64,
-    "l1_access_latency_cycles": 2,
-    "l1_max_requests_per_cycle": 1,
-    "l1_banks": 1,
-    "l1_clock": "1GHz",
-    "cpu_l1_latency": "1ns",
-    "l1_memory_latency": "1ns",
-    "lower_memory_clock": "1GHz",
-    "lower_memory_access_time": "50ns",
-    "memory_network_bandwidth": "64GB/s",
-    "memory_network_buffer_size": "2KiB",
-    "memory_network_flit_size": "64B",
-    "memory_network_latency": "1ns",
-    "l2_banks": 2,
-    "l2_slice_size": "512KiB",
-    "l2_associativity": 8,
-    "l2_access_latency_cycles": 10,
-    "l2_clock": "1GHz",
-    "directory_entries": 32768,
-}
+MESH_ROUTER_BACKENDS = ("mittens",)
 
 _FREQUENCY_PATTERN = re.compile(
     r"^([0-9]+(?:\.[0-9]+)?)\s*(Hz|kHz|MHz|GHz)$",
@@ -53,17 +27,6 @@ _FREQUENCY_SCALES = {
     "khz": Decimal(1_000),
     "mhz": Decimal(1_000_000),
     "ghz": Decimal(1_000_000_000),
-}
-_MEMORY_SIZE_PATTERN = re.compile(
-    r"^([1-9][0-9]*)\s*([KMGT]?)(i?)[Bb]?$",
-    re.IGNORECASE,
-)
-_MEMORY_SIZE_SCALES = {
-    "": 1,
-    "k": 1024,
-    "m": 1024 ** 2,
-    "g": 1024 ** 3,
-    "t": 1024 ** 4,
 }
 
 
@@ -115,33 +78,6 @@ def _mesh_link_configuration(width_bits, clock, cell_words, buffer_cells):
     )
 
 
-def _make_router(x, y, width, height, flit_size, buffer_size,
-                 link_bandwidth):
-    router_id = tile_id(x, y, width)
-    router = sst.Component(f"router_{x}_{y}", "merlin.hr_router")
-    router.addParams(
-        {
-            "id": router_id,
-            "num_ports": ROUTER_PORTS,
-            "flit_size": flit_size,
-            "xbar_bw": link_bandwidth,
-            "link_bw": link_bandwidth,
-            "input_buf_size": buffer_size,
-            "output_buf_size": buffer_size,
-        }
-    )
-
-    topology = router.setSubComponent("topology", "merlin.mesh")
-    topology.addParams(
-        {
-            "shape": f"{width}x{height}",
-            "width": "1x1",
-            "local_ports": 1,
-        }
-    )
-    return router
-
-
 def _make_wormhole_router(x, y, width, height, clock,
                           link_width_bits, input_buffer_flits,
                           pipeline_cycles, tx_streams, rx_streams=1):
@@ -175,312 +111,14 @@ def _connect_routers(name, first, first_port, second, second_port,
     )
 
 
-def _memory_size_bytes(value):
-    if isinstance(value, bool):
-        raise ValueError("tile memory size must not be boolean")
-    if isinstance(value, int):
-        if value <= 0:
-            raise ValueError("tile memory size must be positive")
-        return value
-    if not isinstance(value, str):
-        raise ValueError("tile memory size must be an integer or SST size")
-
-    match = _MEMORY_SIZE_PATTERN.fullmatch(value.strip())
-    if match is None:
-        raise ValueError(f"unsupported tile memory size: {value}")
-    return (
-        int(match.group(1)) *
-        _MEMORY_SIZE_SCALES[match.group(2).lower()]
-    )
-
-
-def _memory_hierarchy_configuration(overrides):
-    configuration = dict(DEFAULT_MEMORY_HIERARCHY)
-    if overrides is not None:
-        configuration.update(overrides)
-    if configuration["topology"] not in ("private_l1", "shared_l2"):
-        raise ValueError(
-            "memory hierarchy topology must be private_l1 or shared_l2"
-        )
-    if configuration["cache_line_size"] <= 0:
-        raise ValueError("cache line size must be positive")
-    if configuration["l1_max_requests_per_cycle"] <= 0:
-        raise ValueError("L1 requests per cycle must be positive")
-    if configuration["l1_banks"] <= 0:
-        raise ValueError("L1 bank count must be positive")
-    if configuration["l2_banks"] <= 0:
-        raise ValueError("L2 bank count must be positive")
-    return configuration
-
-
-def _attach_private_l1(tile, node_id, tile_memory, configuration):
-    """Attach one timing-only private L1 and memory path to a tile."""
-    memory_bytes = _memory_size_bytes(tile_memory)
-    address_end = GUEST_RAM_BASE + memory_bytes - 1
-    capacity_mib = (
-        address_end + 1 + (1024 ** 2 - 1)
-    ) // (1024 ** 2)
-
-    memory_if = tile.setSubComponent(
-        "memoryIF", "memHierarchy.standardInterface"
-    )
-
-    l1 = sst.Component(
-        f"tile{node_id}.private_l1", "memHierarchy.Cache"
-    )
-    l1.addParams(
-        {
-            "access_latency_cycles":
-                configuration["l1_access_latency_cycles"],
-            "cache_frequency": configuration["l1_clock"],
-            "replacement_policy": "lru",
-            "coherence_protocol": "MESI",
-            "associativity": configuration["l1_associativity"],
-            "cache_line_size": configuration["cache_line_size"],
-            "cache_size": configuration["l1_size"],
-            "max_requests_per_cycle":
-                configuration["l1_max_requests_per_cycle"],
-            "banks": configuration["l1_banks"],
-            "L1": 1,
-        }
-    )
-
-    memory_controller = sst.Component(
-        f"tile{node_id}.memory_controller",
-        "memHierarchy.MemController",
-    )
-    memory_controller.addParams(
-        {
-            "clock": configuration["lower_memory_clock"],
-            "backing": "none",
-            # Preserve the absolute RISC-V physical address in responses.
-            "addr_range_start": 0,
-            "addr_range_end": address_end,
-        }
-    )
-    memory = memory_controller.setSubComponent(
-        "backend", "memHierarchy.simpleMem"
-    )
-    memory.addParams(
-        {
-            "access_time": configuration["lower_memory_access_time"],
-            # simpleMem is timing-only and does not allocate this capacity.
-            "mem_size": f"{capacity_mib}MiB",
-        }
-    )
-
-    cpu_l1 = sst.Link(f"tile{node_id}.cpu_l1")
-    cpu_l1.connect(
-        (memory_if, "lowlink", configuration["cpu_l1_latency"]),
-        (l1, "highlink", configuration["cpu_l1_latency"]),
-    )
-    # Keep private memory accesses within the tile's SST partition. Mesh links
-    # remain partition cuts, so independent tile groups can run concurrently.
-    cpu_l1.setNoCut()
-    l1_memory = sst.Link(f"tile{node_id}.l1_memory")
-    l1_memory.connect(
-        (l1, "lowlink", configuration["l1_memory_latency"]),
-        (memory_controller, "highlink", configuration["l1_memory_latency"]),
-    )
-    l1_memory.setNoCut()
-
-    l1.enableStatistics(["CacheHits", "CacheMisses"])
-
-
-def _shared_address_range(network_size, tile_memory):
-    tile_bytes = _memory_size_bytes(tile_memory)
-    if network_size <= 0 or tile_bytes > (1 << 64) // network_size:
-        raise ValueError("shared timing-memory address range overflow")
-    return tile_bytes, network_size * tile_bytes
-
-
-def _memory_nic(component, slot, group, configuration):
-    nic = component.setSubComponent(slot, "memHierarchy.MemNIC")
-    nic.addParams(
-        {
-            "group": group,
-            "network_bw": configuration["memory_network_bandwidth"],
-            "network_input_buffer_size":
-                configuration["memory_network_buffer_size"],
-            "network_output_buffer_size":
-                configuration["memory_network_buffer_size"],
-        }
-    )
-    return nic
-
-
-def _connect_memory_endpoint(name, endpoint, network, port, configuration):
-    link = sst.Link(name)
-    latency = configuration["memory_network_latency"]
-    link.connect(
-        (endpoint, "port", latency),
-        (network, f"port{port}", latency),
-    )
-
-
-def _make_shared_l2_fabric(network_size, tile_memory, configuration):
-    """Create one logically shared, physically banked L2."""
-    tile_bytes, total_bytes = _shared_address_range(
-        network_size, tile_memory
-    )
-    banks = configuration["l2_banks"]
-    line_bytes = configuration["cache_line_size"]
-    if total_bytes < banks * line_bytes:
-        raise ValueError("shared memory is too small for the L2 bank count")
-
-    network = sst.Component("memory_network", "merlin.hr_router")
-    network.addParams(
-        {
-            "id": 0,
-            "num_ports": network_size + 3 * banks,
-            "flit_size": configuration["memory_network_flit_size"],
-            "xbar_bw": configuration["memory_network_bandwidth"],
-            "link_bw": configuration["memory_network_bandwidth"],
-            "input_buf_size":
-                configuration["memory_network_buffer_size"],
-            "output_buf_size":
-                configuration["memory_network_buffer_size"],
-        }
-    )
-    network.setSubComponent("topology", "merlin.singlerouter")
-
-    capacity_mib = (total_bytes + 1024 ** 2 - 1) // (1024 ** 2)
-    interleave_step = banks * line_bytes
-    for bank in range(banks):
-        start = bank * line_bytes
-        end = total_bytes - (banks - bank) * line_bytes + line_bytes - 1
-
-        l2 = sst.Component(
-            f"shared_l2.bank{bank}", "memHierarchy.Cache"
-        )
-        l2.addParams(
-            {
-                "access_latency_cycles":
-                    configuration["l2_access_latency_cycles"],
-                "cache_frequency": configuration["l2_clock"],
-                "replacement_policy": "lru",
-                "coherence_protocol": "MESI",
-                "associativity": configuration["l2_associativity"],
-                "cache_line_size": line_bytes,
-                "cache_size": configuration["l2_slice_size"],
-                "num_cache_slices": banks,
-                "slice_allocation_policy": "rr",
-                "slice_id": bank,
-            }
-        )
-        l2_nic = _memory_nic(l2, "highlink", 2, configuration)
-
-        directory = sst.Component(
-            f"shared_l2.directory{bank}",
-            "memHierarchy.DirectoryController",
-        )
-        directory.addParams(
-            {
-                "clock": configuration["l2_clock"],
-                "coherence_protocol": "MESI",
-                "entry_cache_size": configuration["directory_entries"],
-                "interleave_size": f"{line_bytes}B",
-                "interleave_step": f"{interleave_step}B",
-                "addr_range_start": start,
-                "addr_range_end": end,
-            }
-        )
-        directory_nic = _memory_nic(
-            directory, "highlink", 3, configuration
-        )
-
-        controller = sst.Component(
-            f"shared_l2.memory{bank}", "memHierarchy.MemController"
-        )
-        controller.addParams(
-            {
-                "clock": configuration["lower_memory_clock"],
-                "backing": "none",
-                "interleave_size": f"{line_bytes}B",
-                "interleave_step": f"{interleave_step}B",
-                "addr_range_start": start,
-                "addr_range_end": end,
-            }
-        )
-        controller_nic = _memory_nic(
-            controller, "highlink", 4, configuration
-        )
-        backend = controller.setSubComponent(
-            "backend", "memHierarchy.simpleMem"
-        )
-        backend.addParams(
-            {
-                "access_time":
-                    configuration["lower_memory_access_time"],
-                "mem_size": f"{capacity_mib}MiB",
-            }
-        )
-
-        for offset, endpoint in enumerate(
-            (l2_nic, directory_nic, controller_nic)
-        ):
-            port = network_size + offset * banks + bank
-            _connect_memory_endpoint(
-                f"memory_network.bank{bank}.group{offset + 2}",
-                endpoint,
-                network,
-                port,
-                configuration,
-            )
-        l2.enableStatistics(["CacheHits", "CacheMisses"])
-
-    return network, tile_bytes
-
-
-def _attach_shared_l1(tile, node_id, configuration, network):
-    memory_if = tile.setSubComponent(
-        "memoryIF", "memHierarchy.standardInterface"
-    )
-    l1 = sst.Component(
-        f"tile{node_id}.private_l1", "memHierarchy.Cache"
-    )
-    l1.addParams(
-        {
-            "access_latency_cycles":
-                configuration["l1_access_latency_cycles"],
-            "cache_frequency": configuration["l1_clock"],
-            "replacement_policy": "lru",
-            "coherence_protocol": "MESI",
-            "associativity": configuration["l1_associativity"],
-            "cache_line_size": configuration["cache_line_size"],
-            "cache_size": configuration["l1_size"],
-            "max_requests_per_cycle":
-                configuration["l1_max_requests_per_cycle"],
-            "banks": configuration["l1_banks"],
-            "L1": 1,
-        }
-    )
-    l1_nic = _memory_nic(l1, "lowlink", 1, configuration)
-    cpu_l1 = sst.Link(f"tile{node_id}.cpu_l1")
-    cpu_l1.connect(
-        (memory_if, "lowlink", configuration["cpu_l1_latency"]),
-        (l1, "highlink", configuration["cpu_l1_latency"]),
-    )
-    cpu_l1.setNoCut()
-    _connect_memory_endpoint(
-        f"tile{node_id}.l1_memory_network",
-        l1_nic,
-        network,
-        node_id,
-        configuration,
-    )
-    l1.enableStatistics(["CacheHits", "CacheMisses"])
-
-
 def _attach_tile(router, node_id, image, qemu_path, network_size,
                  mesh_width, mesh_height, verbosity, tile_params,
                  buffer_size, link_bandwidth, mesh_link_width_bits,
                  mesh_link_clock, network_packet_words, memory_backend,
-                 memory_hierarchy, mesh_router_backend,
+                 mesh_router_backend,
                  wormhole_input_buffer_flits,
                  wormhole_injection_buffer_flits,
-                 mesh_link_latency,
-                 shared_memory_fabric=None, tile_memory_stride=0):
+                 mesh_link_latency):
     tile = sst.Component(f"tile{node_id}", "mittens.tile")
     params = {
         "tile_id": node_id,
@@ -505,7 +143,7 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
             if key not in ("qemu_control_memory", "memory")
         }
     )
-    # Keep endpoint completion timing identical to the physical Merlin links.
+    # Keep endpoint completion timing identical to the physical mesh links.
     params["mesh_link_width_bits"] = mesh_link_width_bits
     params["mesh_link_clock"] = mesh_link_clock
     params["network_packet_words"] = network_packet_words
@@ -513,71 +151,36 @@ def _attach_tile(router, node_id, image, qemu_path, network_size,
         mesh_router_backend == "mittens"
     )
     params["memory_backend"] = memory_backend
-    if shared_memory_fabric is not None:
-        params["memory_guest_base"] = GUEST_RAM_BASE
-        params["memory_tile_stride"] = tile_memory_stride
-        params["memory_cache_line_size"] = memory_hierarchy[
-            "cache_line_size"
-        ]
     tile.addParams(params)
 
-    if memory_backend == "memhierarchy":
-        if shared_memory_fabric is None:
-            _attach_private_l1(
-                tile, node_id, params["memory"], memory_hierarchy
-            )
-        else:
-            _attach_shared_l1(
-                tile, node_id, memory_hierarchy, shared_memory_fabric
-            )
+    network = tile.setSubComponent(
+        "networkIF",
+        "mittens.wormholeNIC",
+    )
+    network.addParams(
+        {
+            "endpoint_id": node_id,
+            "network_size": network_size,
+            "clock": mesh_link_clock,
+            "link_width_bits": mesh_link_width_bits,
+            "router_buffer_flits":
+                wormhole_input_buffer_flits,
+            "injection_buffer_flits":
+                wormhole_injection_buffer_flits,
+            "mesh_width": mesh_width,
+            "mesh_height": mesh_height,
+            "tx_streams": tile_params.get("tx_dma_streams", 1),
+            "rx_streams": tile_params.get("rx_dma_streams", 1),
+        }
+    )
+    network_port = "router_port0"
+    if os.environ.get("MITTENS_NIC_RECEIVE_TRACE_DIR"):
+        network.addParam("receive_flit_trace_path", str(Path(os.environ["MITTENS_NIC_RECEIVE_TRACE_DIR"]) / f"nic-{node_id}-flits.csv"))
 
-    if mesh_router_backend == "merlin":
-        network = tile.setSubComponent(
-            "networkIF",
-            "merlin.linkcontrol",
-        )
-        network.addParams(
-            {
-                "link_bw": link_bandwidth,
-                "input_buf_size": buffer_size,
-                "output_buf_size": buffer_size,
-            }
-        )
-        network_port = "rtr_port"
-    else:
-        network = tile.setSubComponent(
-            "networkIF",
-            "mittens.wormholeNIC",
-        )
-        network.addParams(
-            {
-                "endpoint_id": node_id,
-                "network_size": network_size,
-                "clock": mesh_link_clock,
-                "link_width_bits": mesh_link_width_bits,
-                "router_buffer_flits":
-                    wormhole_input_buffer_flits,
-                "injection_buffer_flits":
-                    wormhole_injection_buffer_flits,
-                "mesh_width": mesh_width,
-                "mesh_height": mesh_height,
-                "tx_streams": tile_params.get("tx_dma_streams", 1),
-                "rx_streams": tile_params.get("rx_dma_streams", 1),
-            }
-        )
-        network_port = "router_port0"
-        if os.environ.get("MITTENS_NIC_RECEIVE_TRACE_DIR"):
-            network.addParam("receive_flit_trace_path", str(Path(os.environ["MITTENS_NIC_RECEIVE_TRACE_DIR"]) / f"nic-{node_id}-flits.csv"))
-
-    local_lanes = (max(tile_params.get("tx_dma_streams", 1), tile_params.get("rx_dma_streams", 1))
-                   if mesh_router_backend == "mittens" else 1)
+    local_lanes = (max(tile_params.get("tx_dma_streams", 1), tile_params.get("rx_dma_streams", 1)))
     for lane in range(local_lanes):
-        local_network_port = (f"router_port{lane}"
-                              if mesh_router_backend == "mittens"
-                              else network_port)
-        local_router_port = (f"port{LOCAL_PORT + lane}"
-                             if mesh_router_backend == "mittens"
-                             else f"port{LOCAL_PORT}")
+        local_network_port = (f"router_port{lane}")
+        local_router_port = (f"port{LOCAL_PORT + lane}")
         link = sst.Link(f"tile{node_id}_local_link_{lane}")
         link.connect(
             (network, local_network_port, mesh_link_latency),
@@ -592,11 +195,11 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                network_buffer_cells=16, mesh_link_width_bits=32,
                mesh_link_clock="1GHz", network_packet_words=None,
                mesh_link_latency=LINK_LATENCY,
-               mesh_router_backend="merlin",
+               mesh_router_backend="mittens",
                wormhole_input_buffer_flits=32,
                wormhole_injection_buffer_flits=64,
                wormhole_pipeline_cycles=3,
-               memory_backend="native",
+               memory_backend="streaming",
                memory_hierarchy=None, active_tiles=None,
                global_memory=None, initialization_barrier=None,
                epoch_barrier=None,
@@ -610,13 +213,13 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
     cardinal link remains available for transit traffic.
     """
     network_size = width * height
-    if memory_backend not in MEMORY_BACKENDS:
+    if memory_backend != "streaming":
         raise ValueError(
-            "memory_backend must be native, memhierarchy, or streaming"
+            "only executable SPM with streaming DMA is supported"
         )
     if mesh_router_backend not in MESH_ROUTER_BACKENDS:
         raise ValueError(
-            "mesh_router_backend must be merlin or mittens"
+            "the supported mesh router is mittens"
         )
     if not isinstance(partition_global_dma, bool):
         raise ValueError("partition_global_dma must be boolean")
@@ -630,7 +233,8 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         raise ValueError(
             "wormhole router buffer and pipeline values must be positive"
         )
-    memory_hierarchy = _memory_hierarchy_configuration(memory_hierarchy)
+    if memory_hierarchy is not None:
+        raise ValueError("scratchpad boot does not use an L1/L2 data hierarchy")
     if len(images) != network_size:
         raise ValueError(
             f"mesh requires {network_size} images, received {len(images)}"
@@ -704,88 +308,22 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         tile_params = {}
     else:
         tile_params = dict(tile_params)
+    tile_params.setdefault("scratchpad_boot", True)
+    if tile_params["scratchpad_boot"] is not True or tile_params.get("scratchpad_enabled", True) is not True:
+        raise ValueError("executable SPM cannot be disabled")
+    if tile_params["scratchpad_boot"]:
+        if memory_backend != "streaming":
+            raise ValueError("scratchpad boot requires streaming memory, without an L1/L2 data hierarchy")
+        tile_params.setdefault("scratchpad_enabled", True)
+        tile_params.setdefault("scratchpad_bytes", 256 * 1024)
     rx_streams = tile_params.get("rx_dma_streams", 1)
     if isinstance(rx_streams, bool) or rx_streams not in (1, 2, 4):
         raise ValueError("rx_dma_streams must be 1, 2, or 4")
     if rx_streams > 1 and mesh_router_backend != "mittens":
         raise ValueError("multiple RX streams require the mittens router and NIC")
     streaming_memory = memory_backend == "streaming"
-    initialization_configuration = None
-    if initialization_barrier is not None:
-        if not isinstance(initialization_barrier, dict):
-            raise ValueError(
-                "initialization_barrier must be a configuration mapping"
-            )
-        unsupported = set(initialization_barrier) - {
-            "clock", "release_cycles", "release_tiles_per_cycle",
-            "profile_output_directory", "verbose"
-        }
-        if unsupported:
-            raise ValueError(
-                "unsupported initialization_barrier settings: " +
-                ", ".join(sorted(unsupported))
-            )
-        if tile_params.get("memory_init_batching") is not True:
-            raise ValueError(
-                "initialization_barrier requires memory_init_batching"
-            )
-        release_cycles = initialization_barrier.get("release_cycles", 1)
-        if (
-            isinstance(release_cycles, bool) or
-            not isinstance(release_cycles, int) or
-            release_cycles <= 0
-        ):
-            raise ValueError(
-                "initialization_barrier release_cycles must be a positive "
-                "integer"
-            )
-        release_tiles_per_cycle = initialization_barrier.get(
-            "release_tiles_per_cycle", 1
-        )
-        if (
-            isinstance(release_tiles_per_cycle, bool) or
-            not isinstance(release_tiles_per_cycle, int) or
-            release_tiles_per_cycle <= 0
-        ):
-            raise ValueError(
-                "initialization_barrier release_tiles_per_cycle must be a "
-                "positive integer"
-            )
-        expected_tiles = len(active_tile_set)
-        configured_tiles = tile_params.get("memory_init_barrier_tiles")
-        if configured_tiles not in (None, expected_tiles):
-            raise ValueError(
-                "tile memory_init_barrier_tiles disagrees with the "
-                "initialization controller"
-            )
-        tile_params["memory_init_barrier_tiles"] = expected_tiles
-        initialization_configuration = {
-            "tile_count": network_size,
-            "active_tiles": sorted(active_tile_set),
-            "clock": initialization_barrier.get("clock", "1GHz"),
-            "release_cycles": release_cycles,
-            "release_tiles_per_cycle": release_tiles_per_cycle,
-            "verbose": initialization_barrier.get("verbose", verbosity),
-        }
-        initialization_profile_directory = initialization_barrier.get(
-            "profile_output_directory"
-        )
-        if (
-            initialization_profile_directory is None and
-            tile_params.get("profile_mode", "off") != "off"
-        ):
-            initialization_profile_directory = tile_params.get(
-                "profile_output_directory", ""
-            )
-        if initialization_profile_directory:
-            initialization_configuration["profile_output_directory"] = (
-                initialization_profile_directory
-            )
-    elif tile_params.get("memory_init_barrier_tiles", 0) != 0:
-        raise ValueError(
-            "tile memory_init_barrier_tiles requires an "
-            "initialization_barrier controller"
-        )
+    if initialization_barrier is not None or tile_params.get("memory_init_barrier_tiles", 0):
+        raise ValueError("SPM boot uses timed DMA, not an initialization barrier")
     epoch_configuration = None
     if epoch_barrier is not None:
         if not streaming_memory:
@@ -877,6 +415,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         )
         if global_memory is not None:
             global_configuration.update(global_memory)
+        global_configuration.setdefault("dependency_mode", "bulk_barrier")
         if not explicit_queue_depth:
             global_configuration["queue_depth"] = max(
                 global_configuration["queue_depth"],
@@ -884,7 +423,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 global_configuration["per_tile_queue_depth"],
             )
         tile_params.setdefault("scratchpad_enabled", True)
-        tile_params.setdefault("scratchpad_bytes", 2 * 1024 ** 2)
+        tile_params.setdefault("scratchpad_bytes", 256 * 1024)
         tile_params["global_ram_bytes"] = global_configuration[
             "capacity_bytes"
         ]
@@ -927,14 +466,6 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         network_cell_words,
         network_buffer_cells,
     )
-    shared_memory_fabric = None
-    tile_memory_stride = 0
-    if (memory_backend == "memhierarchy" and
-            memory_hierarchy["topology"] == "shared_l2"):
-        tile_memory = tile_params.get("memory", "16M")
-        shared_memory_fabric, tile_memory_stride = _make_shared_l2_fabric(
-            network_size, tile_memory, memory_hierarchy
-        )
     global_controller = None
     if streaming_memory:
         global_controller = sst.Component(
@@ -954,17 +485,6 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         if work_partition_threads is not None:
             global_controller.setRank(0, work_partition_controller_thread)
     epoch_controller = None
-    initialization_controller = None
-    if initialization_configuration is not None:
-        initialization_controller = sst.Component(
-            "memory_init_barrier",
-            "mittens.memoryInitializationBarrierController",
-        )
-        initialization_controller.addParams(initialization_configuration)
-        if work_partition_threads is not None:
-            initialization_controller.setRank(
-                0, work_partition_controller_thread
-            )
     if epoch_configuration is not None:
         epoch_controller = sst.Component(
             "epoch_barrier", "mittens.epochBarrierController"
@@ -972,37 +492,22 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
         epoch_controller.addParams(epoch_configuration)
         if work_partition_threads is not None:
             epoch_controller.setRank(0, work_partition_controller_thread)
-    if mesh_router_backend == "merlin":
-        routers = {
-            (x, y): _make_router(
-                x,
-                y,
-                width,
-                height,
-                flit_size,
-                buffer_size,
-                link_bandwidth,
-            )
-            for y in range(height)
-            for x in range(width)
-        }
-    else:
-        routers = {
-            (x, y): _make_wormhole_router(
-                x,
-                y,
-                width,
-                height,
-                mesh_link_clock,
-                mesh_link_width_bits,
-                wormhole_input_buffer_flits,
-                wormhole_pipeline_cycles,
-                tile_params.get("tx_dma_streams", 1),
-                tile_params.get("rx_dma_streams", 1),
-            )
-            for y in range(height)
-            for x in range(width)
-        }
+    routers = {
+        (x, y): _make_wormhole_router(
+            x,
+            y,
+            width,
+            height,
+            mesh_link_clock,
+            mesh_link_width_bits,
+            wormhole_input_buffer_flits,
+            wormhole_pipeline_cycles,
+            tile_params.get("tx_dma_streams", 1),
+            tile_params.get("rx_dma_streams", 1),
+        )
+        for y in range(height)
+        for x in range(width)
+    }
     if work_partition_threads is not None:
         for (x, y), router in routers.items():
             router.setRank(0, work_partition_threads[tile_id(x, y, width)])
@@ -1053,13 +558,10 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 mesh_link_clock,
                 network_packet_words,
                 memory_backend,
-                memory_hierarchy,
                 mesh_router_backend,
                 wormhole_input_buffer_flits,
                 wormhole_injection_buffer_flits,
                 mesh_link_latency,
-                shared_memory_fabric,
-                tile_memory_stride,
             )
             if work_partition_threads is not None:
                 tile.setRank(0, work_partition_threads[node_id])
@@ -1076,18 +578,6 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 # into one indivisible SST partition.
                 if not partition_global_dma:
                     dma_link.setNoCut()
-            if initialization_controller is not None:
-                initialization_link = sst.Link(
-                    f"tile{node_id}.memory_init_barrier"
-                )
-                initialization_link.connect(
-                    (tile, "memoryInitBarrier", "1ns"),
-                    (
-                        initialization_controller,
-                        f"barrier{node_id}",
-                        "1ns",
-                    ),
-                )
             if epoch_controller is not None:
                 barrier_link = sst.Link(f"tile{node_id}.epoch_barrier")
                 barrier_link.connect(

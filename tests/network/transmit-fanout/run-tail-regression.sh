@@ -84,4 +84,4 @@ for task_id in 100 101; do
     fi
 done
 
-echo "fan-out tail regression: PASS (2 routes, 768 words each, memhierarchy)"
+echo "fan-out tail regression: PASS (2 routes, 768 words each, executable SPM)"

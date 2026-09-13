@@ -15,14 +15,7 @@ if [[ ! -x "${QEMU}" ]]; then
     exit 1
 fi
 
-exec "${QEMU}" \
-    -machine virt \
-    -cpu "${QEMU_RISCV_CPU}" \
-    -smp 1 \
-    -m 16M \
-    -bios none \
-    -kernel "${ELF}" \
-    -display none \
-    -monitor none \
-    -serial stdio \
-    -no-reboot
+export MITTENS_TEST_QEMU="${QEMU}"
+export MITTENS_TEST_ELF="${ELF}"
+export SST_LIB_PATH="${INSTALL_ROOT}/sst-elements/lib/sst-elements-library${SST_LIB_PATH:+:${SST_LIB_PATH}}"
+exec "${INSTALL_ROOT}/sst-core/bin/sst" "${PROJECT_ROOT}/src/sst/tests/qemu_boot.py"

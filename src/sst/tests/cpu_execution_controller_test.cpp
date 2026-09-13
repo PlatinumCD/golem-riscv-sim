@@ -11,12 +11,14 @@ struct Fixture {
     std::deque<std::uint64_t> wakes;
     std::deque<std::uint64_t> wakeGenerations;
     std::vector<std::uint32_t> actions;
+    std::vector<CpuInstructionAction> instructionActions;
     std::uint64_t now=0, epoch=0, resumes=0;
     std::uint64_t cpuTicks=1, memoryDelay=0;
     bool running=true, initializing=false, block=false;
     std::atomic<bool> workerEntered{false}, workerExited{false};
     bool waitWorker=false;
     bool buffered=false, invalidResult=false, reenter=false;
+    std::uint64_t instructionDelay=1;
     unsigned watchdogCalls=0, initialValidations=0;
     ~Fixture() { if(cpu) cpu->stop(); }
     Fixture() {
@@ -63,6 +65,17 @@ struct Fixture {
                 return CpuDeviceResult{false,Timing::Cycles<Timing::Cpu>{delay},{}};}
             if(reenter) cpu->completeMemory(cpu->pendingStepId());
             return CpuDeviceResult{!block,invalidResult?std::optional<Timing::Cycles<Timing::Cpu>>{{1}}:std::nullopt,{},buffered};
+        };
+        h.instruction=[this](const CpuInstructionAction& a) {
+            const bool retry = !instructionActions.empty() && instructionActions.back().step == a.step;
+            instructionActions.push_back(a);
+            if (a.invalidate)
+                return CpuDeviceResult{true, {}, {}};
+            if (retry)
+                return CpuDeviceResult{true, {}, {}};
+            return CpuDeviceResult{false, Timing::Cycles<Timing::Cpu>{instructionDelay},
+                                   Timing::Cycles<Timing::Cpu>{
+                                       std::max(a.cursor.value, now / cpuTicks) + instructionDelay}};
         };
         h.analog=[this](const auto& a){actions.push_back(a.reason); return CpuDeviceResult{!block,{},{}};};
         h.globalDMA=[this](const auto& a){actions.push_back(a.reason); return CpuDeviceResult{!block,{},{}};};
@@ -124,15 +137,13 @@ static void dma(bool macro,bool fusedWait) {
     f.wake();f.wake();assert(!f.running && f.cpu->accounting().totalCycles==(macro?5:4));
     assert(f.actions.size()==(macro?4:fusedWait?3:2));
 }
-static void grouped(bool scalar) {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.block=true;f.create();
-    auto e=event(7,scalar?0:1,MITTENS_SYNC_STOP_MEMORY_BATCH);auto a=access(2,scalar?0:1,false),b=a;b.address+=64;
-    if(scalar){a.flags=b.flags=MITTENS_SYNC_MEMORY_FLAG_REGISTER_DEPS;a.program_counter=100;b.program_counter=104;a.instruction_length=b.instruction_length=4;b.instructions_executed=3;}
-    e.memoryBatch={a,b};
-    f.captures={e,event(8,scalar?0:1,MITTENS_SYNC_STOP_GUEST_EXIT)};f.cpu->onWake();f.wake();
-    const auto charged=f.cpu->accounting().totalCycles;f.cpu->processPendingSyncEvent();
-    assert(f.cpu->accounting().totalCycles==charged);f.cpu->completeMemory(f.cpu->pendingStepId(),true);f.wake();f.wake();
-    assert(!f.running && f.cpu->accounting().totalCycles==3);
+static void rejectNonScratchpadBatch() {
+    Fixture f; f.config.qemuReadySetWorkers=1; f.create();
+    auto e=event(7,1,MITTENS_SYNC_STOP_MEMORY_BATCH);
+    e.memoryBatch={access(2,1,false)}; f.captures={e};
+    bool rejected=false;
+    try { f.cpu->onWake(); } catch(const std::invalid_argument&) { rejected=true; }
+    assert(rejected);
 }
 static void runtimeCancel(bool collected) {
     Fixture f; f.config.qemuRuntimeReadySet=true;
@@ -300,8 +311,121 @@ static void deadlines() {
         deadlineEntries(factor,false);deadlineEntries(factor,true);serviceDeadline(factor);
     }
 }
+static void instructionFetchAccounting() {
+    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    f.config.scratchpadBoot=true; f.instructionDelay=3; f.create();
+    auto miss=event(2,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+    miss.memoryAddress=MITTENS_SCRATCHPAD_BASE; miss.memorySize=4;
+    auto hit=event(3,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+    hit.memoryAddress=MITTENS_SCRATCHPAD_BASE; hit.memorySize=4;
+    f.captures={miss,hit,event(4,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
+    f.cpu->onWake();
+    assert(f.wakes.front()==2 && f.cpu->accounting().totalCycles==2);
+    f.wake();
+    assert(f.instructionActions.size()==1 && f.wakes.front()==3 &&
+           f.cpu->accounting().totalCycles==2);
+    f.instructionDelay=1; // The second fetch hits after the first miss completes.
+    for (unsigned n=0; n<8 && f.running; ++n) f.wake();
+    assert(!f.running && f.instructionActions.size()==4 &&
+           !f.instructionActions[0].invalidate && !f.instructionActions[1].invalidate &&
+           !f.instructionActions[2].invalidate && !f.instructionActions[3].invalidate &&
+           f.cpu->accounting().totalCycles==4);
+    assert(f.now==6 && f.cpu->statistics().unretiredInstructionFetches_==0);
+}
+static void repeatedInstructionFetchIcount() {
+    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    f.config.scratchpadBoot=true; f.create();
+    auto first=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+    first.eventSequence=1;
+    first.memoryAddress=MITTENS_SCRATCHPAD_BASE; first.memorySize=4;
+    auto second=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+    second.eventSequence=2;
+    second.memoryAddress=MITTENS_SCRATCHPAD_BASE; second.memorySize=4;
+    auto exit=event(1,0,MITTENS_SYNC_STOP_GUEST_EXIT);
+    exit.eventSequence=3;
+    f.captures={first,second,exit}; f.cpu->onWake();
+    for (unsigned n=0; n<8 && f.running; ++n) f.wake();
+    assert(!f.running && f.instructionActions.size()==4);
+    assert(!f.instructionActions[0].invalidate && !f.instructionActions[1].invalidate);
+    assert(f.cpu->accounting().totalCycles==1);
+    assert(f.cpu->statistics().unretiredInstructionFetches_==1);
+    assert(f.now==2); // Both attempts consumed their lookup cycle.
+}
+static void instructionQuantumStability() {
+    for (auto factor : {1U, 1000U}) {
+        for (bool split : {false, true}) {
+            Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+            f.config.syncInstructionQuantum=split ? 1 : 100;
+            f.config.scratchpadBoot=true; f.cpuTicks=factor; f.create();
+            auto first=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH,1);
+            first.memoryAddress=MITTENS_SCRATCHPAD_BASE; first.memorySize=4;
+            auto second=first;
+            second.instructionsExecuted=split ? 0 : 1;
+            second.grantEpoch=split ? 2 : 1;
+            auto exit=event(split ? 1 : 2,0,MITTENS_SYNC_STOP_GUEST_EXIT,split ? 2 : 1);
+            f.captures.push_back(first);
+            if (split) f.captures.push_back(event(1,0,MITTENS_SYNC_STOP_QUANTUM_END,1));
+            f.captures.push_back(second);
+            f.captures.push_back(exit);
+            std::uint64_t sequence=0;
+            for (auto& stop : f.captures) stop.eventSequence=++sequence;
+            f.cpu->onWake();
+            for (unsigned n=0; n<16 && f.running; ++n) f.wake();
+            assert(!f.running && f.captures.empty() && f.instructionActions.size()==4);
+            assert(f.cpu->accounting().totalCycles==2 && f.now==2*factor);
+            assert(f.cpu->statistics().unretiredInstructionFetches_==0);
+        }
+    }
+}
+static void instructionFenceOrdering() {
+    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    f.config.scratchpadBoot=true; f.create();
+    auto fetch=event(2,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+    fetch.memoryAddress=MITTENS_SCRATCHPAD_BASE; fetch.memorySize=4;
+    auto fence=event(3,0,MITTENS_SYNC_STOP_INSTRUCTION_FENCE);
+    auto exit=event(4,0,MITTENS_SYNC_STOP_GUEST_EXIT);
+    f.captures={fetch,fence,exit}; f.cpu->onWake();
+    for (unsigned n=0; n<8 && f.running; ++n) f.wake();
+    assert(!f.running && f.instructionActions.size()==3 &&
+           !f.instructionActions[0].invalidate && !f.instructionActions[1].invalidate &&
+           f.instructionActions[2].invalidate);
+}
+static void instructionLocalVector(bool crossInstruction=false) {
+    Fixture f;
+    f.config.qemuReadySetWorkers=1;
+    f.config.cpuIssueWidth=1;
+    f.config.scratchpadBoot=true;
+    f.config.scratchpadAccessBatching=false;
+    f.config.scratchpadAccessRunCompaction=false;
+    f.create();
+    auto e=event(1,1,MITTENS_SYNC_STOP_MEMORY_BATCH);
+    e.flags=MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY;
+    auto a=access(1,1);
+    a.repeat_count=8;
+    a.flags |= MITTENS_SYNC_MEMORY_FLAG_CONTIGUOUS_RUN |
+               MITTENS_SYNC_MEMORY_FLAG_VECTOR_TRANSACTION;
+    e.memoryBatch={a};
+    if(crossInstruction) {
+        auto other=a;
+        other.program_counter=4;
+        e.memoryBatch.push_back(other);
+    }
+    f.captures={e,event(2,1,MITTENS_SYNC_STOP_GUEST_EXIT)};
+    if(crossInstruction) {
+        std::string error;
+        try { f.cpu->onWake(); }
+        catch(const std::exception& exception) { error=exception.what(); }
+        assert(error.find("crosses an instruction boundary")!=std::string::npos);
+        return;
+    }
+    f.cpu->onWake();
+    while(f.running) f.wake();
+    assert(f.cpu->accounting().total.instructions==2);
+    assert(f.cpu->statistics().memoryBatchLogicalAccesses_==8);
+}
 int main(int argc,char** argv) {
     const std::string mode=argc>1?argv[1]:"replay";
+    if(mode=="replay") { instructionLocalVector(); instructionLocalVector(true); }
     if(mode=="delivery-oracle")return earlyDeliveryOracle()?0:1;
     if(mode=="deadlines"){deadlines();std::cout<<"CPU deadline entries: PASS\n";return 0;}
     if(mode=="runtime-cancel")runtimeCancel(false);
@@ -311,6 +435,6 @@ int main(int argc,char** argv) {
     else if(mode=="local-success")localSuccess();
     else if(mode=="initial-cancel")initialCancel();
     else if(mode=="initial-success" || mode=="initial-invalid" || mode=="initial-epoch-mismatch")initialCapture(mode);
-    else {ordinary();memoryTail(false,false);memoryTail(false,true);memoryTail(true,false);analogTail(false);analogTail(true);dma(false,false);dma(false,true);dma(true,false);grouped(false);grouped(true);completionGuards();callbackContract(false);callbackContract(true);bufferedWatchdog();deadlines();}
+    else {ordinary();memoryTail(false,false);memoryTail(false,true);memoryTail(true,false);analogTail(false);analogTail(true);dma(false,false);dma(false,true);dma(true,false);rejectNonScratchpadBatch();completionGuards();callbackContract(false);callbackContract(true);bufferedWatchdog();deadlines();instructionFetchAccounting();repeatedInstructionFetchIcount();instructionQuantumStability();instructionFenceOrdering();}
     std::cout<<"CPU controller "<<mode<<": PASS\n";
 }

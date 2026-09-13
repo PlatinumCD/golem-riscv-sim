@@ -34,5 +34,5 @@ $(OUTPUT_DIR)/tile%.o: $(TEST_DIR)/main.cpp $(TEST_DIR)/Makefile | $(OUTPUT_DIR)
 		-DMITTENS_FANOUT_PAYLOAD_BYTES=$(D) \
 		-DMITTENS_FANOUT_READY_SKEW_CYCLES=$(SKEW) \
 		-DMITTENS_FANOUT_RECORD_READY_CYCLES=$(RECORD_READY) -c $< -o $@
-$(OUTPUT_DIR)/tile%.elf: $(OUTPUT_DIR)/tile%.o $(COMMON_OBJECTS) $(PLATFORM_STARTUP_ROOT)/tile.ld
-	$(CLANGXX) $(COMMON_FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections -Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld $(COMMON_OBJECTS) $< -o $@
+$(OUTPUT_DIR)/tile%.elf: $(OUTPUT_DIR)/tile%.o $(COMMON_OBJECTS) $(PLATFORM_STARTUP_ROOT)/scratchpad.ld
+	$(CLANGXX) $(COMMON_FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections -Wl,--defsym,SPM_BYTES=32768,--defsym,SPM_CODE_OFFSET=24576,--defsym,STACK_BYTES=2048 -Wl,-T,$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(COMMON_OBJECTS) $< -o $@

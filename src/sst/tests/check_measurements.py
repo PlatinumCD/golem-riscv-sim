@@ -236,9 +236,10 @@ def validate_summary(path, implementation_id=None):
     launch = param('launch_mode')
     require(launch in ('managed', 'disabled'), 'invalid configured launch_mode')
     cpu = launch == 'managed'
-    memory = param('memory_backend') == 'memhierarchy'
-    scratchpad = param('scratchpad_enabled')
-    require(type(scratchpad) is bool, 'config.scratchpad_enabled must be boolean')
+    # Every tile has SPM. There is no separate CPU data-cache transport;
+    # its retained schema fields must be unavailable, never measured zero.
+    memory = False
+    scratchpad = True
     analog = uint(param('analog_array_count'), 'config.analog_array_count') != 0
     # Attachment is not inferable from network_size or global RAM capacity.
     network_status = fixed['network_packets']['status']

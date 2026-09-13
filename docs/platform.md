@@ -1,22 +1,23 @@
-# Golem platform
+# Programming a tile
 
-This document describes the platform software can use on one simulated tile.
-It is a current interface description, not a history of platform revisions.
+This page describes the memory and device interfaces available to a tile program.
+For component configuration, see the [system architecture](architecture.md).
 
 ## Tile
 
-Each tile contains one RV64 RISC-V hart running a bare-metal ELF, private
-guest RAM, optional scratchpad memory, a UART, a simulation-exit device, a
-mesh NIC, and optional DMA and analog devices.
+Each tile contains one RV64 RISC-V hart running a bare-metal ELF from its
+scratchpad, an 8 KiB instruction cache, a UART, a simulation-exit device,
+a mesh NIC, DMA engines, and optional analog devices.
 
-Tiles do not share guest RAM. Tile-to-tile communication uses the mesh NIC.
-Global RAM is a separate explicitly modeled path.
+Code, constants, working data and the stack share the tile's scratchpad.
+Tile-to-tile communication uses the mesh NIC. Shared main memory is accessed
+through explicitly modeled DMA transfers, not ordinary CPU loads and stores.
 
 QEMU owns functional instruction execution and guest bytes. SST controls
 simulated time and models CPU issue, scratchpad service, DMA, network traffic,
 queueing, and accelerator timing.
 
-## Guest address map
+## Address map
 
 | Address | Size | Interface |
 |---|---:|---|
@@ -24,12 +25,15 @@ queueing, and accelerator timing.
 | 0x10000000 | 4 KiB | UART |
 | 0x10010000 | 4 KiB | Mesh NIC |
 | 0x10011000 | 4 KiB | Scratchpad/global-DMA registers |
-| 0x80000000 | configured RAM size | Tile-private guest RAM |
 | 0x90000000 | configured SPM capacity | Tile-private scratchpad window |
 
 The scratchpad base is fixed at 0x90000000; its capacity is configurable.
-Ordinary program data lives in private RAM unless software explicitly uses
-the scratchpad.
+At boot, loadable ELF segments are transferred from shared memory into SPM.
+Instruction-cache misses fetch from SPM through its bank/port timing model.
+The linker must place code, data and stack within SPM capacity; there is no
+automatic paging. Use [scratchpad.ld](../src/platform/startup/scratchpad.ld) for the default
+256 KiB layout. Larger datasets must be processed in explicitly transferred
+chunks that fit the available working space.
 
 ## Scratchpad
 
@@ -49,8 +53,9 @@ Current defaults are:
 | DMA service rate | 32 bytes per CPU cycle |
 | DMA setup | 8 CPU cycles |
 
-The generic tile configuration disables the scratchpad by default; workloads
-enable it when needed.
+Scratchpad boot and scratchpad storage are enabled by default. The cache,
+code, working buffers and stack are not interchangeable capacities: cached
+instructions still have their backing bytes in SPM.
 
 With 32-byte stripes and eight banks:
 
@@ -59,7 +64,7 @@ With 32-byte stripes and eight banks:
 Offsets 0 through 224 in 32-byte steps select banks 0 through 7. Offset 256
 selects bank 0 again.
 
-CPU/RVV accesses, TX DMA, RX DMA, and global-memory DMA use the same timing
+Instruction-cache fills, CPU/RVV accesses, TX DMA, RX DMA, and global-memory DMA use the same timing
 model. Different banks can serve independent requests concurrently. Read and
 write ports are separate. Requests competing for one port wait.
 
@@ -70,20 +75,20 @@ SPM transaction.
 ## Mesh NIC and DMA
 
 The NIC is a programmed-I/O device at 0x10010000. Scalar sends enqueue one
-32-bit payload. Burst sends snapshot up to 4096 32-bit words from guest
-memory. SST still models transfer service, network transmission, buffering,
+32-bit payload. Burst sends snapshot up to 4096 32-bit words from SPM.
+SST still models transfer service, network transmission, buffering,
 and backpressure.
 
 Receive DMA registers a source tile, route, destination address, and exact
 word count. SST authorizes each received burst after modeled local DMA work;
-QEMU then copies the authorized data into guest memory.
+QEMU then copies the authorized data into the destination SPM range.
 
 TX and RX stream counts are independent. Each supports 1, 2, or 4 lanes; the
 default is one lane. Lanes share existing scratchpad banks, physical links,
 and router capacity. More lanes expose scheduling concurrency; they do not
 multiply hardware bandwidth.
 
-TX reads source data through the scratchpad timing model into bounded FIFO
+TX reads source data through the scratchpad timing model into finite FIFO
 state. If the network cannot consume data, the FIFO fills and TX prefetch
 stops. RX schedules writes through the common scratchpad arbiter. RX queue
 depth is separate from RX lane count.
@@ -117,10 +122,15 @@ serialization and contention determine link occupancy.
 
 ## Global RAM and synchronization
 
-The scratchpad DMA register block supports global-RAM-to-SPM and
-SPM-to-global-RAM requests, single waits, bounded wait batches, and
-compiler-certified macro boundaries. Global RAM is a separate modeled
-resource.
+The scratchpad DMA register block submits shared-memory-to-SPM and
+SPM-to-shared-memory requests and waits for their completion. Use
+[scratchpad-dma.h](../src/platform/devices/scratchpad-dma.h) for the guest API.
+Keep a source range unchanged, and do not consume a destination range, until
+the corresponding transfer has completed.
+
+Boot staging reserves shared-memory slots at `tile_id * scratchpad_bytes`.
+Application input/output allocations must not overwrite those slots during boot.
+The boot controller uses `dependency_mode="bulk_barrier"`.
 
 Initialization and completion barriers are sideband SST controllers. They
 coordinate tiles but are not payload packets on the mesh.
@@ -142,19 +152,15 @@ hardware time.
 
 ## Timing boundary
 
-QEMU executes RV64/RVV semantics. SST models issue cycles as:
+QEMU executes RV64/RVV instructions. SST charges one guest CPU cycle per
+retired instruction, including vector instructions. Instruction-cache misses,
+SPM accesses and device waits contribute additional elapsed time.
+This is an issue-accounting model, not a detailed out-of-order CPU pipeline.
 
-    max(ceil(retired_instructions / cpu_issue_width),
-        retired_vector_instructions)
-
-The scalar issue width is 1, 2, or 4; vector issue is limited to one
-instruction per CPU cycle. This is an issue-accounting model, not a detailed
-out-of-order CPU pipeline.
-
-Host batching changes host overhead, not modeled hardware capacity.
 Service cycles, queue cycles, and stall counters may overlap. They must not
 be summed and reported as elapsed runtime. Missing counters remain missing;
 they are not interpreted as measured zero.
 
-For implementation details, see architecture.md, vector-architecture.md,
-analog-isa.md, and timing-model.md.
+For startup and linker files, see [platform sources](../src/platform/README.md).
+For timing and limits, see [vector execution](vector-architecture.md),
+[analog instructions](analog-isa.md), and [cycle accounting](timing-model.md).

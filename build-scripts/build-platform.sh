@@ -94,7 +94,8 @@ build_tile() {
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 \
+        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "-Wl,-Map,${output_dir}/${image_name}.map" \
         "${output_dir}/crt0.o" \
         "${output_dir}/uart.o" \
@@ -105,7 +106,8 @@ build_tile() {
 
     entry="$(${READELF} --file-header "${elf}" | \
         awk '/Entry point address:/ { print $4 }')"
-    if [[ "${entry}" != "0x80000000" ]]; then
+    local expected_entry="0x90010000"
+    if [[ "${entry}" != "${expected_entry}" ]]; then
         echo "unexpected entry point for ${image_name}: ${entry}" >&2
         return 1
     fi
@@ -162,11 +164,6 @@ build_scratchpad_dma() {
         "${TEST_RESULTS_ROOT}/scratchpad-dma" \
         scratchpad-dma \
         "${PROJECT_ROOT}/tests/memory/scratchpad-dma/main.cpp"
-    build_tile \
-        "${TEST_RESULTS_ROOT}/scratchpad-dma" \
-        scratchpad-dma-invalid-macro \
-        "${PROJECT_ROOT}/tests/memory/scratchpad-dma/main.cpp" \
-        -DMITTENS_SCRATCHPAD_DMA_INVALID_MACRO=1
 }
 
 build_global_ram() {
@@ -193,14 +190,14 @@ build_global_ram_exact() {
     done
 }
 
-build_global_dma_macro_contention() {
-    local output_dir="${TEST_RESULTS_ROOT}/global-dma-macro-contention"
+build_global_dma_contention() {
+    local output_dir="${TEST_RESULTS_ROOT}/global-dma-contention"
     local tile_id
     for tile_id in 0 1; do
         build_tile \
             "${output_dir}" \
             "tile${tile_id}" \
-            "${PROJECT_ROOT}/tests/memory/global-dma-macro-contention/main.cpp" \
+            "${PROJECT_ROOT}/tests/memory/global-dma-contention/main.cpp" \
             "-DMITTENS_TILE_ID=${tile_id}"
     done
 }
@@ -430,7 +427,7 @@ case "${ACTION}" in
         build_runtime_library
         build_scratchpad_dma
         build_global_ram_exact
-        build_global_dma_macro_contention
+        build_global_dma_contention
         build_epoch_barrier
         build_analog_instructions
         build_analog_ops
@@ -451,7 +448,7 @@ case "${ACTION}" in
     scratchpad-dma) build_scratchpad_dma ;;
     global-ram) build_global_ram ;;
     global-ram-exact) build_global_ram_exact ;;
-    global-dma-macro-contention) build_global_dma_macro_contention ;;
+    global-dma-contention) build_global_dma_contention ;;
     epoch-barrier) build_epoch_barrier ;;
     analog-instructions) build_analog_instructions ;;
     analog-ops) build_analog_ops ;;
@@ -465,7 +462,7 @@ case "${ACTION}" in
     distributed-matvec) build_distributed_matvec ;;
     distributed-matvec-reverse) build_distributed_matvec_reverse ;;
     *)
-        echo "usage: $0 [all|hello|riscv-vector|cpu-timing-validation|qemu-ready-set|runtime-library|scratchpad-dma|global-ram|global-ram-exact|global-dma-macro-contention|epoch-barrier|analog-instructions|analog-ops|analog-timing-validation|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
+        echo "usage: $0 [all|hello|riscv-vector|cpu-timing-validation|qemu-ready-set|runtime-library|scratchpad-dma|global-ram|global-ram-exact|global-dma-contention|epoch-barrier|analog-instructions|analog-ops|analog-timing-validation|analog-mesh-2x2|analog-mesh-2x2-dual-array|analog-route-2x2|mesh-pair|mesh-3x3|mesh-pipeline|distributed-matvec|distributed-matvec-reverse]" >&2
         exit 2
         ;;
 esac

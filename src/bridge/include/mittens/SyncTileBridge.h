@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(26)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(27)
 #define MITTENS_SYNC_MEMORY_BATCH_CAPACITY UINT32_C(1024)
 #define MITTENS_SYNC_GLOBAL_DMA_BATCH_CAPACITY UINT32_C(8)
 #define MITTENS_SYNC_ANALOG_BATCH_CAPACITY UINT32_C(1024)
@@ -49,6 +49,9 @@ enum MittensSyncStopReason {
     // recorded guest instruction boundary; this stop is not itself a modeled
     // architectural event.
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO = 22,
+    MITTENS_SYNC_STOP_INSTRUCTION_FETCH = 23,
+    MITTENS_SYNC_STOP_INSTRUCTION_FENCE = 24,
+    MITTENS_SYNC_STOP_COUNT = 25,
 };
 
 enum MittensSyncEpochContribution {
@@ -72,6 +75,8 @@ enum MittensSyncEventFlags {
     // records. SST replays every physical request before collectively waiting
     // for their independently modeled completions.
     MITTENS_SYNC_EVENT_FLAG_GLOBAL_DMA_SUBMITS = 1U << 5,
+    // Memory records from one vector instruction, not cross-instruction batching.
+    MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY = 1U << 6,
 };
 
 enum MittensSyncMemoryFlags {

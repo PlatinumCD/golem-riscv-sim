@@ -23,13 +23,13 @@ for channels in 1 2; do
         "${OUTPUT_DIR}/channels-${channels}.log" >/dev/null
     grep -F "global RAM tile 1: PASS" \
         "${OUTPUT_DIR}/channels-${channels}.log" >/dev/null
-    grep -F "memory_backend=streaming" \
+    grep -F "SCRATCHPAD_BOOT tile=0 " \
         "${OUTPUT_DIR}/channels-${channels}.log" >/dev/null
-    grep -F "qemu_control_memory=16M" \
+    grep -F "SCRATCHPAD_BOOT tile=1 " \
         "${OUTPUT_DIR}/channels-${channels}.log" >/dev/null
     if grep -F "memory_requests=" "${OUTPUT_DIR}/channels-${channels}.log" |
         grep -Ev "memory_requests=0([[:space:]]|$)" >/dev/null; then
-        echo "streaming mode unexpectedly used MemHierarchy" >&2
+        echo "CPU unexpectedly used a separate data-memory interface" >&2
         exit 1
     fi
 done

@@ -4,19 +4,16 @@ from pathlib import Path
 
 import sst
 
-
 TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[1] / "support"))
 
 from mesh import build_mesh
-
 
 def required(name):
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(f"{name} must be set")
     return value
-
 
 source_count = int(required("MITTENS_TAIL_CONTENTION_SOURCES"))
 elf_directory = Path(required("MITTENS_FANOUT_ELF_DIRECTORY"))
@@ -41,7 +38,7 @@ build_mesh(
     tile_params={
         "memory": "16M",
         "cpu_clock": "1GHz",
-        "cpu_issue_width": 2,
+        "cpu_issue_width": 1,
         "sync_instruction_quantum": 1000,
         "profile_mode": "trace",
         "profile_output_directory": required("MITTENS_FANOUT_PROFILE"),
@@ -53,24 +50,13 @@ build_mesh(
             os.environ.get("MITTENS_FANOUT_RX_DMA_SETUP_CYCLES", "8")
         ),
         "rx_dma_queue_depth": 4,
-        "memory_init_batching": True,
-        "memory_init_bytes_per_cycle": 32,
-        "memory_init_latency_cycles": 2,
+
     },
-    memory_backend="memhierarchy",
-    mesh_router_backend="mittens" if int(os.environ.get("MITTENS_TEST_RX_STREAMS", "1")) > 1 else "merlin",
+    memory_backend="streaming",
+    mesh_router_backend="mittens",
     network_cell_words=1,
     network_buffer_cells=16,
     network_packet_words=16,
     mesh_link_width_bits=32,
     mesh_link_clock="1GHz",
-    memory_hierarchy={
-        "l1_size": "32KiB",
-        "l1_associativity": 4,
-        "cache_line_size": 64,
-        "l1_access_latency_cycles": 2,
-        "l1_clock": "1GHz",
-        "lower_memory_clock": "1GHz",
-        "lower_memory_access_time": "50ns",
-    },
 )

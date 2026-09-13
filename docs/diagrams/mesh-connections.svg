@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="644" viewBox="0 0 820 660" role="img" aria-labelledby="title desc">
+<title id="title">Tiles connected through a 3 by 3 mesh</title>
+<desc id="desc">Nine tiles, each with a network interface attached to its own router. Neighboring routers have links in both directions. A highlighted message travels from tile 0 east twice, then south twice, to tile 8. Intermediate tiles do not participate in forwarding.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#8193a8"/></marker>
+  <marker id="route-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b86513"/></marker>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; text-anchor: middle; fill: #233446; font-size: 16px; }
+    .link { fill: none; stroke: #a9b7c7; stroke-width: 1.8; marker-end: url(#arrow); }
+    .route { fill: none; stroke: #b86513; stroke-width: 3; marker-end: url(#route-arrow); }
+    .small { font-size: 13px; fill: #526477; }
+  </style>
+</defs>
+<rect width="820" height="660" fill="white"/>
+<text x="40" y="30" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:1px">3 × 3 MESH · EXAMPLE</text>
+<path class="route" d="M219 180 H410"/><path class="link" d="M411 190 H220"/>
+<path class="link" d="M190 209 V340"/><path class="link" d="M180 341 V210"/>
+<path class="route" d="M135 141 L157 160"/>
+<path class="link" d="M149 165 L127 146"/>
+<rect x="40" y="69" width="115" height="72" rx="9" fill="#e6f4f2" stroke="#73a9a1" stroke-width="1.5"/>
+<text x="97.5" y="95">Tile 0</text>
+<rect x="52" y="107" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="97.5" y="124" class="small">NIC</text>
+<rect x="153" y="163" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="185" y="191">R0</text>
+<text x="97.5" y="59" style="font-size:13px;fill:#38796f">Source</text>
+<path class="route" d="M479 180 H670"/><path class="link" d="M671 190 H480"/>
+<path class="link" d="M450 209 V340"/><path class="link" d="M440 341 V210"/>
+<path class="link" d="M395 141 L417 160"/>
+<path class="link" d="M409 165 L387 146"/>
+<rect x="300" y="69" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="357.5" y="95">Tile 1</text>
+<rect x="312" y="107" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="357.5" y="124" class="small">NIC</text>
+<rect x="413" y="163" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="445" y="191">R1</text>
+<path class="route" d="M710 209 V340"/><path class="link" d="M700 341 V210"/>
+<path class="link" d="M655 141 L677 160"/>
+<path class="link" d="M669 165 L647 146"/>
+<rect x="560" y="69" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="617.5" y="95">Tile 2</text>
+<rect x="572" y="107" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="617.5" y="124" class="small">NIC</text>
+<rect x="673" y="163" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="705" y="191">R2</text>
+<path class="link" d="M219 360 H410"/><path class="link" d="M411 370 H220"/>
+<path class="link" d="M190 389 V520"/><path class="link" d="M180 521 V390"/>
+<path class="link" d="M135 321 L157 340"/>
+<path class="link" d="M149 345 L127 326"/>
+<rect x="40" y="249" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="97.5" y="275">Tile 3</text>
+<rect x="52" y="287" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="97.5" y="304" class="small">NIC</text>
+<rect x="153" y="343" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="185" y="371">R3</text>
+<path class="link" d="M479 360 H670"/><path class="link" d="M671 370 H480"/>
+<path class="link" d="M450 389 V520"/><path class="link" d="M440 521 V390"/>
+<path class="link" d="M395 321 L417 340"/>
+<path class="link" d="M409 345 L387 326"/>
+<rect x="300" y="249" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="357.5" y="275">Tile 4</text>
+<rect x="312" y="287" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="357.5" y="304" class="small">NIC</text>
+<rect x="413" y="343" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="445" y="371">R4</text>
+<path class="route" d="M710 389 V520"/><path class="link" d="M700 521 V390"/>
+<path class="link" d="M655 321 L677 340"/>
+<path class="link" d="M669 345 L647 326"/>
+<rect x="560" y="249" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="617.5" y="275">Tile 5</text>
+<rect x="572" y="287" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="617.5" y="304" class="small">NIC</text>
+<rect x="673" y="343" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="705" y="371">R5</text>
+<path class="link" d="M219 540 H410"/><path class="link" d="M411 550 H220"/>
+<path class="link" d="M135 501 L157 520"/>
+<path class="link" d="M149 525 L127 506"/>
+<rect x="40" y="429" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="97.5" y="455">Tile 6</text>
+<rect x="52" y="467" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="97.5" y="484" class="small">NIC</text>
+<rect x="153" y="523" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="185" y="551">R6</text>
+<path class="link" d="M479 540 H670"/><path class="link" d="M671 550 H480"/>
+<path class="link" d="M395 501 L417 520"/>
+<path class="link" d="M409 525 L387 506"/>
+<rect x="300" y="429" width="115" height="72" rx="9" fill="#f5f7fb" stroke="#bcc8d6" stroke-width="1.5"/>
+<text x="357.5" y="455">Tile 7</text>
+<rect x="312" y="467" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="357.5" y="484" class="small">NIC</text>
+<rect x="413" y="523" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="445" y="551">R7</text>
+<path class="link" d="M655 501 L677 520"/>
+<path class="route" d="M669 525 L647 506"/>
+<rect x="560" y="429" width="115" height="72" rx="9" fill="#efebfa" stroke="#a394c3" stroke-width="1.5"/>
+<text x="617.5" y="455">Tile 8</text>
+<rect x="572" y="467" width="91" height="24" rx="4" fill="#e1eafa"/>
+<text x="617.5" y="484" class="small">NIC</text>
+<rect x="673" y="523" width="64" height="44" rx="7" fill="#e6effb" stroke="#8da7cf" stroke-width="1.5"/>
+<text x="705" y="551">R8</text>
+<text x="617.5" y="419" style="font-size:13px;fill:#78619d">Destination</text>
+<path class="route" d="M42 612 H83"/><text x="96" y="617" style="text-anchor:start;font-size:14px">Example message: tile 0 → tile 8</text>
+<text x="42" y="644" style="text-anchor:start;font-size:13px;fill:#526477">R = router · NIC = network interface · paired arrows = opposite directions</text>
+</svg>

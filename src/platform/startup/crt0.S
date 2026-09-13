@@ -10,7 +10,7 @@ _start:
     la gp, __global_pointer$
     .option pop
 
-    /* The stack grows down from the end of the tile's private RAM. */
+    /* The linker places the stack in the tile's private memory. */
     la sp, __stack_top
     andi sp, sp, -16
 

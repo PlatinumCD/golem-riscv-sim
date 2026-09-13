@@ -20,6 +20,7 @@ void helper_mittens_sync_memory_instruction(
 
 bool mittens_sync_available(void);
 bool mittens_sync_memory_timing_enabled(void);
+bool mittens_sync_instruction_fetch_timing_enabled(void);
 bool mittens_sync_memory_initialization_active(void);
 bool mittens_sync_scratchpad_contains(uint64_t address, uint64_t byte_count);
 void mittens_sync_memory_init_complete(void);
@@ -69,5 +70,8 @@ void mittens_sync_yield_memory_atomic(
     uint64_t program_counter,
     uint64_t return_address);
 void helper_mittens_sync_memory_fence(void);
+void helper_mittens_sync_instruction_fetch(uint64_t program_counter,
+                                           uint32_t instruction_length);
+void helper_mittens_sync_instruction_fence(void);
 
 #endif

@@ -1,6 +1,7 @@
 #pragma once
 #include "../execution/deviceSupport.h"
 #include "scratchpad/scratchpadTimingModel.h"
+#include "instructionCache.h"
 #include "../profiling/performanceProfile.h"
 
 namespace SST::Mittens
@@ -14,23 +15,9 @@ class MemoryAccessController final
         std::uint64_t executionId = 0;
         std::string phase = "runtime";
     };
-    // A prepared transport request is RAII-owned until send transfers it.
-    // prepare/send must not synchronously deliver a response.
-    struct PreparedRequest
-    {
-        virtual ~PreparedRequest() = default;
-        virtual std::uint64_t id() const noexcept = 0;
-        virtual void send() = 0;
-    };
     struct Host
     {
         std::function<Timing::Ticks()> now;
-        std::function<Context()> context;
-        std::function<std::unique_ptr<PreparedRequest>(std::uint64_t, std::uint32_t, bool)> prepare;
-        std::function<std::optional<QemuSyncEvent>()> pending;
-        std::function<bool()> hasMemoryReplay;
-        std::function<void(std::uint64_t, bool)> completeMemory;
-        std::function<bool()> retry;
     };
     struct Statistics
     {
@@ -56,20 +43,36 @@ class MemoryAccessController final
         : config_(std::move(config)), clock_(clock), scratchpadTimingModel_(std::move(scratchpad)),
           performanceProfile_(profile), output_(std::move(diagnostics)), host_(std::move(host))
     {
+        if (config_.scratchpadBoot)
+        {
+            if (!scratchpadTimingModel_)
+                throw std::invalid_argument("instruction cache requires scratchpad");
+            instructionCache_ = std::make_unique<InstructionCache>(
+                MITTENS_SCRATCHPAD_BASE,
+                InstructionCacheConfiguration{config_.instructionCacheBytes,
+                    config_.instructionCacheLineBytes, config_.instructionCacheWays,
+                    config_.instructionCacheHitCycles}, *scratchpadTimingModel_);
+        }
     }
     CpuDeviceResult executeCpuMemory(const CpuMemoryAction& action);
-    void onResponse(std::uint64_t requestId);
+    CpuDeviceResult executeInstruction(const CpuInstructionAction& action);
+    InstructionCacheStatistics instructionStatistics() const noexcept
+    {
+        return instructionCache_ ? instructionCache_->statistics() : InstructionCacheStatistics{};
+    }
+    std::uint64_t instructionStallCycles() const noexcept { return instructionStallCycles_; }
+    std::uint64_t instructionInvalidations() const noexcept { return instructionInvalidations_; }
     Statistics statistics() const noexcept
     {
         return statistics_;
     }
     std::size_t pendingCount() const noexcept
     {
-        return pendingMemoryRequests_.size();
+        return scratchpadAccessDeadline_ ? 1 : 0;
     }
     bool storesDrained() const noexcept
     {
-        return statistics_.outstandingMemoryWrites_ == 0;
+        return !scratchpadAccessDeadline_;
     }
     bool scratchpadAvailable() const noexcept
     {
@@ -90,9 +93,6 @@ class MemoryAccessController final
     }
 
   private:
-    bool memoryReadHasPendingWriteHazard(std::uint64_t address, std::uint32_t size) const noexcept;
-    std::uint64_t sendMemoryRequest(const CpuMemoryAction&);
-    bool issueMemoryRequest(const CpuMemoryAction&);
     Timing::Clock<Timing::Cpu> cpuDomain() const
     {
         return clock_;
@@ -104,35 +104,20 @@ class MemoryAccessController final
     TileConfiguration config_;
     Timing::Clock<Timing::Cpu> clock_;
     std::unique_ptr<ScratchpadTimingModel> scratchpadTimingModel_;
+    std::unique_ptr<InstructionCache> instructionCache_;
+    std::uint64_t instructionStallCycles_ = 0;
+    std::uint64_t instructionInvalidations_ = 0;
     PerformanceProfile& performanceProfile_;
     DeviceDiagnostics output_;
     Host host_;
     Statistics statistics_;
-    struct PendingMemoryRequest
-    {
-        std::uint64_t cpuStep = 0;
-        std::uint64_t issueTick = 0;
-        std::uint64_t address = 0;
-        std::uint64_t timingAddress = 0;
-        std::uint64_t programCounter = 0;
-        std::uint64_t returnAddress = 0;
-        std::uint32_t size = 0;
-        bool write = false;
-        std::uint32_t taskId = UINT32_MAX;
-        std::uint64_t executionId = 0;
-        std::string phase = "idle";
-    };
-
     struct ScratchpadAccessDeadline
     {
         std::uint64_t step;
         Timing::Ticks tick;
     };
     std::optional<ScratchpadAccessDeadline> scratchpadAccessDeadline_;
-    std::unordered_map<std::uint64_t, PendingMemoryRequest> pendingMemoryRequests_;
-    std::optional<std::uint64_t> blockingMemoryRequestId_;
-    std::uint64_t blockingMemoryStep_ = 0;
+    std::optional<ScratchpadAccessDeadline> instructionDeadline_;
 
-    std::unordered_set<std::uint64_t> cpuMemoryGroupRequestIds_;
 };
 } // namespace SST::Mittens

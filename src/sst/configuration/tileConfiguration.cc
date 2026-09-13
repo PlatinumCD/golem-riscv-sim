@@ -5,6 +5,7 @@
 #include <sst/core/output.h>
 #include <mittens/NICTileBridge.h>
 #include <algorithm>
+#include <stdexcept>
 
 namespace SST::Mittens
 {
@@ -21,6 +22,34 @@ bool isPowerOfTwo(std::uint32_t value)
 TileConfiguration TileConfiguration::read(SST::Params& params)
 {
     TileConfiguration config;
+    auto fixed = [&](const char* name, auto expected) {
+        using Value = decltype(expected);
+        if (params.find<Value>(name, expected) != expected)
+            throw std::invalid_argument(std::string("fixed execution setting: ") + name);
+    };
+    fixed("memory", std::string("16M"));
+    fixed("memory_backend", std::string("streaming"));
+    fixed("memory_init_batching", bool(false));
+    fixed("memory_access_batching", bool(false));
+    fixed("scratchpad_access_batching", bool(false));
+    fixed("scratchpad_access_run_compaction", bool(false));
+    fixed("memory_event_batching", bool(false));
+    fixed("global_dma_submit_batching", bool(false));
+    fixed("global_dma_macro_execution", bool(false));
+    fixed("analog_command_batching", bool(false));
+    fixed("memory_access_batch_records", std::uint32_t(16));
+    fixed("memory_init_bytes_per_cycle", std::uint32_t(32));
+    fixed("memory_init_latency_cycles", std::uint64_t(2));
+    fixed("memory_init_instruction_quantum", std::uint64_t(UINT64_C(67108864)));
+    fixed("network_tail_delivery", bool(true));
+    fixed("memory_init_barrier_tiles", std::uint32_t(0));
+    fixed("scratchpad_boot", bool(true));
+    fixed("scratchpad_enabled", bool(true));
+    fixed("qemu_ready_set_workers", std::uint32_t(1));
+    fixed("qemu_runtime_ready_set", bool(false));
+    fixed("qemu_local_lookahead", bool(false));
+    fixed("qemu_ready_set_independence_proof", std::string(""));
+
 #define MITTENS_READ(type, field, name, value, category, help, documented)                         \
     config.field = params.find<type>(name, value);
     MITTENS_TILE_PARAMETERS(MITTENS_READ)
@@ -33,6 +62,9 @@ TileConfiguration TileConfiguration::read(SST::Params& params)
 void TileConfiguration::validate(SST::Output& output_) const
 {
     const auto& config_ = *this;
+    if (!config_.scratchpadBoot || !config_.scratchpadEnabled || config_.memoryBackend != "streaming")
+        output_.fatal(CALL_INFO, -1,
+                      "only executable SPM with an instruction cache and streaming DMA is supported\n");
     if ((config_.meshWidth == 0) != (config_.meshHeight == 0))
     {
         output_.fatal(CALL_INFO, -1,
@@ -79,117 +111,32 @@ void TileConfiguration::validate(SST::Output& output_) const
         output_.fatal(CALL_INFO, -1, "tile %u has an empty memory setting\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    if (config_.memoryBackend != "native" && config_.memoryBackend != "memhierarchy" &&
-        config_.memoryBackend != "streaming")
-    {
-        output_.fatal(CALL_INFO, -1, "tile %u has unsupported memory_backend '%s'\n",
-                      static_cast<unsigned>(config_.tileId), config_.memoryBackend.c_str());
-    }
-    if (config_.memoryInitializationBatching && config_.memoryBackend != "memhierarchy" &&
-        config_.memoryBackend != "streaming")
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires memory_backend=memhierarchy or streaming when "
-                      "memory_init_batching is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryAccessBatching && config_.memoryBackend != "memhierarchy")
+    if (config_.scratchpadBoot &&
+        (!config_.scratchpadEnabled || config_.memoryBackend != "streaming" ||
+         config_.memoryInitializationBatching || config_.memoryAccessBatching ||
+         config_.scratchpadAccessBatching || config_.memoryEventBatching ||
+         config_.globalDMASubmitBatching || config_.globalDMAMacroExecution ||
+         config_.analogCommandBatching || config_.cpuIssueWidth != 1 ||
+         config_.qemuReadySetWorkers != 1 || config_.qemuRuntimeReadySet ||
+         config_.qemuLocalLookahead))
     {
         output_.fatal(CALL_INFO, -1,
-                      "tile %u requires memory_backend=memhierarchy when "
-                      "memory_access_batching is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
+                      "scratchpad_boot requires scratchpad_enabled, streaming memory, "
+                      "and unbatched single-issue execution without QEMU lookahead/ready sets\n");
     }
-    if (config_.scratchpadAccessBatching && !config_.scratchpadEnabled)
+    if (config_.scratchpadBoot &&
+        (!isPowerOfTwo(config_.instructionCacheBytes) ||
+         !isPowerOfTwo(config_.instructionCacheLineBytes) ||
+         !isPowerOfTwo(config_.instructionCacheWays) ||
+         config_.instructionCacheLineBytes < 4 ||
+         static_cast<std::uint64_t>(config_.instructionCacheLineBytes) *
+             config_.instructionCacheWays > config_.instructionCacheBytes ||
+         config_.instructionCacheLineBytes > config_.scratchpadBytes ||
+         config_.scratchpadBytes % config_.instructionCacheLineBytes != 0 ||
+         config_.instructionCacheHitCycles == 0))
     {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires scratchpad_enabled when "
-                      "scratchpad_access_batching is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
+        output_.fatal(CALL_INFO, -1, "invalid scratchpad instruction-cache geometry or latency\n");
     }
-    if (config_.scratchpadAccessRunCompaction && !config_.scratchpadAccessBatching)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires scratchpad_access_batching when "
-                      "scratchpad_access_run_compaction is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.globalDMASubmitBatching && !config_.scratchpadEnabled)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires scratchpad_enabled when "
-                      "global_dma_submit_batching is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.globalDMAMacroExecution &&
-        (!config_.scratchpadEnabled || config_.globalDMASubmitBatching))
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires scratchpad_enabled and disabled global DMA "
-                      "submit batching when global_dma_macro_execution is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryAccessBatchRecords == 0)
-    {
-        output_.fatal(CALL_INFO, -1, "tile %u requires memory_access_batch_records to be nonzero\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryCacheLineSize == 0 ||
-        (config_.memoryCacheLineSize & (config_.memoryCacheLineSize - 1)) != 0)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires memory_cache_line_size to be a "
-                      "power of two\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryStoreBufferEntries == 0 || config_.memoryStoreBufferEntries > 64)
-    {
-        output_.fatal(CALL_INFO, -1, "tile %u requires memory_store_buffer_entries in [1, 64]\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryLoadQueueEntries == 0 || config_.memoryLoadQueueEntries > 64)
-    {
-        output_.fatal(CALL_INFO, -1, "tile %u requires memory_load_queue_entries in [1, 64]\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryInitializationBytesPerCycle == 0)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires memory_init_bytes_per_cycle to be "
-                      "nonzero\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryInitializationBatching && config_.memoryInitializationInstructionQuantum == 0)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires memory_init_instruction_quantum to be "
-                      "nonzero when initialization batching is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryInitializationInstructionQuantum > static_cast<std::uint64_t>(INT64_MAX))
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u has an out-of-range memory_init_instruction_quantum\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.memoryInitializationBarrierTiles > config_.networkSize)
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u has memory_init_barrier_tiles=%u larger than "
-                      "network_size=%u\n",
-                      static_cast<unsigned>(config_.tileId),
-                      static_cast<unsigned>(config_.memoryInitializationBarrierTiles),
-                      static_cast<unsigned>(config_.networkSize));
-    }
-
-    if (config_.epochBarrierEpochs != 0 && config_.memoryBackend != "streaming")
-    {
-        output_.fatal(
-            CALL_INFO, -1,
-            "tile %u requires memory_backend=streaming when the modeled epoch barrier is enabled\n",
-            static_cast<unsigned>(config_.tileId));
-    }
-
     if (config_.launchMode != "disabled" && config_.launchMode != "managed")
     {
         output_.fatal(CALL_INFO, -1, "tile %u has unsupported launch_mode '%s'\n",
@@ -213,9 +160,9 @@ void TileConfiguration::validate(SST::Output& output_) const
         output_.fatal(CALL_INFO, -1, "tile %u has an empty cpu_clock\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    if (config_.cpuIssueWidth != 1 && config_.cpuIssueWidth != 2 && config_.cpuIssueWidth != 4)
+    if (config_.cpuIssueWidth != 1)
     {
-        output_.fatal(CALL_INFO, -1, "tile %u requires cpu_issue_width to be 1, 2, or 4\n",
+        output_.fatal(CALL_INFO, -1, "tile %u requires single-issue execution (cpu_issue_width=1)\n",
                       static_cast<unsigned>(config_.tileId));
     }
     if (config_.syncInstructionQuantum == 0)
@@ -223,54 +170,10 @@ void TileConfiguration::validate(SST::Output& output_) const
         output_.fatal(CALL_INFO, -1, "tile %u requires sync_instruction_quantum to be nonzero\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    if (config_.qemuReadySetWorkers == 0)
-    {
-        output_.fatal(CALL_INFO, -1, "tile %u requires qemu_ready_set_workers to be nonzero\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
     if (config_.qemuCaptureSpinMicroseconds > 1000000)
     {
         output_.fatal(CALL_INFO, -1,
                       "tile %u requires qemu_capture_spin_us to be at most 1000000\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    const bool validReadySetProof =
-        config_.qemuReadySetIndependenceProof.size() == 64 &&
-        std::all_of(config_.qemuReadySetIndependenceProof.begin(),
-                    config_.qemuReadySetIndependenceProof.end(), [](char digit)
-                    { return (digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f'); });
-    if (config_.qemuReadySetWorkers > 1 &&
-        (config_.launchMode != "managed" || !config_.memoryInitializationBatching ||
-         config_.memoryInitializationBarrierTiles <= 1 ||
-         config_.qemuReadySetWorkers > config_.memoryInitializationBarrierTiles ||
-         !validReadySetProof))
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires managed launch, memory_init_batching, "
-                      "memory_init_barrier_tiles > 1, workers no larger than "
-                      "the barrier, and a lowercase SHA-256 frozen independence "
-                      "proof when "
-                      "qemu_ready_set_workers > 1\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.qemuRuntimeReadySet &&
-        (config_.qemuReadySetWorkers <= 1 || config_.memoryInitializationBarrierTiles <= 1 ||
-         !validReadySetProof))
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires workers > 1, more than one registered tile, "
-                      "and a frozen independence proof when "
-                      "qemu_runtime_ready_set is enabled\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-    if (config_.qemuLocalLookahead &&
-        (config_.qemuReadySetWorkers <= 1 || config_.memoryInitializationBarrierTiles <= 1 ||
-         !config_.scratchpadAccessBatching || !validReadySetProof || config_.qemuRuntimeReadySet))
-    {
-        output_.fatal(CALL_INFO, -1,
-                      "tile %u requires workers > 1, more than one registered tile, "
-                      "scratchpad batching, a frozen independence proof, and runtime "
-                      "ready-set execution disabled when qemu_local_lookahead is enabled\n",
                       static_cast<unsigned>(config_.tileId));
     }
     if (config_.globalRAMBytes == 0 || config_.globalRAMBytes > INT64_MAX)
@@ -334,12 +237,11 @@ void TileConfiguration::validate(SST::Output& output_) const
                       static_cast<unsigned>(config_.tileId),
                       static_cast<unsigned>(MITTENS_BRIDGE_BURST_QUEUE_CAPACITY));
     }
-    if (config_.transmitDMAFIFOBytes != 0 &&
-        (config_.transmitDMAFIFOBytes % sizeof(std::uint32_t) != 0 ||
-         config_.transmitDMAFIFOBytes < config_.scratchpadDMABytesPerCycle))
+    if (config_.transmitDMAFIFOBytes % sizeof(std::uint32_t) != 0 ||
+        config_.transmitDMAFIFOBytes < config_.scratchpadDMABytesPerCycle)
     {
         output_.fatal(CALL_INFO, -1,
-                      "tile %u requires tx_dma_fifo_bytes to be zero or a word-aligned value at "
+                      "tile %u requires tx_dma_fifo_bytes to be a word-aligned value at "
                       "least one scratchpad DMA beat\n",
                       static_cast<unsigned>(config_.tileId));
     }

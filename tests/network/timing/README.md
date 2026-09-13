@@ -1,52 +1,28 @@
-# Merlin network timing regression
+# Wormhole network timing regression
 
-This suite validates a 32-bit, 1 GHz Merlin mesh without QEMU,
-runtime, receive-DMA, or application work inside the measured interval.
-Its formulas apply to this Merlin configuration, not the Mittens wormhole router.
-SST-only probes inject packets at the same exact simulation cycle and record
-both Merlin's head-flit callback and the cycle when the packet's tail has
-crossed the destination link. The latter is the point at which a Mittens tile
-may expose the burst to its NIC and receive-DMA path.
+SST-only probes check the same router and NIC used by managed tiles, without
+CPU, scratchpad or receive-DMA work in the measured interval.
 
-The suite covers:
+The sweep covers 1/8/64/512-word packets over one hop, 64-word packets over
+1/2/4 hops, and 1/2/4 simultaneous sources sharing a destination's local output.
+Links are 32 bits at 1 GHz, with 10-cycle propagation, three-cycle router
+head pipelines, and 4096-flit buffers to isolate serialization from credit stalls.
 
-- 1, 8, 64, and 512-word serialization over one hop;
-- 64-word transfers over 1, 2, and 4 Manhattan hops; and
-- 1, 2, and 4 simultaneous one-hop sources contending for one destination
-  router's local output, using both 1-word and 64-word packets.
-
-For this test's 32-bit-per-cycle links, 1 GHz clock, 10-cycle SST link
-latency, and default Merlin router pipeline, the head of an uncontended
-packet arrives after:
+For H Manhattan hops and W payload words, the prediction in link cycles is:
 
 ```text
-head_cycles = 35 + 12 * (Manhattan_hops - 1)
-packet_cycles = payload_words
-completion_cycles = head_cycles + packet_cycles - 1
+uncontended completion = 36 + 13*(H - 1) + W - 1
+one-hop incast completion[rank] = 36 + (rank + 1)*W - 1
 ```
 
-The one-hop path includes three configured 10-cycle SST links and five Merlin
-endpoint/router pipeline cycles. Every additional Manhattan hop adds one
-10-cycle physical link and two router pipeline cycles. For equal-size
-one-hop incast packets, sorted arrivals and completions are predicted by:
+One hop crosses three links and two routers. Each extra hop adds one link
+and one router. Wormhole forwarding pipelines the remaining words; competing
+packets serialize on the destination output. Rank is zero-based arrival order.
 
-```text
-head[rank] = 35 + rank * packet_cycles
-completion[rank] = 35 + (rank + 1) * packet_cycles - 1
-```
+The NIC callback marks **tail delivery**, not first-flit arrival. Both recorded
+delivery and completion must match the prediction exactly. Router credit and
+arbitration stalls are separate resource counters, not additional elapsed time.
 
-The analyzer requires exact agreement for both head and completion timestamps,
-not merely monotonic scaling.
-
-Run:
-
-```bash
-./tests/network/timing/run-test.sh
-```
-
-The test produces raw receipts, router statistics, logs, a trial manifest,
-and the joined predicted-versus-measured table under:
-
-```text
-tests/results/network-timing-validation/
-```
+Run `bash tests/network/timing/run-test.sh`. Receipts, counters, the trial
+manifest and predicted-versus-measured table go to
+`tests/results/network-timing-validation/`, or the suite runner's isolated case.

@@ -40,7 +40,7 @@ require_packet_count() {
         -v port="${port}" \
         -v expected="${expected}" '
             $1 == router &&
-            $2 == "send_packet_count" &&
+            $2 == "packets_forwarded" &&
             $3 == port {
                 found = 1
                 total += $7
@@ -90,13 +90,13 @@ run_backend() {
     fi
 
     # Four float32 words cross each direct neighbor link in the pipeline.
-    require_packet_count "${statistics}" router_0_0 port0 4
-    require_packet_count "${statistics}" router_1_0 port2 4
-    require_packet_count "${statistics}" router_1_1 port1 4
+    require_packet_count "${statistics}" router_0_0 east 4
+    require_packet_count "${statistics}" router_1_0 south 4
+    require_packet_count "${statistics}" router_1_1 west 4
 
     # Tile 2 returns the four-word final vector north to tile 0.
-    require_packet_count "${statistics}" router_0_1 port3 4
-    require_packet_count "${statistics}" router_0_0 port4 4
+    require_packet_count "${statistics}" router_0_1 north 4
+    require_packet_count "${statistics}" router_0_0 local0 4
 }
 
 run_backend native

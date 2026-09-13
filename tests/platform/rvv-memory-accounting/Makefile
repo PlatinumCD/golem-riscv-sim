@@ -18,5 +18,5 @@ $(OUTPUT_DIR)/exit.o: $(PLATFORM_STARTUP_ROOT)/platform-exit.cpp | $(OUTPUT_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 $(OUTPUT_DIR)/kernel%.o: $(TEST_DIR)/main.cpp | $(OUTPUT_DIR)
 	$(CXX) $(CXXFLAGS) -DKERNEL=$* -c $< -o $@
-$(OUTPUT_DIR)/kernel%.elf: $(OUTPUT_DIR)/kernel%.o $(COMMON) $(PLATFORM_STARTUP_ROOT)/tile.ld
-	$(CXX) $(FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none -Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld $(COMMON) $< -o $@
+$(OUTPUT_DIR)/kernel%.elf: $(OUTPUT_DIR)/kernel%.o $(COMMON) $(PLATFORM_STARTUP_ROOT)/scratchpad.ld
+	$(CXX) $(FLAGS) -nostdlib -nostartfiles -nodefaultlibs -fuse-ld=lld -Wl,--build-id=none $(TEST_SPM_LINK_FLAGS) -Wl,-T,$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(COMMON) $< -o $@

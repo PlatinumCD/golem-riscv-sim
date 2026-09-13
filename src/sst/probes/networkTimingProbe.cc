@@ -40,7 +40,7 @@ NetworkTimingProbe::NetworkTimingProbe(
     outputPath_(params.find<std::string>("output_path", "")),
     linkWidthBits_(
         params.find<std::uint32_t>("link_width_bits", 32)),
-    tailDelivery_(params.find<bool>("tail_delivery", false)),
+    tailDelivery_(params.find<bool>("tail_delivery", true)),
     timeoutCycles_(
         params.find<std::uint64_t>("timeout_cycles", 100000)),
     output_(
@@ -149,7 +149,7 @@ void NetworkTimingProbe::init(unsigned phase)
             output_.fatal(
                 CALL_INFO,
                 -1,
-                "configured endpoint %u received Merlin ID %lld\n",
+                "configured endpoint %u received network ID %lld\n",
                 static_cast<unsigned>(endpointId_),
                 static_cast<long long>(actual));
         }
@@ -169,7 +169,7 @@ void NetworkTimingProbe::setup()
         output_.fatal(
             CALL_INFO,
             -1,
-            "endpoint %u did not receive a Merlin network ID\n",
+            "endpoint %u did not receive a network ID\n",
             static_cast<unsigned>(endpointId_));
     }
     signalCompletionIfReady();
@@ -307,7 +307,7 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
                 static_cast<unsigned>(source));
         }
 
-        const std::uint64_t headArrivalTick = getCurrentSimCycle();
+        const std::uint64_t deliveryTick = getCurrentSimCycle();
         const std::uint64_t transferCycles = tailDelivery_
             ? 0
             : divideRoundUp(
@@ -327,9 +327,9 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
         const std::uint64_t transferTicks =
             transferCycles * linkPeriod;
         const std::uint64_t startTick = tailDelivery_
-            ? headArrivalTick
+            ? deliveryTick
             : std::max(
-                  headArrivalTick,
+                  deliveryTick,
                   nextCompletionAvailableTick_);
         if (startTick >
             std::numeric_limits<std::uint64_t>::max() -
@@ -342,18 +342,18 @@ bool NetworkTimingProbe::handleReceive(int virtualNetwork)
         }
         nextCompletionAvailableTick_ = startTick + transferTicks;
         const std::uint64_t completionTick = tailDelivery_
-            ? headArrivalTick
+            ? deliveryTick
             : nextCompletionAvailableTick_ - linkPeriod;
         const std::uint64_t completionDelayCycles =
             divideRoundUp(
-                completionTick - headArrivalTick,
+                completionTick - deliveryTick,
                 linkPeriod);
         pendingReceipts_.push_back(Receipt{
             source,
             endpointId_,
             static_cast<std::uint32_t>(actualWords),
             metadata.injectionTick,
-            headArrivalTick,
+            deliveryTick,
             completionTick,
         });
         if (receipts_.size() + pendingReceipts_.size() >
@@ -435,14 +435,14 @@ void NetworkTimingProbe::writeReceipts()
     }
     stream
         << "source,destination,payload_words,injection_tick,"
-           "head_arrival_tick,completion_tick,latency_ticks\n";
+           "delivery_tick,completion_tick,latency_ticks\n";
     for (const Receipt& receipt : receipts_) {
         stream
             << receipt.source << ','
             << receipt.destination << ','
             << receipt.payloadWords << ','
             << receipt.injectionTick << ','
-            << receipt.headArrivalTick << ','
+            << receipt.deliveryTick << ','
             << receipt.completionTick << ','
             << (receipt.completionTick - receipt.injectionTick)
             << '\n';

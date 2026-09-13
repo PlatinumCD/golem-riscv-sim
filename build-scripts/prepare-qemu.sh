@@ -122,6 +122,15 @@ apply_qemu_patch_once \
 apply_qemu_patch_once \
     "${PATCH_DIR}/0018-precise-fence-and-compressed-boundaries.patch" \
     "End the TB at every yielding instruction, including FENCE."
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0019-scratchpad-boot.patch" \
+    "static void virt_boot_from_scratchpad"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0020-instruction-fetch-timing.patch" \
+    "gen_helper_mittens_sync_instruction_fetch("
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0021-instruction-local-vector-transactions.patch" \
+    "gen_helper_mittens_sync_vector_memory_end();"
 
 git -C "${SOURCE}" diff --check
 echo "prepared QEMU source: ${SOURCE}"

@@ -8,13 +8,11 @@ TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[3] / "tests/support"))
 from mesh import build_mesh
 
-
 def required(name):
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(f"{name} must be set")
     return value
-
 
 pattern = int(os.environ.get("MITTENS_FANOUT_PATTERN", "0"))
 active_by_pattern = {
@@ -58,15 +56,14 @@ build_mesh(
             "MITTENS_TX_FANOUT_SPM_BYTES", "16384")),
         "scratchpad_banks": 8, "scratchpad_read_ports": 1,
         "scratchpad_write_ports": 1, "scratchpad_access_width_bits": 256,
-        "scratchpad_latency_cycles": 1, "scratchpad_access_batching": True,
-        "scratchpad_access_run_compaction": True,
+        "scratchpad_latency_cycles": 1,
+
         "rx_dma_width_bits": 256, "rx_dma_setup_cycles": 8,
-        "rx_dma_queue_depth": 4, "memory_init_batching": True,
+        "rx_dma_queue_depth": 4,
         "tx_dma_streams": tx_streams,
         "tx_dma_fifo_bytes": int(os.environ.get(
             "MITTENS_TX_DMA_FIFO_BYTES", "128")),
-        "memory_init_instruction_quantum": 1000000,
-        "memory_init_bytes_per_cycle": 32, "memory_init_latency_cycles": 2,
+
         "profile_mode": "summary",
         "profile_output_directory": required("MITTENS_TX_FANOUT_PROFILE"),
         "task_trace_directory": required("MITTENS_TX_FANOUT_TASKS"),

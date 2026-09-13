@@ -9,29 +9,33 @@ to the controllers below.
 | configuration/ | Read, validate, and export machine settings |
 | execution/ | QEMU grants, instruction accounting, replay, and CPU wakeups |
 | bridge/ | Host shared-memory transport |
-| memory/ | Scratchpad arbitration and global RAM |
+| memory/ | Scratchpad arbitration, instruction cache, boot images, and global RAM |
 | network/ | TX/RX controllers, DMA, NIC, and wormhole router |
 | analog/ | Command queues, shared analog link, and numerical backends |
 | profiling/ | Counters, task traces, and measurement output |
+| synchronization/ | Sideband epoch coordination |
 | tile/ | SST component lifecycle and controller wiring |
+| probes/ | Synthetic requesters used by component tests |
 | tests/ | Component correctness tests |
 
 ## Execution
 
 With `launch_mode=managed`, a tile launches one QEMU process. SST grants
 instruction budgets and processes the reported memory and device boundaries
-at their modeled times. Scalar issue width is configurable; vector issue
-remains limited to one instruction per cycle.
+at their modeled times. Executable-SPM execution uses single issue;
+vector issue remains limited to one instruction per cycle.
 
-Batching reduces host handshakes. It must preserve guest instruction counts,
-memory operations, and device ordering. Host worker count is not simulated CPU
-bandwidth. See [execution timing](execution/TIMING.md).
+Execution is conservative and single-issue; host parallelism does not multiply
+the modeled CPU bandwidth.
+See [execution control and clocks](execution/README.md).
 
 ## Memory and network
 
-Scratchpad CPU accesses and TX/RX DMA use the same bank/port timing model.
-Ordinary memory supports native, StandardMem-backed, and streaming modes;
-QEMU owns functional guest bytes.
+All managed programs execute from scratchpad.
+Code, data and stack occupy SPM; instructions pass through an 8 KiB cache.
+Cache fills, CPU data accesses and DMA use the common SPM arbiter;
+the CPU waits for the modeled boot DMA before starting. See
+[boot and cache configuration](../../docs/architecture.md#scratchpad-backed-instruction-cache).
 
 The wormhole router uses XY routing and finite credited buffers. TX and RX
 each support 1, 2, or 4 local lanes. These lanes share the four physical

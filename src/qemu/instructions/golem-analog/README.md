@@ -19,11 +19,10 @@ fixed physical array with zeros outside that valid rectangle. A zero row and
 zero column retain the original full-physical-matrix wire form; only the
 compact form is emitted by current compiler-generated programs.
 
-During the one-time managed-QEMU memory-initialization interval, the helper
-copies a compact matrix snapshot in one host operation and charges its exact
-guest byte count through the normal aggregate memory-initialization timing
-path. Outside initialization it retains the ordinary scalar guest loads, so
-runtime-visible memory accesses are not bypassed.
+The default SPM boot path disables aggregate initialization batching. The
+helper uses timed scalar guest loads to obtain the matrix and input vector;
+the later analog transfer is a separate resource cost. A compact matrix
+changes the number of transferred words, not the configured array geometry.
 
 The integration patch adds the instruction patterns to
 `target/riscv/insn32.decode`, declares the TCG helper, and registers the

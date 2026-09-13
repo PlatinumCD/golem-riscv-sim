@@ -22,6 +22,10 @@ libmittens_la_SOURCES = \
 	execution/uniqueFileDescriptor.h \
 	memory/memoryAccessController.h \
 	memory/memoryAccessController.cc \
+	memory/instructionCache.h \
+	memory/instructionCache.cc \
+	memory/scratchpadBootImage.h \
+	memory/scratchpadBootImage.cc \
 	analog/analogController.h \
 	analog/analogController.cc \
 	memory/globalDMAClient.h \

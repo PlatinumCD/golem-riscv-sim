@@ -77,6 +77,11 @@ class GlobalDMAEvent final : public SST::Event
     std::uint32_t requestFlags() const noexcept { return requestFlags_; }
     bool completion() const noexcept { return completion_; }
 
+    // Loader reads are already seeded, not waiting for an application producer.
+    // This marker is internal to SST and is never set by a guest descriptor.
+    bool bootLoad() const noexcept { return bootLoad_; }
+    void markBootLoad() noexcept { bootLoad_ = true; }
+
     void markCompletion() noexcept { completion_ = true; }
 
     void serialize_order(
@@ -93,9 +98,11 @@ class GlobalDMAEvent final : public SST::Event
         SST_SER(direction_);
         SST_SER(requestFlags_);
         SST_SER(completion_);
+        SST_SER(bootLoad_);
     }
 
   private:
+    bool bootLoad_ = false;
     GlobalDMAEvent() = default;
 
     std::uint32_t tileId_ = 0;

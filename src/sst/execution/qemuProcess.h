@@ -19,17 +19,6 @@ struct QemuConfiguration {
     bool riscvVectorEnabled = true;
     std::uint32_t riscvVectorLengthBits = 256;
     std::uint32_t riscvVectorElementBits = 64;
-    bool memoryTimingEnabled = false;
-    bool memoryInitializationBatching = false;
-    bool memoryAccessBatching = false;
-    bool scratchpadAccessBatching = false;
-    bool scratchpadAccessRunCompaction = false;
-    bool memoryEventBatching = false;
-    bool globalDMASubmitBatching = false;
-    bool globalDMAMacroExecution = false;
-    bool analogCommandBatching = false;
-    std::uint32_t memoryAccessBatchRecords = 16;
-    bool scratchpadEnabled = false;
     std::uint64_t scratchpadBase = MITTENS_SCRATCHPAD_BASE;
     std::uint64_t scratchpadBytes = UINT64_C(256) * 1024;
     int syncBridgeFileDescriptor = -1;

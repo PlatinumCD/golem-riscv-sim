@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="732" viewBox="0 0 940 860" role="img" aria-labelledby="title desc">
-  <title id="title">Single tile, network DMA, and shared main memory</title>
-  <desc id="desc">The processor shares a banked scratchpad with TX DMA, RX DMA, and global-memory DMA. TX DMA feeds bounded send FIFOs; receive queues feed RX DMA. The network interface connects to an external mesh router. Global-memory DMA connects separately to a shared memory controller and main memory, bypassing the mesh.</desc>
+  <title id="title">Executable-scratchpad tile, instruction cache, and memory paths</title>
+  <desc id="desc">Code, constants, data and stack occupy a 256 KiB banked scratchpad. Instructions reach the processor through an 8 KiB instruction cache; scalar and vector data accesses go directly to the scratchpad. Cache fills share its banks with TX DMA, RX DMA and global-memory DMA. The NIC connects to an external mesh router. Shared main memory uses a separate DMA controller, bypassing the mesh. Shown capacities are configurable defaults.</desc>
   <defs>
     <marker id="end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M 1 1 L 9 5 L 1 9 Z" fill="#526477"/>
@@ -25,6 +25,7 @@
   <rect width="940" height="860" fill="#fff"/>
   <rect x="24" y="20" width="610" height="591" rx="16" fill="#f8fafc" stroke="#c5ced8" stroke-width="1.5"/>
   <text x="49" y="49" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:2px">TILE</text>
+  <text x="610" y="49" class="small" style="text-anchor:end">Default capacities</text>
 
   <rect class="box compute" x="85" y="62" width="325" height="143" rx="9"/>
   <text x="247" y="86">RISC-V processor</text>
@@ -42,16 +43,22 @@
   <text x="531" y="118">Analog arrays</text>
   <text x="531" y="145" class="small">Optional</text>
 
+  <rect class="box compute" x="453" y="179" width="157" height="30" rx="6"/>
+  <text x="531" y="200" style="font-size:16px">8 KiB I-cache</text>
+  <path class="wire" d="M 531 223 V 211"/>
+  <path class="wire" d="M 450 194 H 431 V 184 H 413"/>
+
   <path class="wire both" d="M 247 207 V 222"/>
   <rect x="85" y="225" width="525" height="105" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
-  <text x="347" y="257">Scratchpad</text>
-  <rect class="box" x="105" y="276" width="126" height="34" rx="4"/>
-  <rect class="box" x="245" y="276" width="126" height="34" rx="4"/>
-  <rect class="box" x="463" y="276" width="126" height="34" rx="4"/>
-  <text x="168" y="299" class="small">Bank 0</text>
-  <text x="308" y="299" class="small">Bank 1</text>
-  <text x="416" y="299">…</text>
-  <text x="526" y="299" class="small">Last bank</text>
+  <text x="347" y="250">Scratchpad · 256 KiB</text>
+  <text x="347" y="271" class="small">Code · constants · data · stack</text>
+  <rect class="box" x="105" y="284" width="126" height="30" rx="4"/>
+  <rect class="box" x="245" y="284" width="126" height="30" rx="4"/>
+  <rect class="box" x="463" y="284" width="126" height="30" rx="4"/>
+  <text x="168" y="305" class="small">Bank 0</text>
+  <text x="308" y="305" class="small">Bank 1</text>
+  <text x="416" y="305">…</text>
+  <text x="526" y="305" class="small">Bank 7</text>
 
   <path class="wire" d="M 162 331 V 368"/>
   <path class="wire" d="M 362 368 V 332"/>

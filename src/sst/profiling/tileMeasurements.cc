@@ -102,25 +102,6 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         static_cast<unsigned long long>(data.analog.inputWords),
         static_cast<unsigned long long>(data.analog.outputWords));
 
-    output.verbose(CALL_INFO, 1, 0,
-                   "MITTENS_MEMORY_CONCURRENCY tile=%u load_queue_entries=%u "
-                   "store_buffer_entries=%u "
-                   "max_store_buffer_occupancy=%llu store_buffer_full_events=%llu "
-                   "max_outstanding_requests=%llu max_outstanding_reads=%llu "
-                   "vector_request_groups=%llu vector_group_requests=%llu "
-                   "scalar_request_groups=%llu scalar_group_requests=%llu\n",
-                   static_cast<unsigned>(data.configuration.tileId),
-                   static_cast<unsigned>(data.configuration.memoryLoadQueueEntries),
-                   static_cast<unsigned>(data.configuration.memoryStoreBufferEntries),
-                   static_cast<unsigned long long>(data.memory.maximumStoreBufferOccupancy_),
-                   static_cast<unsigned long long>(data.memory.memoryStoreBufferFullEvents_),
-                   static_cast<unsigned long long>(data.memory.maximumOutstandingMemoryRequests_),
-                   static_cast<unsigned long long>(data.memory.maximumOutstandingMemoryReads_),
-                   static_cast<unsigned long long>(data.memory.vectorMemoryRequestGroups_),
-                   static_cast<unsigned long long>(data.memory.vectorMemoryGroupRequests_),
-                   static_cast<unsigned long long>(data.memory.scalarMemoryRequestGroups_),
-                   static_cast<unsigned long long>(data.memory.scalarMemoryGroupRequests_));
-
     const ScratchpadTimingStatistics scratchpad = data.scratchpad;
     output.verbose(
         CALL_INFO, 1, 0,

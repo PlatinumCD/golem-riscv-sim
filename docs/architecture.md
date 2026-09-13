@@ -1,8 +1,9 @@
 # System architecture
 
-Golem models a two-dimensional mesh of programmable tiles. Each tile has a
-RISC-V hart with RVV support, configurable local memory, and network DMA.
-Analog matrix-compute arrays are optional.
+This project models a two-dimensional mesh of programmable tiles. Each tile
+executes RISC-V/RVV code from its scratchpad through an instruction cache.
+The same scratchpad holds working data and the stack. DMA moves data between
+tiles or between a tile and shared main memory. Analog arrays are optional.
 
 The architecture is parameterized. A simulation selects tile count, memory
 capacity, clocks, link widths, and DMA concurrency. Those settings must
@@ -13,13 +14,18 @@ are source defaults, not a prescribed deployment.** Builder arguments configure
 the connected system; tile, router, NIC and controller parameters configure
 their respective SST components. Those namespaces are not interchangeable.
 
+The default execution path uses 256 KiB SPM, an 8 KiB instruction cache,
+single-issue CPU timing, and explicit shared-memory DMA. It has no data cache,
+shared L2, or automatic paging. Host-side QEMU backing is not additional memory
+available to the program.
+
 | Component | Scope | Responsibility |
 |---|---|---|
 | [Mesh](#mesh-network) | Deployment | Tile locations, links, width and propagation delay |
 | [Router](#router) | One per mesh location | Routing, arbitration, buffering and backpressure |
 | [NIC](#network-interface-nic) | One per active tile | Local injection/ejection and packet queues |
 | [CPU and RVV](#cpu-and-rvv) | One hart per active tile | Guest execution and instruction issue |
-| [SPM](#scratchpad) | Private to each enabled tile | Local storage and bank/port service |
+| [SPM](#scratchpad) | Private to each tile | Code/data storage and bank/port service |
 | [TX/RX DMA](#tx-and-rx-dma) | Tile-local lanes | Transfers between memory and the NIC |
 | [Global RAM](#shared-global-ram-and-dma) | Deployment | Explicit shared-memory service and readiness |
 | [Analog arrays](#analog-accelerator-path) | Optional, per tile | Matrix computation and analog data transfers |
@@ -28,29 +34,13 @@ their respective SST components. Those namespaces are not interchangeable.
 
 ## One tile
 
-The principal local-memory and communication path is:
-
-```text
-                  RISC-V hart + RVV
-                          ↕
-                 Private banked SPM
-                    ↙           ↖
-               TX DMA           RX DMA
-                  ↓               ↑
-               TX FIFO       Receive queues
-                  ↓               ↑
-                  Network interface
-                          ↕
-                      Mesh router
-                    ↕   ↕   ↕   ↕
-                    N   E   S   W
-```
+![Tile components and memory paths](diagrams/single-tile.svg)
 
 SPM means scratchpad memory: software-managed storage, not a cache.
 A buffer is a range of addresses allocated within that storage; allocating
 another buffer does not add banks or ports.
 
-Optional global-memory DMA also accesses the scratchpad. Optional analog
+Global-memory DMA loads the boot image and transfers application data. Optional analog
 arrays have their own command queues and a shared tile-local analog link.
 
 ## Mesh network
@@ -66,7 +56,6 @@ Configure the system with these **[`build_mesh()` arguments](../tests/support/me
 | `width`, `height` | Required | Columns and rows; addressable locations = width × height |
 | `active_tiles` | All locations | Tile IDs that run guest programs |
 | `images`, `qemu_path` | Required | Guest images and QEMU executable |
-| `mesh_router_backend` | `"merlin"` | `"mittens"` selects the Golem wormhole router/NIC below |
 | `mesh_link_width_bits` | `32` | Width of each directed physical link; positive multiple of 32 bits |
 | `mesh_link_clock` | `"1GHz"` | Router/NIC transfer clock |
 | `mesh_link_latency` | `"10ns"` | SST link delay on cardinal and local NIC–router connections |
@@ -74,10 +63,15 @@ Configure the system with these **[`build_mesh()` arguments](../tests/support/me
 | `network_buffer_cells` | `16` | Endpoint buffer sizing in cells |
 | `network_packet_words` | Derived; `16` with defaults | Maximum request words; must fit selected endpoint/router/NIC buffers |
 | `tile_params` | `{}` | Tile settings: CPU, SPM, DMA, analog and diagnostics |
+| `global_memory` | Controller defaults | Shared-memory capacity, channels, queues and timing |
 
-Select **`mesh_router_backend="mittens"` explicitly** for the router behavior
-described here. The shared builder defaults to Merlin, a separate supported
-backend. Link propagation delay is distinct from router pipeline latency.
+The builder enables scratchpad boot, uses 256 KiB SPM unless a capacity is
+supplied, and connects the shared-memory controller needed for boot. It rejects
+L1/L2 data-hierarchy settings and non-SPM execution. Code must be linked for the
+configured SPM; changing the simulator capacity does not relocate an ELF.
+
+The builder uses the Mittens wormhole router and NIC. Link propagation delay
+is distinct from router pipeline latency.
 
 Tiles use row-major identifiers:
 
@@ -104,8 +98,7 @@ Flows requesting the same output do contend. A single source with one TX lane
 cannot be used to establish the aggregate capacity of four outgoing links.
 
 Link delay, router pipeline delay, packet size, and queue capacity are
-configuration choices. Do not apply a Merlin regression's latency formula to
-the Mittens wormhole router; both backends exist.
+configuration choices. Measure them in their own clock domains.
 
 Sources: [router](../src/sst/network/wormholeRouter.cc),
 [NIC](../src/sst/network/wormholeNetworkInterface.cc),
@@ -180,25 +173,16 @@ Each managed tile has one hart. Configure its resources in **`mittens.tile`**
 | Parameter | Default | Meaning |
 |---|---|---|
 | `cpu_clock` | `"1GHz"` | CPU issue clock; also the SPM timing clock |
-| `cpu_issue_width` | `1` | Scalar front-end issue width: 1, 2 or 4 |
+| `cpu_issue_width` | `1` | Executable-SPM path requires single issue |
 | `riscv_vector_enabled` | `true` | Enable the standard RISC-V V extension |
 | `riscv_vector_length_bits` | `256` | VLEN; power of two from 128 through 1024 bits |
 | `riscv_vector_element_bits` | `64` | Maximum element width, ELEN; power of two from 8 through 64 bits |
-| `memory` | `"16M"` | QEMU control/program RAM, not SPM or deployment-wide RAM |
-| `memory_backend` | `"native"` | Ordinary-memory timing: native, memhierarchy or streaming |
-| `memory_load_queue_entries` | `8` | Timed ordinary-memory load queue capacity |
-| `memory_store_buffer_entries` | `1` | Timed ordinary-memory store-buffer capacity |
 
-When using `build_mesh()`, select ordinary-memory timing with its
-`memory_backend` argument. An optional StandardMem/memHierarchy connection
-does not make a cache hierarchy intrinsic to the SPM architecture.
-
-The scalar issue width is configurable as 1, 2, or 4. Vector issue is limited
-to one instruction per CPU cycle. For an instruction-accounting region:
+The CPU issues one scalar or vector instruction per CPU cycle. For an
+instruction-accounting region:
 
 ```text
-issue cycles = max(ceil(total instructions / scalar issue width),
-                   vector instructions)
+issue cycles = scalar instructions + vector instructions
 ```
 
 Total instructions include vector instructions. The ledger charges incremental
@@ -207,8 +191,70 @@ applying this formula independently to every host batch is not equivalent.
 
 This accounts for issue throughput, not a detailed pipeline. Memory and device
 waits contribute additional elapsed time. The model does not implement a
-general out-of-order CPU, instruction-cache/TLB timing, or vector-operation
+general out-of-order CPU, TLB timing, or vector-operation
 latency that scales with active vector length.
+
+### Scratchpad-backed instruction cache
+
+By default, code, constants, data and stack occupy the tile's SPM.
+The address `0x80000000` is not mapped as program memory. QEMU still holds
+the bytes needed for functional execution; that host storage is not an extra
+guest memory or an alternative timing path. There is no data cache or L2.
+
+```text
+Shared RAM -- boot DMA --> tile SPM
+                              |
+                         cache-line fills
+                              |
+                         8 KiB I-cache --> CPU
+
+CPU data, RVV, TX DMA and RX DMA --> same SPM banks/ports
+```
+
+The linker places the program within SPM, starting at `0x90000000` by default.
+`SPM_CODE_OFFSET` reserves a low-address data region when a workload needs one. Startup sets the stack inside
+SPM; the PC starts at the ELF entry point. Each dynamic instruction checks the
+modeled cache, including repeated execution of a QEMU-translated block. A miss
+blocks the CPU while a complete line is read through the common SPM arbiter.
+`fence.i` invalidates the modeled cache. Data accesses continue to use SPM
+directly.
+
+| Tile parameter | Default | Meaning |
+|---|---|---|
+| `instruction_cache_bytes` | `8192` | Instruction-cache capacity |
+| `instruction_cache_line_bytes` | `64` | Bytes fetched per cache miss |
+| `instruction_cache_ways` | `2` | LRU ways per set |
+| `instruction_cache_hit_cycles` | `1` | Lookup latency in CPU cycles |
+
+Lookup occupies an instruction's issue cycle; a one-cycle hit is not charged
+again as an extra CPU cycle. Miss fills and any additional lookup latency add
+stall time. Fills share SPM read ports but do not incur global-DMA setup costs.
+An instruction that faults can be fetched without retiring. Its lookup time
+remains in elapsed time; `unretired_fetches` records these unmatched fetches
+separately from the guest instruction count.
+
+Managed tiles require a `globalDMA` connection and an ELF that fits SPM.
+Boot reads are explicitly marked as loader traffic, so they work with both
+bulk and exact-dependency shared-memory controllers without waiting for an
+application producer. Cross-instruction batching and speculative QEMU execution
+are not selectable modes.
+
+At startup, the ELF's loadable segments are staged in shared RAM at
+`tile_id * scratchpad_bytes + segment_spm_offset`. These per-tile boot slots
+must be reserved from application allocations. The core receives no execution
+grant until the controller's reads and the common SPM model's writes complete.
+Functional ELF loading is done ahead of time but cannot be observed by the
+guest before this timed transfer finishes. Boot cycles are reported separately
+as `SCRATCHPAD_BOOT`; they are not guest instruction cycles.
+
+The supplied [linker script](../src/platform/startup/scratchpad.ld) targets
+256 KiB SPM and reserves 16 KiB for the stack. Programs that exceed this space
+are rejected. Use a matching larger SPM/linker layout or explicitly manage
+code loading; automatic paging and a general code-overlay manager are not
+implemented. Code larger than the I-cache can still execute correctly as long
+as its backing image fits SPM.
+
+Validation: [scratchpad/I-cache tests](../tests/platform/scratchpad-icache/).
 
 RVV register length and maximum element width are configurable. With a
 256-bit register and 32-bit elements, an m1 vector holds eight elements.
@@ -221,7 +267,7 @@ Sources: [CPU ledger](../src/sst/execution/cpuExecutionLedger.h),
 
 ## Scratchpad
 
-Each enabled scratchpad is private to its tile and noncoherent. Its guest
+Each scratchpad is private to its tile and noncoherent. Its guest
 base address is `0x90000000`; capacity is configurable. Identical addresses
 on different tiles refer to different scratchpads.
 
@@ -229,7 +275,6 @@ Configure SPM in **`mittens.tile` / `tile_params`**:
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `scratchpad_enabled` | `false` | Enable private SPM |
 | `scratchpad_bytes` | `262144` (256 KiB) | Capacity per tile |
 | `scratchpad_banks` | `8` | Independently arbitrated banks |
 | `scratchpad_read_ports` | `1` | Read ports per bank |
@@ -239,8 +284,8 @@ Configure SPM in **`mittens.tile` / `tile_params`**:
 | `scratchpad_dma_bytes_per_cycle` | `32` | DMA service bandwidth in bytes per CPU cycle |
 | `scratchpad_dma_setup_cycles` | `8` | DMA setup cost in CPU cycles |
 
-SPM is disabled in the bare component defaults; workloads enable it explicitly.
-These defaults are not an assertion that every simulation uses them.
+SPM is enabled by default. Changing capacity also changes the space available
+for code, constants, buffers and stack; these are not independent allocations.
 
 Bank selection uses the configured port width:
 
@@ -252,7 +297,7 @@ bank = floor(spm_offset / stripe_bytes) mod bank_count
 At 32-byte stripes and eight banks, offsets 0, 32, …, 224 select banks 0–7;
 offset 256 selects bank 0 again.
 
-CPU accesses, TX DMA, RX DMA, and global-memory DMA use the same SPM timing
+Instruction-cache fills, CPU accesses, TX DMA, RX DMA, and global-memory DMA use the same SPM timing
 model. Different banks can serve independent requests concurrently. A bank's
 read and write ports have separate availability, so a read and write can
 overlap. Competing reads on one read port serialize.
@@ -274,17 +319,15 @@ posted destination range. Configure them in **`mittens.tile` / `tile_params`**:
 | Parameter | Default | Meaning |
 |---|---|---|
 | `tx_dma_streams` | `1` | Independent TX DMA/local injection lanes: 1, 2 or 4 |
-| `tx_dma_fifo_bytes` | `128` | Bounded TX FIFO capacity per lane; zero disables timed TX DMA |
+| `tx_dma_fifo_bytes` | `128` | Per-lane TX FIFO bytes; at least one SPM DMA beat |
 | `rx_dma_streams` | `1` | Independent RX DMA/local ejection lanes: 1, 2 or 4 |
 | `rx_dma_queue_depth` | `4` | Incoming burst queue depth: 1 through 4; distinct from lane count |
 | `rx_dma_streaming` | `false` | Release arrived DMA-owned fragments before the full frame arrives |
-| `rx_dma_clock` | `"1GHz"` | Ordinary-memory RX DMA clock |
-| `rx_dma_width_bits` | `256` | Ordinary-memory RX width; positive multiple of 32 bits |
-| `rx_dma_setup_cycles` | `8` | Ordinary-memory RX setup per descriptor, in RX DMA cycles |
 
-**SPM-backed RX uses `scratchpad_dma_*` and CPU-cycle timing**, not the
-separate ordinary-memory RX clock/rate. SPM-backed TX also consumes common
-SPM service. Use the Mittens router/NIC for matching multi-lane connections.
+**SPM-backed RX uses `scratchpad_dma_*` and CPU-cycle timing.** The separate
+`rx_dma_clock` setting does not change this SPM service clock. SPM-backed TX
+also consumes common SPM service. Use the Mittens router/NIC for matching
+multi-lane connections.
 
 For an SPM-backed transfer with timed TX enabled:
 
@@ -314,8 +357,7 @@ The mesh builder connects matching local injection/ejection capacity.
 More lanes do not duplicate SPM ports, cardinal links, or destination storage.
 
 Receive scheduling preserves per-source timing order. RX queue depth and RX
-lane count are different parameters. Ordinary-memory receive DMA has a
-separate timing path; the description above applies to SPM destinations.
+lane count are different parameters.
 
 A guest may wait for data or transmit capacity through MMIO wait operations.
 Those operations recheck availability before blocking. Submitted DMA can
@@ -406,27 +448,24 @@ Sources: [analog device](../src/sst/analog/analogDevice.cc),
 
 ## Synchronization
 
-Initialization and epoch barriers are modeled sideband controllers. Their
-events are not NoC payload bytes. Programs must distinguish local completion,
-transfer completion, and barrier release. A study using sideband barriers
-does not measure the cost of implementing the same coordination with mesh
-messages.
+Epoch barriers are sideband controllers: their events do not consume NoC
+payload bandwidth. Programs distinguish local completion, transfer completion,
+and barrier release. Measuring these barriers does not measure a barrier
+implemented with mesh messages.
 
 | Owner / parameter | Default | Meaning |
 |---|---|---|
-| Tile: `memory_init_barrier_tiles` | `0` | Initialization participants; zero disables |
-| Tile: `epoch_barrier_epochs` | `0` | Epoch count including boot epoch zero; zero disables |
-| Both controllers: `tile_count`, `active_tiles` | `1`, all IDs | Addressable and participating tiles |
-| Both controllers: `clock` | `"1GHz"` | Controller clock |
-| Both controllers: `release_cycles` | `1` | Delay after the last arrival, in controller cycles |
-| Initialization: `release_tiles_per_cycle` | `1` | Maximum tile releases per controller cycle |
-| Epoch: `epoch_count` | `1` | Number of accepted epochs |
+| Tile: `epoch_barrier_epochs` | `0` | Accepted epoch count; zero disables |
+| Controller: `tile_count`, `active_tiles` | `1`, all IDs | Addressable and participating tiles |
+| Controller: `clock` | `"1GHz"` | Controller clock |
+| Controller: `release_cycles` | `1` | Delay after the last arrival |
+| Controller: `epoch_count` | `1` | Number of accepted epochs |
 
-The builder's `initialization_barrier` and `epoch_barrier` mappings configure
-these controllers and wire deployment membership.
+The builder's `epoch_barrier` mapping configures membership and wiring.
+Boot has no application-initialization phase: each tile starts after its
+program's shared-memory reads and SPM writes complete.
 
-Sources: [initialization controller](../src/sst/synchronization/memoryInitializationBarrierController.h),
-[epoch controller](../src/sst/synchronization/epochBarrierController.h).
+Source: [epoch controller](../src/sst/synchronization/epochBarrierController.h).
 
 ## Functional execution and timing
 
@@ -449,6 +488,7 @@ QEMU and SST communicate through per-tile host shared-memory bridges:
 | 41 | Instruction grants, stop events, and resume |
 | 42 | Network data and receive authorization |
 | 43 | Analog commands, operands, and results |
+| 44 | Shared-memory backing file; not a timing-control bridge |
 
 Only fd 41 controls guest execution. The host bridges are not physical
 network links, and their ring capacities do not define hardware bandwidth.
@@ -456,8 +496,8 @@ The [bridge headers](../src/bridge/README.md) define their layouts.
 
 SST grants QEMU an instruction budget, receives execution and device events,
 and schedules their modeled effects. Guest exit is also reported at an
-instruction boundary. Batching and host parallelism reduce simulation overhead;
-they must not create additional simulated resource capacity or bypass deadlines.
+instruction boundary. The default path disables cross-instruction batching,
+ready-set workers beyond one, and local lookahead.
 
 ## Configuration and measurement
 
@@ -475,8 +515,9 @@ extra hardware capacity:
 | `progress_snapshot_interval_ms` | `10000` | Host wall-time snapshot interval |
 | `progress_watchdog_ms` | `60000` | Host wall-time progress watchdog; zero disables |
 
-The [complete tile reference](parameters.md) includes additional replay,
-batching and ordinary-memory controls. Router `flit_trace_path` /
+The [complete tile reference](parameters.md) also lists alternate-mode controls;
+their presence does not make them compatible with scratchpad boot.
+Router `flit_trace_path` /
 `packet_trace_path` and NIC `receive_flit_trace_path` enable network traces;
 all default to empty paths.
 
@@ -488,9 +529,9 @@ Report elapsed execution separately from service counts, queueing, and stalls.
 Those resource intervals can overlap. Missing counters are not measured zeros.
 Packet-transit sums are not an additional elapsed interval to add to runtime.
 
-CPU/SPM, ordinary-memory RX DMA, network, and analog timing may use different
+CPU/SPM, shared memory, network, and analog timing may use different
 clock domains. Convert through SST time before comparing them. See
-[clock semantics](../src/sst/execution/TIMING.md) and the
+[clock conversion](../src/sst/execution/README.md) and the
 [measurement contract](../src/sst/profiling/MEASUREMENT_CONTRACT.md).
 
 This model supports architectural comparisons under explicit assumptions.

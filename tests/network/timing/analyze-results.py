@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare isolated Merlin measurements with the configured closed form."""
+"""Compare isolated wormhole measurements with the configured closed form."""
 
 from __future__ import annotations
 
@@ -9,8 +9,11 @@ from pathlib import Path
 
 
 TICKS_PER_CYCLE = 1000
-ONE_HOP_HEAD_CYCLES = 35
-ADDITIONAL_HOP_CYCLES = 12
+# With edge-aligned injection, one hop crosses three ten-cycle links
+# and two three-cycle router head pipelines: 3*10 + 2*3 = 36.
+# Each extra hop adds one link plus one router pipeline (10+3 = 13).
+ONE_HOP_HEAD_CYCLES = 36
+ADDITIONAL_HOP_CYCLES = 13
 
 
 def coordinates(endpoint: int, width: int) -> tuple[int, int]:
@@ -29,9 +32,9 @@ def stall_total(path: Path) -> tuple[int, int]:
     with path.open(encoding="utf-8", newline="") as source:
         for row in csv.DictReader(source):
             value = int(row["Sum.u64"])
-            if row["StatisticName"] == "output_port_stalls":
+            if row["StatisticName"] == "output_credit_stall_cycles":
                 output_stalls += value
-            elif row["StatisticName"] == "xbar_stalls":
+            elif row["StatisticName"] == "switch_arbitration_stall_cycles":
                 crossbar_stalls += value
     return output_stalls, crossbar_stalls
 
@@ -68,13 +71,13 @@ def main() -> None:
         measured = []
         for receipt in receipts:
             latency_ticks = int(receipt["latency_ticks"])
-            head_latency_ticks = (
-                int(receipt["head_arrival_tick"]) -
+            delivery_latency_ticks = (
+                int(receipt["delivery_tick"]) -
                 int(receipt["injection_tick"])
             )
             if (
                 latency_ticks % TICKS_PER_CYCLE or
-                head_latency_ticks % TICKS_PER_CYCLE
+                delivery_latency_ticks % TICKS_PER_CYCLE
             ):
                 raise RuntimeError(
                     f"{raw_path}: a measured latency is not an integer "
@@ -85,15 +88,15 @@ def main() -> None:
                 {
                     "source": source_id,
                     "hops": hops(source_id, destination, width),
-                    "head_cycles": (
-                        head_latency_ticks // TICKS_PER_CYCLE
+                    "delivery_cycles": (
+                        delivery_latency_ticks // TICKS_PER_CYCLE
                     ),
                     "completion_cycles": (
                         latency_ticks // TICKS_PER_CYCLE
                     ),
                     "injection_tick": int(receipt["injection_tick"]),
-                    "head_arrival_tick": int(
-                        receipt["head_arrival_tick"]
+                    "delivery_tick": int(
+                        receipt["delivery_tick"]
                     ),
                     "completion_tick": int(
                         receipt["completion_tick"]
@@ -109,6 +112,7 @@ def main() -> None:
         output_stalls, crossbar_stalls = stall_total(stats_path)
 
         for rank, measurement in enumerate(measured):
+            # NIC callbacks expose completed packets, never a head-only arrival.
             packet_cycles = words
             base_head = (
                 ONE_HOP_HEAD_CYCLES +
@@ -127,7 +131,7 @@ def main() -> None:
                 predicted_head + packet_cycles - 1
             )
             head_error = (
-                measurement["head_cycles"] - predicted_head
+                measurement["delivery_cycles"] - predicted_completion
             )
             absolute_error = (
                 measurement["completion_cycles"] -
@@ -153,9 +157,9 @@ def main() -> None:
                     "hops": measurement["hops"],
                     "source_count": source_count,
                     "arrival_rank": rank,
-                    "predicted_head_cycles": predicted_head,
-                    "measured_head_cycles": measurement["head_cycles"],
-                    "head_error_cycles": head_error,
+                    "predicted_delivery_cycles": predicted_completion,
+                    "measured_delivery_cycles": measurement["delivery_cycles"],
+                    "delivery_error_cycles": head_error,
                     "predicted_completion_cycles": predicted_completion,
                     "measured_completion_cycles": (
                         measurement["completion_cycles"]
@@ -163,12 +167,12 @@ def main() -> None:
                     "absolute_error": absolute_error,
                     "percentage_error": f"{percentage_error:.6f}",
                     "simultaneous_injection": int(simultaneous),
-                    "output_port_stalls": output_stalls,
+                    "output_credit_stall_cycles": output_stalls,
                     "crossbar_stalls": crossbar_stalls,
                     "pass": int(passed),
                     "injection_tick": measurement["injection_tick"],
-                    "head_arrival_tick": (
-                        measurement["head_arrival_tick"]
+                    "delivery_tick": (
+                        measurement["delivery_tick"]
                     ),
                     "completion_tick": measurement["completion_tick"],
                 }
@@ -183,7 +187,7 @@ def main() -> None:
 
     print(
         "experiment configuration source words hops sources "
-        "head predicted measured completion predicted measured error pass"
+        "delivery predicted measured completion predicted measured error pass"
     )
     for row in results:
         print(
@@ -193,8 +197,8 @@ def main() -> None:
             f"{row['payload_words']:>5} "
             f"{row['hops']:>4} "
             f"{row['source_count']:>7} "
-            f"{row['predicted_head_cycles']:>9} "
-            f"{row['measured_head_cycles']:>8} "
+            f"{row['predicted_delivery_cycles']:>9} "
+            f"{row['measured_delivery_cycles']:>8} "
             f"{row['predicted_completion_cycles']:>10} "
             f"{row['measured_completion_cycles']:>8} "
             f"{row['absolute_error']:>5} "

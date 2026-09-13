@@ -2,7 +2,6 @@ import os
 
 import sst
 
-
 profile_directory = os.environ.get("MITTENS_TEST_PROFILE_OUTPUT_DIRECTORY", "")
 
 tile = sst.Component("tile0", "mittens.tile")
@@ -13,27 +12,14 @@ tile.addParams(
         "elf": os.environ["MITTENS_TEST_ELF"],
         "memory": "16M",
         "memory_backend": "streaming",
-        "memory_init_batching": True,
-        "memory_init_bytes_per_cycle": 32,
-        "memory_init_latency_cycles": 2,
-        "memory_init_instruction_quantum": int(
-            os.environ.get(
-                "MITTENS_TEST_MEMORY_INIT_INSTRUCTION_QUANTUM",
-                str(64 * 1024 * 1024),
-            )
-        ),
+
         "scratchpad_enabled": True,
         "scratchpad_bytes": 262144,
         "scratchpad_banks": 8,
         "scratchpad_access_width_bits": 256,
         "scratchpad_dma_bytes_per_cycle": 32,
         "scratchpad_dma_setup_cycles": 8,
-        "global_dma_submit_batching": os.environ.get(
-            "MITTENS_TEST_GLOBAL_DMA_SUBMIT_BATCHING", "0"
-        ).lower() in ("1", "true", "yes", "on"),
-        "global_dma_macro_execution": os.environ.get(
-            "MITTENS_TEST_GLOBAL_DMA_MACRO_EXECUTION", "0"
-        ).lower() in ("1", "true", "yes", "on"),
+
         "launch_mode": "managed",
         "cpu_clock": "1GHz",
         "sync_instruction_quantum": int(

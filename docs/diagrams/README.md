@@ -1,14 +1,14 @@
 # Architecture diagrams
 
-These editable SVGs show implemented boundaries. Optional resources are labeled;
-widths and capacities are configurable unless explicitly stated.
+These two editable SVGs are the canonical drawings used by the
+[project overview](../../README.md). Update these files when the architecture
+changes; do not maintain a second set of tile or mesh diagrams.
 
-- [Single tile](single-tile-uml.svg): functional QEMU state, control/data bridges,
-  SST timing, banked SPM, DMA, and analog arrays.
-- [Mesh](mesh-topology.svg): a 3×3 example with X-then-Y routing from tile 0 to
-  tile 8, local NIC lanes, and a separate global-RAM DMA fabric.
+- [Single tile](single-tile.svg): instruction cache, executable SPM, DMA queues,
+  external router, and the separate shared-memory path.
+- [Mesh](mesh-connections.svg): a 3×3 example with X-then-Y routing from tile 0
+  to tile 8. Each tile has its own router; intermediate CPUs do not forward data.
 
-The drawings describe structure, not a deployment's resolved parameters.
-See the [timing model](../timing-model.md),
-[vector architecture](../vector-architecture.md), and
-[source ownership](../../src/README.md) for details and implementation links.
+Capacities shown on the tile are defaults, not fixed hardware limits. The
+3×3 mesh is an example. The drawings show architectural data paths; QEMU/SST
+host transports are explained in the [bridge guide](../../src/bridge/README.md).

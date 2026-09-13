@@ -2,13 +2,11 @@ import os
 
 import sst
 
-
 def required_path(name):
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(f"{name} must be set")
     return value
-
 
 # Deliberately no networkIF, router, or Merlin component: this test exercises
 # one QEMU tile and one tile-local analog array only.
@@ -32,3 +30,10 @@ tile.addParams(
         "verbose": 1,
     }
 )
+
+# Program loading and data DMA use the same shared controller.
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
+from spm import attach_memory
+attach_memory({0: tile})

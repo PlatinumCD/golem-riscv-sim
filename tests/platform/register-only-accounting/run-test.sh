@@ -11,7 +11,7 @@ make -C "${TEST_DIR}"
 rm -f -- "${RESULTS}"
 printf 'mode,total_cycles,guest_cpu_cycles,measured_cycles,'\
 'measured_instructions,scalar_instructions,vector_instructions,'\
-'synchronization_events,synchronization_grants,bridge_overhead_cycles,'\
+'synchronization_events,synchronization_grants,non_cpu_cycles,'\
 'scratchpad_service_cycles,guest_cycles_per_instruction,non_guest_fraction\n' \
     > "${RESULTS}"
 
@@ -31,10 +31,12 @@ for mode in scalar rvv; do
 
     test -s "${profile}/tile-0-summary.csv"
     test -s "${tasks}/tile-0.csv"
-    python3 - "${RESULTS}" "${mode}" \
+    PYTHONPATH="${PROJECT_ROOT}/tests/support${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${RESULTS}" "${mode}" \
         "${profile}/tile-0-summary.csv" "${tasks}/tile-0.csv" <<'PY'
 import csv
 import sys
+from pathlib import Path
+from region import assert_register_only
 
 results, mode, summary_path, task_path = sys.argv[1:]
 summary = {}
@@ -64,11 +66,10 @@ if finish_tick % 1000:
     raise SystemExit(f"finish tick is not an integer 1 GHz cycle: {finish_tick}")
 total_cycles = finish_tick // 1000
 guest_cycles = summary["cpu_cycles"]
-bridge_overhead = total_cycles - guest_cycles
-non_guest_fraction = bridge_overhead / total_cycles
-spm_cycles = summary["scratchpad_service_cycles"]
-if spm_cycles != 0:
-    raise SystemExit(f"register-only test used {spm_cycles} SPM cycles")
+non_cpu_cycles = total_cycles - guest_cycles
+non_guest_fraction = non_cpu_cycles / total_cycles
+assert_register_only(Path(summary_path).parent, start, finish)
+spm_cycles = 0  # Proven CPU-data service in the measured region, not whole-run fills.
 
 with open(results, "a", encoding="utf-8", newline="") as output:
     output.write(
@@ -76,7 +77,7 @@ with open(results, "a", encoding="utf-8", newline="") as output:
         f"{measured_instructions},"
         f"{summary['instructions'] - summary['vector_instructions']},"
         f"{summary['vector_instructions']},{summary['synchronization_events']},"
-        f"{summary['synchronization_grants']},{bridge_overhead},"
+        f"{summary['synchronization_grants']},{non_cpu_cycles},"
         f"{spm_cycles},{guest_cycles / summary['instructions']:.6f},"
         f"{non_guest_fraction:.6f}\n"
     )

@@ -15,8 +15,6 @@ RxController::RxController(Configuration config, Resources resources, Host host)
     : config_(config), resources_(resources), host_(std::move(host))
 {
     receiveLaneAvailable_.resize(config.receiveDMAStreams, 0);
-    for (std::uint32_t lane = 0; lane < config.receiveDMAStreams; ++lane)
-        receiveDMAEngines_.emplace_back(config.receiveDMAWidthBits, config.receiveDMASetupCycles);
 }
 
 AddressRegion RxController::scratchpadRegion() const noexcept
@@ -81,85 +79,8 @@ bool RxController::onDMACompletion()
 
     transfer->completionObserved = true;
 
-    const bool scratchpadDestination =
-        config_.scratchpadEnabled && scratchpadRegion().contains(transfer->destination);
-    if (!scratchpadDestination && resources_.memory != nullptr && config_.memoryTileStride != 0)
-    {
-        const std::uint64_t lineSize = config_.memoryCacheLineSize;
-        const std::uint64_t byteCount =
-            static_cast<std::uint64_t>(transfer->wordCount) * sizeof(std::uint32_t);
-        const std::uint64_t firstGuest = transfer->destination - (transfer->destination % lineSize);
-        const std::uint64_t lastGuest = (transfer->destination + byteCount - 1) -
-                                        ((transfer->destination + byteCount - 1) % lineSize);
-        for (std::uint64_t guest = firstGuest;; guest += lineSize)
-        {
-            const std::uint64_t timing =
-                static_cast<std::uint64_t>(config_.tileId) * config_.memoryTileStride +
-                (guest - config_.memoryGuestBase);
-            auto* const request =
-                new SST::Interfaces::StandardMem::FlushAddr(timing, lineSize, true, 1);
-            receiveDMAInvalidations_.emplace(request->getID(), transfer->burstIndex);
-            ++transfer->invalidationLines;
-            ++transfer->invalidationResponsesPending;
-            resources_.memory->send(request);
-            if (guest == lastGuest)
-            {
-                break;
-            }
-        }
-        return false;
-    }
-
     authorizeReceiveDMA(*transfer);
     return true;
-}
-
-RxController::InvalidationResult
-RxController::handleInvalidationResponse(SST::Interfaces::StandardMem::Request* request)
-{
-    if (request != nullptr)
-    {
-        const auto invalidation = receiveDMAInvalidations_.find(request->getID());
-        if (invalidation != receiveDMAInvalidations_.end())
-        {
-            const std::uint32_t burstIndex = invalidation->second;
-            receiveDMAInvalidations_.erase(invalidation);
-            delete request;
-            if (stopped_)
-            {
-                return InvalidationResult::Pending;
-            }
-            for (ReceiveDMATransfer& transfer : receiveDMATransfersInFlight_)
-            {
-                if (transfer.burstIndex != burstIndex)
-                {
-                    continue;
-                }
-                if (transfer.invalidationResponsesPending == 0)
-                {
-                    resources_.output.fatal(CALL_INFO, -1,
-                                            "tile %u received an extra DMA invalidation "
-                                            "response for burst %u\n",
-                                            static_cast<unsigned>(config_.tileId),
-                                            static_cast<unsigned>(burstIndex));
-                }
-                --transfer.invalidationResponsesPending;
-                if (transfer.invalidationResponsesPending == 0)
-                {
-                    authorizeReceiveDMA(transfer);
-                    return InvalidationResult::Authorized;
-                }
-                return InvalidationResult::Pending;
-            }
-            resources_.output.fatal(CALL_INFO, -1,
-                                    "tile %u lost DMA burst %u before invalidation "
-                                    "completed\n",
-                                    static_cast<unsigned>(config_.tileId),
-                                    static_cast<unsigned>(burstIndex));
-        }
-    }
-
-    return InvalidationResult::Unhandled;
 }
 
 void RxController::authorizeReceiveDMA(ReceiveDMATransfer& transfer)
@@ -179,7 +100,7 @@ void RxController::authorizeReceiveDMA(ReceiveDMATransfer& transfer)
         "complete", transfer.source, transfer.routeId, transfer.executionId,
         transfer.logicalIteration, transfer.burstIndex, transfer.wordCount, transfer.scheduleTick,
         transfer.startCycle, transfer.completionCycle, host_.now().value, transfer.serviceCycles,
-        transfer.invalidationLines);
+        0);
 
     resources_.output.verbose(
         CALL_INFO, 2, 0,
@@ -781,19 +702,8 @@ void RxController::registerReceiveDMA(const ReceiveClaim& event)
     }
     const std::uint64_t byteCount =
         static_cast<std::uint64_t>(event.wordCount) * sizeof(std::uint32_t);
-    const bool streaming = event.logicalIteration != UINT64_MAX;
-    const bool startsInScratchpad =
-        config_.scratchpadEnabled && scratchpadRegion().contains(event.destination);
-    const bool fitsScratchpad =
-        startsInScratchpad && scratchpadRegion().containsRange(event.destination, byteCount);
     if (event.source >= config_.networkSize || event.routeId == UINT32_MAX ||
-        event.wordCount == 0 || !AddressRegion::representable(event.destination, byteCount) ||
-        (streaming && !fitsScratchpad) || (startsInScratchpad && !fitsScratchpad) ||
-        (config_.scratchpadEnabled &&
-         scratchpadRegion().crossesStart(event.destination, byteCount)) ||
-        (!fitsScratchpad && config_.memoryTileStride != 0 &&
-         !AddressRegion{config_.memoryGuestBase, config_.memoryTileStride}.containsRange(
-             event.destination, byteCount)))
+        event.wordCount == 0 || !scratchpadRegion().containsRange(event.destination, byteCount))
     {
         resources_.output.fatal(
             CALL_INFO, -1,
@@ -957,30 +867,12 @@ void RxController::scheduleReceiveDMABursts()
         ScratchpadSchedule timing{};
         try
         {
-            const bool scratchpadDestination =
-                config_.scratchpadEnabled &&
-                scratchpadRegion().contains(activeDescriptor.destination);
-            if (scratchpadDestination)
-            {
-                timing = resources_.scratchpad->scheduleDMA(
-                    earliestCycle, scratchpadRegion().offset(activeDescriptor.destination),
-                    static_cast<std::uint64_t>(burst->wordCount) * sizeof(std::uint32_t), true,
-                    static_cast<ScratchpadDMAClient>(static_cast<unsigned>(ScratchpadDMAClient::NetworkReceive) + lane), !activeDescriptor.setupCharged);
-            }
-            else
-            {
-                // Ordinary-memory RX retains the configured DMA clock/rate.
-                // Transfer records and the self-link use CPU cycles, so round
-                // converted timestamps up: completion must never be early.
-                const auto dma = receiveDMAEngines_[lane].schedule(
-                    receiveDMADomain().ceil(cpuDomain().ticks({earliestCycle})).value,
-                    burst->wordCount, !activeDescriptor.setupCharged);
-                timing.startCycle =
-                    cpuDomain().ceil(receiveDMADomain().ticks({dma.startCycle})).value;
-                timing.completionCycle =
-                    cpuDomain().ceil(receiveDMADomain().ticks({dma.completionCycle})).value;
-                timing.serviceCycles = timing.completionCycle - timing.startCycle;
-            }
+            timing = resources_.scratchpad->scheduleDMA(
+                earliestCycle, scratchpadRegion().offset(activeDescriptor.destination),
+                static_cast<std::uint64_t>(burst->wordCount) * sizeof(std::uint32_t), true,
+                static_cast<ScratchpadDMAClient>(
+                    static_cast<unsigned>(ScratchpadDMAClient::NetworkReceive) + lane),
+                !activeDescriptor.setupCharged);
         }
         catch (const std::exception& error)
         {
@@ -1011,8 +903,6 @@ void RxController::scheduleReceiveDMABursts()
             timing.startCycle,
             timing.completionCycle,
             timing.serviceCycles,
-            0,
-            0,
             false,
             false,
         });

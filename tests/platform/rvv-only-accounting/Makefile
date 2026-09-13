@@ -54,13 +54,13 @@ $(OUTPUT_DIR)/rvv-k%.o: $(TEST_DIR)/main.cpp \
 define LINK_ELF
 	$(CLANGXX) $(COMMON_FLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 		-fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
-		-Wl,-T,$(PLATFORM_STARTUP_ROOT)/tile.ld -Wl,-Map,$@.map \
+		$(TEST_SPM_LINK_FLAGS) -Wl,-T,$(PLATFORM_STARTUP_ROOT)/scratchpad.ld -Wl,-Map,$@.map \
 		$(COMMON_OBJECTS) $< -o $@
 	@echo "built $@"
 endef
 
 $(OUTPUT_DIR)/rvv-k%.elf: $(OUTPUT_DIR)/rvv-k%.o $(COMMON_OBJECTS) \
-	$(PLATFORM_STARTUP_ROOT)/tile.ld $(TEST_DIR)/Makefile
+	$(PLATFORM_STARTUP_ROOT)/scratchpad.ld $(TEST_DIR)/Makefile
 	$(LINK_ELF)
 
 clean:

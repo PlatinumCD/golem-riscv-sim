@@ -86,9 +86,9 @@ run_route() {
         "${value}" "${unit}")"
 
     physical_word_hops["${route}"]="$(awk -F, '
-        $2 == "send_packet_count" &&
-        ($3 == "port0" || $3 == "port1" ||
-         $3 == "port2" || $3 == "port3") {
+        $2 == "packets_forwarded" &&
+        ($3 == "east" || $3 == "west" ||
+         $3 == "south" || $3 == "north") {
             total += $7
         }
         END { print total + 0 }

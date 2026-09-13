@@ -1,0 +1,184 @@
+--- a/include/hw/riscv/virt.h
++++ b/include/hw/riscv/virt.h
+@@ -54,6 +54,7 @@
+ 
+     int fdt_size;
+     bool have_aclint;
++    bool mittens_scratchpad_boot;
+     RISCVVirtAIAType aia_type;
+     int aia_guests;
+     char *oem_id;
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "elf.h"
++#include "qemu/bswap.h"
+ #include "qemu/units.h"
+ #include "qemu/error-report.h"
+ #include "qemu/guest-random.h"
+@@ -1253,6 +1255,94 @@
+                                 sysbus_mmio_get_region(sysbus, 0));
+ }
+ 
++/*
++ * SST holds the CPU at its first synchronization grant until the modeled
++ * global-RAM-to-SPM boot transfer finishes. Load functional bytes here, without
++ * creating ordinary RAM, a firmware trampoline, or a DTB in unmodeled memory.
++ */
++static void virt_boot_from_scratchpad(RISCVVirtState *s)
++{
++    MachineState *machine = MACHINE(s);
++    g_autofree char *image = NULL;
++    gsize size;
++    struct stat st;
++    uint64_t entry, phoff, loaded_entry;
++    uint16_t phnum;
++    bool executable_entry = false;
++    const uint8_t *bytes;
++
++    if (!tcg_enabled() || machine->smp.cpus != 1 ||
++        !machine->kernel_filename || machine->initrd_filename || machine->dtb ||
++        !machine->firmware || strcmp(machine->firmware, "none") ||
++        !mittens_sync_instruction_fetch_timing_enabled()) {
++        error_report("scratchpad boot requires one TCG hart, an ELF kernel, "
++                     "-bios none, instruction-fetch timing, and no initrd/DTB");
++        exit(1);
++    }
++    if (stat(machine->kernel_filename, &st) || st.st_size < 64 ||
++        st.st_size > 128 * MiB ||
++        !g_file_get_contents(machine->kernel_filename, &image, &size, NULL)) {
++        error_report("cannot read bounded scratchpad boot ELF");
++        exit(1);
++    }
++    bytes = (const uint8_t *)image;
++    if (size < 64 || memcmp(bytes, ELFMAG, SELFMAG) ||
++        bytes[EI_CLASS] != ELFCLASS64 || bytes[EI_DATA] != ELFDATA2LSB ||
++        bytes[EI_VERSION] != EV_CURRENT || lduw_le_p(bytes + 16) != ET_EXEC ||
++        lduw_le_p(bytes + 18) != EM_RISCV || ldl_le_p(bytes + 20) != EV_CURRENT ||
++        lduw_le_p(bytes + 52) != 64 || lduw_le_p(bytes + 54) != 56) {
++        error_report("scratchpad boot requires an ELF64 little-endian RV64 executable");
++        exit(1);
++    }
++    entry = ldq_le_p(bytes + 24);
++    phoff = ldq_le_p(bytes + 32);
++    phnum = lduw_le_p(bytes + 56);
++    if ((entry & 1) || phoff > size || phnum > (size - phoff) / 56) {
++        error_report("invalid scratchpad ELF entry or program headers");
++        exit(1);
++    }
++    for (unsigned i = 0; i < phnum; ++i) {
++        const uint8_t *p = bytes + phoff + i * 56;
++        uint64_t address, offset, filesz, memsz;
++
++        if (ldl_le_p(p) != PT_LOAD) {
++            continue;
++        }
++        offset = ldq_le_p(p + 8);
++        address = ldq_le_p(p + 16);
++        filesz = ldq_le_p(p + 32);
++        memsz = ldq_le_p(p + 40);
++        if (filesz > memsz || offset > size || filesz > size - offset ||
++            address != ldq_le_p(p + 24) ||
++            (memsz && !mittens_sync_scratchpad_contains(address, memsz))) {
++            error_report("scratchpad ELF load segment lies outside SPM or is invalid");
++            exit(1);
++        }
++        if (memsz && (ldl_le_p(p + 4) & PF_X) &&
++            entry >= address && entry - address < memsz) {
++            executable_entry = true;
++        }
++        for (unsigned j = 0; memsz && j < i; ++j) {
++            const uint8_t *q = bytes + phoff + j * 56;
++            uint64_t other = ldq_le_p(q + 16);
++            uint64_t other_size = ldq_le_p(q + 40);
++            if (ldl_le_p(q) == PT_LOAD && other_size &&
++                address < other + other_size && other < address + memsz) {
++                error_report("overlapping scratchpad ELF load segments");
++                exit(1);
++            }
++        }
++    }
++    if (!executable_entry ||
++        load_elf(machine->kernel_filename, NULL, NULL, NULL, &loaded_entry,
++                 NULL, NULL, NULL, 0, EM_RISCV, 0, 0) < 0 ||
++        loaded_entry != entry) {
++        error_report("cannot load executable scratchpad ELF");
++        exit(1);
++    }
++    s->soc[0].harts[0].env.resetvec = entry;
++}
++
+ static void virt_machine_done(Notifier *notifier, void *data)
+ {
+     RISCVVirtState *s = container_of(notifier, RISCVVirtState,
+@@ -1266,6 +1356,11 @@
+     uint64_t kernel_entry = 0;
+     BlockBackend *pflash_blk0;
+ 
++    if (s->mittens_scratchpad_boot) {
++        virt_boot_from_scratchpad(s);
++        return;
++    }
++
+     /*
+      * An user provided dtb must include everything, including
+      * dynamic sysbus devices. Our FDT needs to be finalized.
+@@ -1495,14 +1590,20 @@
+     s->memmap = virt_memmap;
+ 
+     /* register system main memory (actual RAM) */
+-    memory_region_add_subregion(system_memory, memmap[VIRT_DRAM].base,
+-        machine->ram);
++    if (!s->mittens_scratchpad_boot) {
++        memory_region_add_subregion(system_memory, memmap[VIRT_DRAM].base,
++                                    machine->ram);
++    }
+ 
+     /* boot rom */
+-    memory_region_init_rom(mask_rom, NULL, "riscv_virt_board.mrom",
+-                           memmap[VIRT_MROM].size, &error_fatal);
+-    memory_region_add_subregion(system_memory, memmap[VIRT_MROM].base,
+-                                mask_rom);
++    if (!s->mittens_scratchpad_boot) {
++        memory_region_init_rom(mask_rom, NULL, "riscv_virt_board.mrom",
++                              memmap[VIRT_MROM].size, &error_fatal);
++        memory_region_add_subregion(system_memory, memmap[VIRT_MROM].base,
++                                    mask_rom);
++    } else {
++        g_free(mask_rom);
++    }
+ 
+     /*
+      * Init fw_cfg. Must be done before riscv_load_fdt, otherwise the
+@@ -1647,6 +1748,16 @@
+     return s->have_aclint;
+ }
+ 
++static bool virt_get_mittens_scratchpad_boot(Object *obj, Error **errp)
++{
++    return RISCV_VIRT_MACHINE(obj)->mittens_scratchpad_boot;
++}
++
++static void virt_set_mittens_scratchpad_boot(Object *obj, bool value, Error **errp)
++{
++    RISCV_VIRT_MACHINE(obj)->mittens_scratchpad_boot = value;
++}
++
+ static void virt_set_aclint(Object *obj, bool value, Error **errp)
+ {
+     RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+@@ -1733,6 +1844,11 @@
+ 
+     object_class_property_add_bool(oc, "aclint", virt_get_aclint,
+                                    virt_set_aclint);
++    object_class_property_add_bool(oc, "mittens-scratchpad-boot",
++                                  virt_get_mittens_scratchpad_boot,
++                                  virt_set_mittens_scratchpad_boot);
++    object_class_property_set_description(oc, "mittens-scratchpad-boot",
++                                         "Execute an ELF entirely from timed SPM");
+     object_class_property_set_description(oc, "aclint",
+                                           "(TCG only) Set on/off to "
+                                           "enable/disable emulating "

@@ -12,7 +12,7 @@ from mesh import (  # noqa: E402
     LINK_LATENCY,
     LOCAL_PORT,
     _connect_routers,
-    _make_router,
+    _make_wormhole_router,
     _mesh_link_configuration,
     tile_id,
 )
@@ -57,15 +57,7 @@ link_bandwidth, flit_size, buffer_size = _mesh_link_configuration(
     4096,
 )
 routers = {
-    (x, y): _make_router(
-        x,
-        y,
-        width,
-        height,
-        flit_size,
-        buffer_size,
-        link_bandwidth,
-    )
+    (x, y): _make_wormhole_router(x, y, width, height, "1GHz", 32, 4096, 3, 1)
     for y in range(height)
     for x in range(width)
 }
@@ -102,6 +94,7 @@ for y in range(height):
             "clock": "1GHz",
             "link_clock": "1GHz",
             "link_width_bits": 32,
+            "tail_delivery": True,
             "send_cycle": 100,
             "timeout_cycles": 100000,
         }
@@ -114,18 +107,19 @@ for y in range(height):
 
         network = probe.setSubComponent(
             "networkIF",
-            "merlin.linkcontrol",
+            "mittens.wormholeNIC",
         )
         network.addParams(
             {
-                "link_bw": link_bandwidth,
-                "input_buf_size": buffer_size,
-                "output_buf_size": buffer_size,
+                "endpoint_id": endpoint, "network_size": network_size,
+                "mesh_width": width, "mesh_height": height, "clock": "1GHz",
+                "link_width_bits": 32, "router_buffer_flits": 4096,
+                "injection_buffer_flits": 4096,
             }
         )
         local = sst.Link(f"probe{endpoint}_local_link")
         local.connect(
-            (network, "rtr_port", LINK_LATENCY),
+            (network, "router_port0", LINK_LATENCY),
             (router, f"port{LOCAL_PORT}", LINK_LATENCY),
         )
         local.setNoCut()

@@ -13,6 +13,12 @@ in `src/`. The public entry points remain `bootstrap.sh`, `build-scripts/` and
 | `parameter-reference.py` | Generate and check the tile parameter reference |
 | `tests/` | Correctness tests for this tooling |
 
+For a first integrated SPM run, use
+`bash tests/run-all.sh --case network/mesh-3x3`. The
+[test guide](../../tests/README.md) lists focused SPM/I-cache checks and the
+remaining full-suite migration work. `check-build.py` separately boots an
+SPM-linked hello program to verify the installed simulator and guest paths.
+
 ```bash
 python3 -B tools/hardware/verify.py
 bash tools/hardware/env.sh COMMAND

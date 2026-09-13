@@ -62,7 +62,7 @@ done
     -fuse-ld=lld \
     -Wl,--build-id=none \
     -Wl,--gc-sections \
-    "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+    -Wl,--defsym,SPM_BYTES=2097152,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
     "${COMMON_OUTPUT}/crt0.o" \
     "${COMMON_OUTPUT}/uart.o" \
     "${COMMON_OUTPUT}/platform-exit.o" \
@@ -104,7 +104,7 @@ build_trial() {
             -fuse-ld=lld \
             -Wl,--build-id=none \
             -Wl,--gc-sections \
-            "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+            -Wl,--defsym,SPM_BYTES=2097152,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
             "${COMMON_OUTPUT}/crt0.o" \
             "${COMMON_OUTPUT}/uart.o" \
             "${COMMON_OUTPUT}/platform-exit.o" \

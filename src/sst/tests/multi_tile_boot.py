@@ -13,8 +13,10 @@ if tile_count < 2:
 
 qemu_path = os.environ["MITTENS_TEST_QEMU"]
 
+tiles = {}
 for tile_id in range(tile_count):
     tile = sst.Component(f"tile{tile_id}", "mittens.tile")
+    tiles[tile_id] = tile
     tile.addParams(
         {
             "tile_id": tile_id,
@@ -25,3 +27,9 @@ for tile_id in range(tile_count):
             "verbose": 2,
         }
     )
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests/support"))
+from spm import attach_memory
+attach_memory(tiles)

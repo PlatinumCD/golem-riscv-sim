@@ -49,7 +49,7 @@ require_packet_route() {
     fi
 }
 
-for backend in merlin mittens; do
+for backend in mittens; do
     statistics="${TEST_BUILD}/router-statistics-${backend}.csv"
     simulation_output="${TEST_BUILD}/simulation-${backend}.log"
     export MITTENS_MESH_ROUTER_BACKEND="${backend}"
@@ -76,21 +76,12 @@ for backend in merlin mittens; do
         fi
     done
 
-    if [[ "${backend}" == merlin ]]; then
-        statistic=send_packet_count
-        east=port0
-        west=port1
-        south=port2
-        north=port3
-        local_port=port4
-    else
-        statistic=flits_forwarded
-        east=east
-        west=west
-        south=south
-        north=north
-        local_port=local0
-    fi
+    statistic=flits_forwarded
+    east=east
+    west=west
+    south=south
+    north=north
+    local_port=local0
 
     # Forward path: (0,0) -> (1,0) -> (2,0) -> (2,1) -> (2,2).
     require_packet_route "${statistics}" router_0_0 "${statistic}" "${east}"

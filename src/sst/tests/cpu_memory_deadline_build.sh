@@ -21,7 +21,7 @@ for mode in delivery spm; do
         -c "${TEST_DIR}/cpu_memory_deadline.cpp" -o "${OUTPUT}/${mode}.o"
     "${LLVM}/bin/clang++" "${common[@]}" -nostdlib -nostartfiles -nodefaultlibs \
         -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT}/crt0.o" "${OUTPUT}/uart.o" "${OUTPUT}/exit.o" "${OUTPUT}/${mode}.o" \
         -o "${OUTPUT}/${mode}.elf"
 done

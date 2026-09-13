@@ -22,9 +22,8 @@ Current `mvm.set` descriptors carry the valid matrix rows and columns along
 with the array ID. The command bridge therefore publishes only the valid
 row-major rectangle; SST zero-fills the remainder of the configured physical
 array. This avoids transferring physical padding while preserving identical
-backend matrix contents. During the explicit memory-initialization interval,
-QEMU performs that snapshot as one bulk read and reports the exact byte count
-to the aggregate initialization timing path.
+backend matrix contents. The default SPM boot path disables aggregate
+initialization batching; guest source reads use the normal timed memory path.
 `mvm` and `mvm.mv` publish only array IDs. These operations wait for SST
 acceptance and then retire. After publishing fd 43 data, every operation
 yields through the separate fd 41 synchronization bridge. `mvm.s` remains

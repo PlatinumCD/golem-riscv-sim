@@ -234,6 +234,17 @@ ScratchpadSchedule ScratchpadTimingModel::scheduleDMA(
     return result;
 }
 
+ScratchpadSchedule ScratchpadTimingModel::scheduleInstructionFetch(
+    std::uint64_t currentCycle, std::uint64_t offset, std::uint64_t byteCount)
+{
+    const ScratchpadSchedule result = schedule(
+        currentCycle, offset, byteCount, false,
+        configuration_.accessWidthBits / 8, 0,
+        static_cast<int>(ScratchpadDMAClient::InstructionFetch));
+    recordServiceCycles(false, result.serviceCycles);
+    return result;
+}
+
 void ScratchpadTimingModel::recordServiceCycles(
     bool write,
     std::uint64_t serviceCycles)

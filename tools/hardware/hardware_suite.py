@@ -17,8 +17,8 @@ class Case:
 
 
 HARDWARE = {
-    'platform': ('hello', 'riscv-vector', 'cpu-timing', 'register-only-accounting', 'rvv-only-accounting', 'rvv-memory-accounting'),
-    'memory': ('global-ram', 'global-ram-exact', 'scratchpad-dma', 'global-dma-macro-contention'),
+    'platform': ('hello', 'riscv-vector', 'cpu-timing', 'register-only-accounting', 'rvv-only-accounting', 'rvv-memory-accounting', 'scratchpad-icache', 'icache-working-set'),
+    'memory': ('global-ram', 'global-ram-exact', 'scratchpad-dma', 'global-dma-contention', 'spm-chunking', 'spm-code-capacity'),
     'network': ('pair', 'mesh-3x3', 'timing', 'pipeline', 'communication-envelope'),
     'analog': ('instructions', 'ops', 'timing', 'mesh-2x2', 'route-2x2',
                'mesh-2x2-dual-array', 'producer-mvm-recombine-distance'),

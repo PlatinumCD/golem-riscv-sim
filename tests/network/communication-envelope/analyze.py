@@ -121,7 +121,10 @@ def analyze(trial):
     expected = c['expected_payload_bytes']
     sent = sum(int(r['payload_words'])*4 for r in network if r['event']=='inject')
     arrived = sum(int(r['payload_words'])*4 for r in network if r['event']=='arrive')
-    if (tx_bytes,rx_bytes,sent,arrived) != (expected,)*4:
+    # Headers now live in executable SPM too: TX reads those bytes, whereas
+    # RX DMA copies only payload (software consumes the seven-word header).
+    header_bytes = len(c['flows']) * c['segments'] * c['waves'] * 7 * 4
+    if (tx_bytes,rx_bytes,sent,arrived) != (expected + header_bytes, expected, expected, expected):
         raise MeasurementError(f'payload conservation: expected {expected}; TX/RX/inject/arrive={(tx_bytes,rx_bytes,sent,arrived)}')
     occupied = set()
     for b in beats:

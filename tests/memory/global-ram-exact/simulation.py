@@ -2,12 +2,10 @@ import os
 import sys
 from pathlib import Path
 
-
 TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[1] / "support"))
 
 from mesh import build_mesh
-
 
 build_mesh(
     width=3,
@@ -24,15 +22,12 @@ build_mesh(
         "qemu_control_memory": "16M",
         "scratchpad_enabled": True,
         "scratchpad_bytes": 2 * 1024 * 1024,
-        "scratchpad_access_batching": True,
-        "scratchpad_access_run_compaction": True,
-        "global_dma_submit_batching": os.environ.get(
-            "MITTENS_TEST_GLOBAL_DMA_SUBMIT_BATCHING", "0"
-        ).lower() in ("1", "true", "yes", "on"),
+
         "profile_mode": "summary",
         "profile_output_directory": os.environ[
             "MITTENS_GLOBAL_RAM_EXACT_PROFILE"
         ],
+        "serial_output_directory": str(Path(os.environ["MITTENS_GLOBAL_RAM_EXACT_PROFILE"]).parent / "serial"),
         "progress_snapshot_interval_ms": 0,
         "progress_watchdog_ms": 10000,
     },

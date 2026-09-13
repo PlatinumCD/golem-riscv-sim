@@ -33,29 +33,71 @@ def main():
         ('bad-rx-lanes', {'rx_dma_streams': 3}, False),
         ('clocks', {'cpu_clock': '2GHz', 'rx_dma_clock': '500MHz'}, True),
         ('SPM', {'scratchpad_enabled': True}, True),
+        ('boot-valid', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                        'memory_backend': 'streaming'}, True),
         ('escaped', {'elf': 'line\n"quote"\\slash'}, True),
         ('bad-tx', {'tx_dma_streams': 3}, False),
         ('bad-issue', {'cpu_issue_width': 0}, False),
+        ('bad-ram', {'memory_backend': 'native'}, False),
+        ('bad-cache-backend', {'memory_backend': 'memhierarchy'}, False),
+        ('bad-tail', {'network_tail_delivery': False}, False),
+        ('bad-init-barrier', {'memory_init_barrier_tiles': 2}, False),
+        ('bad-tx-bypass', {'tx_dma_fifo_bytes': 0}, False),
         ('bad-rvv', {'riscv_vector_length_bits': 192}, False),
         ('bad-rx-width', {'rx_dma_width_bits': 33}, False),
         ('bad-fifo', {'tx_dma_fifo_bytes': 31}, False),
         ('bad-rx-spm', {'scratchpad_enabled': True, 'rx_dma_width_bits': 128}, False),
-        ('bad-batching', {'scratchpad_access_batching': True}, False),
+        ('bad-batching', {'scratchpad_boot': False, 'scratchpad_enabled': False,
+                          'scratchpad_access_batching': True}, False),
         ('bad-mesh', {'mesh_width': 2, 'mesh_height': 1, 'network_size': 3}, False),
-        ('bad-memory', {'memory_backend': 'unknown'}, False),
+        ('bad-memory', {'scratchpad_boot': False, 'memory_backend': 'unknown'}, False),
+        ('bad-boot-spm', {'scratchpad_enabled': False}, False),
+        ('bad-boot-issue', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                            'memory_backend': 'streaming', 'cpu_issue_width': 2}, False),
+        ('bad-boot-batching', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                               'memory_backend': 'streaming',
+                               'memory_access_batching': True}, False),
+        ('bad-boot-lookahead', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                                'memory_backend': 'streaming',
+                                'qemu_local_lookahead': True}, False),
+        ('bad-cache-line', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                            'memory_backend': 'streaming',
+                            'instruction_cache_line_bytes': 3}, False),
+        ('bad-cache-ways', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                            'memory_backend': 'streaming',
+                            'instruction_cache_ways': 3}, False),
+        ('bad-cache-capacity', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                                'memory_backend': 'streaming',
+                                'instruction_cache_bytes': 64}, False),
+        ('bad-cache-hit', {'scratchpad_boot': True, 'scratchpad_enabled': True,
+                           'memory_backend': 'streaming',
+                           'instruction_cache_hit_cycles': 0}, False),
     ]
     expected_errors = {
         'bad-rx-lanes': 'rx_dma_streams must be 1, 2, or 4',
         'bad-tx': 'requires tx_dma_streams in {1,2,4}',
-        'bad-issue': 'requires cpu_issue_width to be 1, 2, or 4',
+        'bad-issue': 'scratchpad_boot requires scratchpad_enabled',
+        'bad-ram': 'fixed execution setting:',
+        'bad-cache-backend': 'fixed execution setting:',
+        'bad-tail': 'fixed execution setting:',
+        'bad-init-barrier': 'fixed execution setting:',
+        'bad-tx-bypass': 'requires tx_dma_fifo_bytes to be a word-aligned',
         'bad-rvv': 'requires riscv_vector_length_bits to be a power',
         # RX is now constructed after centralized TileConfiguration validation.
         'bad-rx-width': 'requires rx_dma_width_bits to be a positive multiple of 32',
-        'bad-fifo': 'requires tx_dma_fifo_bytes to be zero or a word-aligned',
+        'bad-fifo': 'requires tx_dma_fifo_bytes to be a word-aligned',
         'bad-rx-spm': 'requires RX-DMA width/setup to match',
-        'bad-batching': 'requires scratchpad_enabled when',
+        'bad-batching': 'fixed execution setting:',
         'bad-mesh': 'do not match network_size',
-        'bad-memory': 'has unsupported memory_backend',
+        'bad-memory': 'fixed execution setting:',
+        'bad-boot-spm': 'fixed execution setting:',
+        'bad-boot-issue': 'scratchpad_boot requires scratchpad_enabled',
+        'bad-boot-batching': 'fixed execution setting:',
+        'bad-boot-lookahead': 'fixed execution setting:',
+        'bad-cache-line': 'invalid scratchpad instruction-cache geometry or latency',
+        'bad-cache-ways': 'invalid scratchpad instruction-cache geometry or latency',
+        'bad-cache-capacity': 'invalid scratchpad instruction-cache geometry or latency',
+        'bad-cache-hit': 'invalid scratchpad instruction-cache geometry or latency',
     }
     for name, params, valid in cases:
         trial = output / name
@@ -76,9 +118,9 @@ def main():
             files = list((trial / 'resolved').glob('*.json'))
             assert len(files) == 1, files
             settings = json.loads(files[0].read_text())['parameters']
-            assert len(settings) == 75, len(settings)
             for key, value in params.items():
-                assert settings[key]['value'] == value, (name, key)
+                if key in settings:
+                    assert settings[key]['value'] == value, (name, key)
             assert settings['sync_instruction_quantum']['category'] == 'execution'
             if name == 'defaults':
                 expected = json.loads(Path(__file__).with_name('tile-defaults.json').read_text())['parameters']

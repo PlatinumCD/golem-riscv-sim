@@ -15,10 +15,10 @@ struct RuntimeQemuReadySetStatistics
 };
 struct QemuCaptureHostStatistics
 {
-    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1> counts{};
-    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1>
+    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_COUNT> counts{};
+    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_COUNT>
         nanoseconds{};
-    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1>
+    std::array<std::atomic<std::uint64_t>, MITTENS_SYNC_STOP_COUNT>
         maximumNanoseconds{};
     std::array<std::atomic<std::uint64_t>, 8> fencePayloadCounts{};
     std::array<std::atomic<std::uint64_t>, 8> fencePayloadNanoseconds{};
@@ -30,7 +30,7 @@ struct LocalQemuLookaheadStatistics
     QemuAsyncCaptureExecutor::Statistics executor;
     std::uint64_t readyAtCommit;
     std::uint64_t waitedAtCommit;
-    std::array<std::uint64_t, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1> fusedTerminalCounts{};
+    std::array<std::uint64_t, MITTENS_SYNC_STOP_COUNT> fusedTerminalCounts{};
 };
 class QemuCaptureCoordinator final
 {

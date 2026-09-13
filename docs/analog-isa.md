@@ -56,6 +56,8 @@ The instruction matches one of the rows below when
 An address is an RV64 guest address in the `rs1` GPR. An array ID is a
 tile-local, zero-based 32-bit identifier; it is not a mesh tile ID. Matrix and
 physical extents come from `analog_array_rows` and `analog_array_columns`.
+On the default architecture, address operands refer to SPM. Input data held
+in shared main memory must first be transferred into a valid SPM range.
 `mvm.set` additionally accepts a compact valid rectangle packed into the
 value of `rs2`; this does not change the instruction encoding.
 
@@ -120,7 +122,7 @@ the upper 32 bits are not defined by this intrinsic lowering.
 
 Every intrinsic returns `void`. Although the assembly form contains an `rd`
 field, compiler-generated instructions set `rd` to `x0`, so LLVM-generated
-code cannot observe a completion status. Legacy Golem inline assembly uses a
+code cannot observe a completion status. Guest inline assembly can use a
 nonzero `rd` and expects zero for success and nonzero for failure, but LLVM
 does not define the exact status ABI. Mittens writes a documented
 `MittensAnalogStatus` value when `rd` is nonzero. For asynchronous operations,

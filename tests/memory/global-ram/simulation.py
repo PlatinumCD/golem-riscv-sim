@@ -2,12 +2,10 @@ import os
 import sys
 from pathlib import Path
 
-
 TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[1] / "support"))
 
 from mesh import build_mesh
-
 
 build_mesh(
     width=2,

@@ -2,38 +2,33 @@ import os
 import sys
 from pathlib import Path
 
-
 TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[1] / "support"))
 
 from mesh import build_mesh
-
 
 build_mesh(
     width=2,
     height=1,
     qemu_path=os.environ["MITTENS_TEST_QEMU"],
     images=[
-        os.environ["MITTENS_GLOBAL_DMA_MACRO_TILE0"],
-        os.environ["MITTENS_GLOBAL_DMA_MACRO_TILE1"],
+        os.environ["MITTENS_GLOBAL_DMA_CONTENTION_TILE0"],
+        os.environ["MITTENS_GLOBAL_DMA_CONTENTION_TILE1"],
     ],
-    statistics_path=os.environ["MITTENS_GLOBAL_DMA_MACRO_STATS"],
+    statistics_path=os.environ["MITTENS_GLOBAL_DMA_CONTENTION_STATS"],
     verbosity=1,
     tile_params={
         "qemu_control_memory": "16M",
         "scratchpad_enabled": True,
         "scratchpad_bytes": 2 * 1024 * 1024,
-        "global_dma_macro_execution": os.environ.get(
-            "MITTENS_TEST_GLOBAL_DMA_MACRO_EXECUTION", "0"
-        ).lower()
-        in ("1", "true", "yes", "on"),
+
         "sync_instruction_quantum": 1_000_000,
         "profile_mode": "trace",
         "profile_output_directory": os.environ[
-            "MITTENS_GLOBAL_DMA_MACRO_PROFILE"
+            "MITTENS_GLOBAL_DMA_CONTENTION_PROFILE"
         ],
         "serial_output_directory": os.environ[
-            "MITTENS_GLOBAL_DMA_MACRO_UART"
+            "MITTENS_GLOBAL_DMA_CONTENTION_UART"
         ],
         "progress_snapshot_interval_ms": 0,
         "progress_watchdog_ms": 10_000,

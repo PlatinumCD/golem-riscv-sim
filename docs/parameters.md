@@ -25,45 +25,27 @@ use `--check` to detect stale documentation.
 | `mesh_link_clock` | `std::string` | `1GHz` | hardware | Clock defining one physical mesh transfer cycle |
 | `mesh_link_width_bits` | `std::uint32_t` | `32` | hardware | Physical mesh link width in bits per transfer cycle |
 | `network_packet_words` | `std::uint32_t` | `16` | hardware | Maximum 32-bit words in one SST network request. This value must not exceed the endpoint buffer capacity |
-| `network_tail_delivery` | `bool` | `false` | hardware | The network interface delivers a request only after its tail flit arrives |
 
-## Guest and data-memory configuration
+## Guest program
 
 | Parameter | Type | Default | Category | Meaning |
 |---|---|---|---|---|
 | `qemu_path` | `std::string` | `qemu-system-riscv64` | execution | Path to the QEMU system emulator |
 | `elf` | `std::string` | `` | workload | Bare-metal ELF image loaded by QEMU |
-| `memory` | `std::string` | `16M` | hardware | Small non-architectural QEMU control memory assigned to this tile |
-| `memory_backend` | `std::string` | `native` | hardware | Data-memory timing backend: native, memhierarchy, or streaming |
-| `memory_guest_base` | `std::uint64_t` | `0` | hardware | Guest physical base used for tile-namespaced timing addresses; zero preserves guest addresses |
-| `memory_tile_stride` | `std::uint64_t` | `0` | hardware | Per-tile timing-address stride; zero preserves guest addresses |
-| `memory_cache_line_size` | `std::uint32_t` | `64` | hardware | Cache line size used for receive-DMA invalidation |
-| `memory_load_queue_entries` | `std::uint32_t` | `8` | hardware | Timed load-queue capacity for grouped nonblocking loads |
-| `memory_store_buffer_entries` | `std::uint32_t` | `1` | hardware | Timed CPU store-buffer capacity; one preserves blocking behavior |
 
-## Replay batching and initialization
+## Executable scratchpad and its instruction cache. No data cache is added
 
 | Parameter | Type | Default | Category | Meaning |
 |---|---|---|---|---|
-| `memory_init_batching` | `bool` | `false` | execution | Aggregate pre-runtime data accesses into one fd 41 initialization handshake |
-| `memory_access_batching` | `bool` | `false` | execution | Batch fd 41 transport while replaying each ordinary runtime access through MemHierarchy |
-| `scratchpad_access_batching` | `bool` | `false` | execution | Batch fd 41 transport while replaying every runtime scratchpad access through ScratchpadTimingModel |
-| `scratchpad_access_run_compaction` | `bool` | `false` | execution | Compact adjacent fragments from one dynamic scratchpad instruction while preserving logical timing and accounting |
-| `memory_event_batching` | `bool` | `false` | execution | Fuse a pending memory-access batch with its immediately following synchronization event |
-| `global_dma_submit_batching` | `bool` | `false` | execution | Batch ordered nonblocking global-RAM DMA submissions across fd 41 while preserving each physical descriptor and modeled CPU boundary |
-| `global_dma_macro_execution` | `bool` | `false` | execution | Replay compiler-certified ordered global-RAM DMA event tapes from one fd-41 envelope without changing physical timing |
-| `analog_command_batching` | `bool` | `false` | execution | Batch proven nonblocking analog submissions across fd 41 while replaying every command at its original modeled CPU boundary |
-| `memory_access_batch_records` | `std::uint32_t` | `16` | execution | Maximum logical memory accesses before flushing one bounded fd 41 record batch |
-| `memory_init_bytes_per_cycle` | `std::uint32_t` | `32` | hardware | Aggregate initialization bandwidth in bytes per CPU cycle |
-| `memory_init_latency_cycles` | `std::uint64_t` | `2` | hardware | One-time aggregate initialization latency in CPU cycles |
-| `memory_init_instruction_quantum` | `std::uint64_t` | `67108864` | execution | Maximum instructions SST grants QEMU during pre-runtime initialization |
-| `memory_init_barrier_tiles` | `std::uint32_t` | `0` | hardware | Number of active tiles that must finish pre-runtime initialization before any tile enters runtime; zero disables the deployment barrier |
+| `instruction_cache_bytes` | `std::uint32_t` | `8192` | hardware | Instruction cache capacity in bytes, backed by scratchpad |
+| `instruction_cache_line_bytes` | `std::uint32_t` | `64` | hardware | Instruction cache line size in bytes |
+| `instruction_cache_ways` | `std::uint32_t` | `2` | hardware | Instruction cache associativity |
+| `instruction_cache_hit_cycles` | `std::uint64_t` | `1` | hardware | Instruction cache lookup latency in CPU cycles |
 
 ## Private noncoherent scratchpad
 
 | Parameter | Type | Default | Category | Meaning |
 |---|---|---|---|---|
-| `scratchpad_enabled` | `bool` | `false` | hardware | Enable the private noncoherent tile scratchpad |
 | `scratchpad_bytes` | `std::uint64_t` | `262144` | hardware | Private scratchpad capacity in bytes |
 | `scratchpad_banks` | `std::uint32_t` | `8` | hardware | Number of scratchpad banks |
 | `scratchpad_read_ports` | `std::uint32_t` | `1` | hardware | Read ports per scratchpad bank |
@@ -86,13 +68,9 @@ use `--check` to detect stale documentation.
 |---|---|---|---|---|
 | `launch_mode` | `std::string` | `disabled` | workload | QEMU launch mode: disabled or managed |
 | `cpu_clock` | `std::string` | `1GHz` | hardware | Clock defining the synchronized CPU issue cycle |
-| `cpu_issue_width` | `std::uint32_t` | `1` | hardware | Scalar front-end issue width: 1, 2, or 4 instructions per cycle; vector issue remains one per cycle |
+| `cpu_issue_width` | `std::uint32_t` | `1` | hardware | Scalar issue width; executable-SPM fetch accounting currently requires 1 |
 | `sync_instruction_quantum` | `std::uint64_t` | `1000` | execution | Maximum instructions SST grants QEMU at once |
-| `qemu_ready_set_workers` | `std::uint32_t` | `1` | execution | Bounded host worker count for deterministic same-frontier initial QEMU grants; one preserves serial execution |
-| `qemu_runtime_ready_set` | `bool` | `false` | execution | Use the deterministic ready-set executor for independently runnable runtime QEMU captures |
-| `qemu_local_lookahead` | `bool` | `false` | execution | Compute the next QEMU stop asynchronously after a standalone private scratchpad batch while preserving its modeled commit frontier |
 | `qemu_capture_spin_us` | `std::uint32_t` | `0` | execution | Host-only busy-poll interval before an SST-to-QEMU capture falls back to futex sleep |
-| `qemu_ready_set_independence_proof` | `std::string` | `` | execution | Frozen materialization-audit SHA-256 required when initial QEMU grants run concurrently |
 
 ## RISC-V Vector Extension
 
@@ -112,7 +90,7 @@ use `--check` to detect stale documentation.
 | `rx_dma_queue_depth` | `std::uint32_t` | `4` | hardware | Finite incoming burst queue depth, from 1 through 4 |
 | `rx_dma_streams` | `std::uint32_t` | `1` | hardware | Independent RX DMA lanes: 1, 2, 4 |
 | `rx_dma_streaming` | `bool` | `false` | hardware | Release arrived DMA-owned frame fragments before the whole frame arrives |
-| `tx_dma_fifo_bytes` | `std::uint32_t` | `128` | hardware | Bounded source-Scratchpad-to-NIC FIFO capacity in bytes; zero disables timed TX DMA |
+| `tx_dma_fifo_bytes` | `std::uint32_t` | `128` | hardware | Per-lane source-SPM-to-NIC FIFO bytes, at least one scratchpad DMA beat |
 | `tx_dma_streams` | `std::uint32_t` | `1` | hardware | Independent TX DMA and local injection lanes: 1, 2, or 4 |
 
 ## Analog accelerator

@@ -21,7 +21,7 @@ require_file "${INSTALL_ROOT}/sst-elements/lib/sst-elements-library/libmittens.s
 "${PROJECT_ROOT}/build-scripts/build-platform.sh" cpu-timing-validation
 
 trial_specs=()
-for width in 1 2 4; do
+for width in 1; do
     for quantum in 37 1000; do
         trial="${OUTPUT_ROOT}/width-${width}/quantum-${quantum}"
         profile="${trial}/profile"
@@ -54,4 +54,4 @@ for width in 1 2 4; do
 done
 
 "${ANALYZER}" "${RESULTS}" "${trial_specs[@]}"
-echo "scalar/RVV issue-width and instruction-quantum timing: PASS"
+echo "scalar/RVV instruction-quantum timing: PASS"

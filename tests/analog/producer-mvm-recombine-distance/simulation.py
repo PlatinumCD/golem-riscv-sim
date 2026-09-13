@@ -4,19 +4,16 @@ from pathlib import Path
 
 import sst
 
-
 TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TEST_DIR.parents[1]))
 
 from support.mesh import build_mesh
-
 
 def required(name):
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(f"{name} must be set")
     return value
-
 
 width = 9
 height = 9
@@ -44,7 +41,8 @@ build_mesh(
     verbosity=int(os.environ.get("MITTENS_PMR_VERBOSITY", "0")),
     tile_params={
         "cpu_clock": "1GHz",
-        "cpu_issue_width": 2,
+        "cpu_issue_width": 1,
+        "scratchpad_bytes": 2 * 1024 * 1024,
         "sync_instruction_quantum": 1000000,
         "analog_array_count": 2,
         "analog_array_rows": 256,
@@ -69,7 +67,8 @@ build_mesh(
     # 512-word activation frame.
     network_cell_words=1,
     network_buffer_cells=16384,
+    network_packet_words=16,
     mesh_link_width_bits=32,
     mesh_link_clock="1GHz",
-    memory_backend="native",
+    memory_backend="streaming",
 )

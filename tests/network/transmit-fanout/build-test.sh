@@ -79,7 +79,7 @@ for tile_id in 0 1; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -111,7 +111,7 @@ for tile_id in $(seq 0 31); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -139,7 +139,7 @@ for tile_id in $(seq 0 31); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -163,7 +163,7 @@ for fanout in 1 2 4 8 16 24; do
             -fuse-ld=lld \
             -Wl,--build-id=none \
             -Wl,--gc-sections \
-            "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+            -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
             "${OUTPUT_DIR}/crt0.o" \
             "${OUTPUT_DIR}/uart.o" \
             "${OUTPUT_DIR}/platform-exit.o" \
@@ -195,7 +195,7 @@ for fanout in 1 2 4 8 16 24; do
                 -fuse-ld=lld \
                 -Wl,--build-id=none \
                 -Wl,--gc-sections \
-                "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+                -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
                 "${OUTPUT_DIR}/crt0.o" \
                 "${OUTPUT_DIR}/uart.o" \
                 "${OUTPUT_DIR}/platform-exit.o" \
@@ -229,7 +229,7 @@ for tile_id in 0 1 2; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -266,7 +266,7 @@ for tile_id in 0 1 2; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -293,7 +293,7 @@ for tile_id in 0 1; do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \
@@ -325,7 +325,7 @@ for tile_id in $(seq 0 "${tail_contention_sources}"); do
         -fuse-ld=lld \
         -Wl,--build-id=none \
         -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT_DIR}/crt0.o" \
         "${OUTPUT_DIR}/uart.o" \
         "${OUTPUT_DIR}/platform-exit.o" \

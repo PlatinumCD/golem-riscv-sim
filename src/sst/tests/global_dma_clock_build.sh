@@ -25,7 +25,7 @@ for mode in scalar batch; do
         -c "${TEST_DIR}/global_dma_clock.cpp" -o "${OUTPUT}/${mode}.o"
     "${LLVM}/bin/clang++" "${common[@]}" -nostdlib -nostartfiles -nodefaultlibs \
         -fuse-ld=lld -Wl,--build-id=none -Wl,--gc-sections \
-        "-Wl,-T,${PLATFORM_STARTUP_ROOT}/tile.ld" \
+        -Wl,--defsym,SPM_CODE_OFFSET=65536 "-Wl,-T,${PLATFORM_STARTUP_ROOT}/scratchpad.ld" \
         "${OUTPUT}/crt0.o" "${OUTPUT}/uart.o" "${OUTPUT}/platform-exit.o" \
         "${OUTPUT}/${mode}.o" -o "${OUTPUT}/${mode}.elf"
 done

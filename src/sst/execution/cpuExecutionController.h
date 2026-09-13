@@ -19,7 +19,7 @@ class CpuExecutionController final
     {
         std::uint64_t synchronizationGrants_ = 0;
         std::uint64_t synchronizationEvents_ = 0;
-        std::array<std::uint64_t, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1>
+        std::array<std::uint64_t, MITTENS_SYNC_STOP_COUNT>
             synchronizationStopCounts_{};
         std::uint64_t analogSubmitBatchTransportRecords_ = 0;
         std::uint64_t memoryBatchTransportRecords_ = 0;
@@ -28,7 +28,8 @@ class CpuExecutionController final
         std::uint64_t globalDMAWaitBatchTransportRecords_ = 0;
         std::uint64_t globalDMAMacroRunTransportRecords_ = 0;
         std::uint64_t taskFinishEvents_ = 0;
-        std::array<std::uint64_t, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1> waitTicks_{};
+        std::uint64_t unretiredInstructionFetches_ = 0;
+        std::array<std::uint64_t, MITTENS_SYNC_STOP_COUNT> waitTicks_{};
         std::optional<std::uint64_t> activeWaitStartTick_;
         std::uint32_t activeWaitReason_ = MITTENS_SYNC_STOP_NONE;
         std::uint64_t activeWaitEventSequence_ = 0;
@@ -59,6 +60,7 @@ class CpuExecutionController final
         std::function<bool(const QemuSyncEvent&)> prepareDeferredAnalog, deferredAnalogMatches;
         std::function<void(const QemuSyncEvent&)> validateInitialDevice;
         std::function<CpuDeviceResult(const CpuMemoryAction&)> memory;
+        std::function<CpuDeviceResult(const CpuInstructionAction&)> instruction;
         std::function<CpuDeviceResult(const CpuAnalogAction&)> analog;
         std::function<CpuDeviceResult(const CpuNetworkAction&)> network;
         std::function<CpuDeviceResult(const CpuGlobalDMAAction&)> globalDMA;
@@ -83,7 +85,7 @@ class CpuExecutionController final
         return pendingSyncEvent_ ? stepId_ : 0;
     }
     void completeDevice(std::uint64_t step);
-    void completeMemory(std::uint64_t step, bool group = false);
+    void completeMemory(std::uint64_t step);
     void resumeTransmitWaitIfReady();
     void resumeReceiveWaitIfReady();
     void stop();
@@ -200,6 +202,10 @@ class CpuExecutionController final
     Host host_;
     Diagnostics output_;
     CpuExecutionLedger ledger_;
+    // In scratchpad boot mode the blocking fetch already pays the next
+    // instruction's issue cycle. Keep it in the ledger, not twice in elapsed time.
+    std::uint64_t prepaidInstructionIssueCycles_ = 0;
+    std::uint64_t unretiredInstructionFetches_ = 0;
     std::shared_ptr<std::atomic<bool>> captureLease_ = std::make_shared<std::atomic<bool>>(true);
     bool stopped_ = false;
     bool initialCapturePending_ = false;
@@ -222,9 +228,6 @@ class CpuExecutionController final
     void beginMemoryBatch(const QemuSyncEvent& event);
     void clearMemoryBatchState();
     void scheduleScratchpadMemoryBatch();
-    void scheduleNextMemoryBatchStep();
-    void advanceMemoryBatchAccess();
-    void advanceMemoryBatchGroup();
     void beginGlobalDMASubmitBatch(const QemuSyncEvent& event);
     void clearGlobalDMASubmitBatchState();
     void scheduleNextGlobalDMASubmitBatchStep();
@@ -257,7 +260,7 @@ class CpuExecutionController final
     std::uint32_t localQemuLookaheadSourceReason_ = MITTENS_SYNC_STOP_NONE;
     std::uint64_t synchronizationGrants_ = 0;
     std::uint64_t synchronizationEvents_ = 0;
-    std::array<std::uint64_t, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1>
+    std::array<std::uint64_t, MITTENS_SYNC_STOP_COUNT>
         synchronizationStopCounts_{};
     std::optional<QemuSyncEvent> analogSubmitBatchEnvelope_;
     std::vector<MittensSyncAnalogSubmit> analogSubmitBatchRecords_;
@@ -266,15 +269,13 @@ class CpuExecutionController final
     std::optional<std::uint64_t> activeWaitStartTick_;
     std::uint32_t activeWaitReason_ = MITTENS_SYNC_STOP_NONE;
     std::uint64_t activeWaitEventSequence_ = 0;
-    std::array<std::uint64_t, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO + 1> waitTicks_{};
+    std::array<std::uint64_t, MITTENS_SYNC_STOP_COUNT> waitTicks_{};
     std::uint64_t scratchpadTimingCycle_ = 0;
     std::optional<QemuSyncEvent> memoryBatchEnvelope_;
     std::vector<MittensSyncMemoryAccess> memoryBatchRecords_;
     std::uint64_t memoryBatchTransportRecords_ = 0;
     std::uint64_t memoryBatchLogicalAccesses_ = 0;
     bool memoryBatchScratchpad_ = false;
-    std::size_t memoryBatchIndex_ = 0;
-    std::size_t memoryBatchGroupEndIndex_ = 0;
     std::optional<QemuSyncEvent> globalDMASubmitBatchEnvelope_;
     std::vector<MittensSyncGlobalDMASubmit> globalDMASubmitBatchRecords_;
     std::size_t globalDMASubmitBatchIndex_ = 0;

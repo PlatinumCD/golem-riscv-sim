@@ -45,7 +45,7 @@ class BootstrapTests(unittest.TestCase):
             for name in ('clang', 'clang++', 'llvm-readelf'):
                 tool = llvm / name
                 tool.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$MOCK_LOG"\n'
-                                'if [[ "$1" == --file-header ]]; then echo "Entry point address: 0x80000000"; fi\n')
+                                'if [[ "$1" == --file-header ]]; then echo "Entry point address: ${MOCK_ENTRY:-0x80000000}"; fi\n')
                 tool.chmod(0o755)
             (scripts / 'common.sh').write_text(f'''
 PROJECT_ROOT={ROOT}
@@ -62,12 +62,14 @@ require_sculptor_source() {{ echo unexpected-runtime >&2; exit 71; }}
 ''')
             log = root / 'commands.log'
             for target in ('hello', 'riscv-vector', 'cpu-timing-validation', 'qemu-ready-set',
-                           'scratchpad-dma', 'global-ram-exact', 'global-dma-macro-contention',
+                           'scratchpad-dma', 'global-ram-exact', 'global-dma-contention',
                            'epoch-barrier', 'analog-instructions', 'analog-ops', 'analog-timing-validation',
                            'analog-mesh-2x2', 'analog-mesh-2x2-dual-array', 'analog-route-2x2',
                            'mesh-pair', 'mesh-3x3', 'mesh-pipeline'):
                 result = subprocess.run(['bash', str(scripts / 'build-platform.sh'), target],
-                                        env=dict(os.environ, MOCK_LOG=str(log)), capture_output=True, text=True)
+                                        env=dict(os.environ, MOCK_LOG=str(log),
+                                                 MOCK_ENTRY='0x90010000'),
+                                        capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, (target, result.stderr))
             self.assertNotIn('/install/runtime/', log.read_text())
             self.assertNotIn('libgolem-runtime', log.read_text())

@@ -14,7 +14,6 @@ constexpr uint32_t TransferCount = 2;
 constexpr uint32_t TransferBytes = 4096;
 constexpr uint64_t GlobalOffset = 65536;
 constexpr uint64_t Execution = 97;
-constexpr uint64_t MacroInstructionBound = 65536;
 constexpr uint32_t Exact =
     golem::platform::ScratchpadDMAExactReadiness;
 constexpr uint32_t Teardown =
@@ -85,27 +84,20 @@ int runProducer() {
 
     // Let the consumer's exact reads reach the shared controller first.
     delayProducer();
-    if (!golem::platform::globalDMAMacroBegin(
-            Execution, TransferCount, MacroInstructionBound)) {
-        return fail("macro contention producer begin failed");
-    }
     for (uint32_t transfer = 0; transfer < TransferCount; ++transfer) {
         if (!submit(transfer, Direction::ScratchpadToGlobalRAM)) {
-            return fail("macro contention producer submit failed");
+            return fail("DMA contention producer submit failed");
         }
     }
     for (uint32_t transfer = 0; transfer < TransferCount; ++transfer) {
         if (!wait(transfer)) {
-            return fail("macro contention producer wait failed");
+            return fail("DMA contention producer wait failed");
         }
     }
-    if (!golem::platform::globalDMAMacroEnd(Execution, TransferCount)) {
-        return fail("macro contention producer end failed");
-    }
     if (!teardown()) {
-        return fail("macro contention producer teardown failed");
+        return fail("DMA contention producer teardown failed");
     }
-    uart_puts("macro contention tile 0: PASS\n");
+    uart_puts("DMA contention tile 0: PASS\n");
     return 0;
 }
 
@@ -119,36 +111,29 @@ int runConsumer() {
         scratchpad[index] = 0;
     }
 
-    if (!golem::platform::globalDMAMacroBegin(
-            Execution, TransferCount, MacroInstructionBound)) {
-        return fail("macro contention consumer begin failed");
-    }
     for (uint32_t transfer = 0; transfer < TransferCount; ++transfer) {
         if (!submit(transfer, Direction::GlobalRAMToScratchpad)) {
-            return fail("macro contention consumer submit failed");
+            return fail("DMA contention consumer submit failed");
         }
     }
     for (uint32_t transfer = 0; transfer < TransferCount; ++transfer) {
         if (!wait(transfer)) {
-            return fail("macro contention consumer wait failed");
+            return fail("DMA contention consumer wait failed");
         }
-    }
-    if (!golem::platform::globalDMAMacroEnd(Execution, TransferCount)) {
-        return fail("macro contention consumer end failed");
     }
 
     for (uint32_t transfer = 0; transfer < TransferCount; ++transfer) {
         for (uint32_t index = 0; index < TransferBytes; ++index) {
             if (scratchpad[transfer * TransferBytes + index] !=
                 expectedByte(transfer, index)) {
-                return fail("macro contention payload mismatch");
+                return fail("DMA contention payload mismatch");
             }
         }
     }
     if (!teardown()) {
-        return fail("macro contention consumer teardown failed");
+        return fail("DMA contention consumer teardown failed");
     }
-    uart_puts("macro contention tile 1: PASS\n");
+    uart_puts("DMA contention tile 1: PASS\n");
     return 0;
 }
 
@@ -161,5 +146,5 @@ extern "C" int tile_main() {
     if (TileId == 1) {
         return runConsumer();
     }
-    return fail("macro contention invalid tile ID");
+    return fail("DMA contention invalid tile ID");
 }

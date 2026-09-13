@@ -24,6 +24,9 @@ def main():
         'receive_dma_engine': ['network/receiveDMAEngine.cc'],
         'injection_order': [],
         'scratchpad_timing_model': ['memory/scratchpad/scratchpadTimingModel.cc'],
+        'instruction_cache': ['memory/instructionCache.cc',
+                              'memory/scratchpad/scratchpadTimingModel.cc'],
+        'scratchpad_boot_image': ['memory/scratchpadBootImage.cc'],
         'scratchpad_observer': ['memory/scratchpad/scratchpadTimingModel.cc'],
         'memory_access_coalescer': [],
         'global_ram_readiness': [],
@@ -61,7 +64,7 @@ def main():
     subprocess.run(['python3', str(COPY / 'sst/tests/test_measurements.py')], check=True)
     print('measurement artifact validation: PASS', flush=True)
     for script in ('test-bootstrap.py', 'test-build-selection.py', 'test-pin-baseline.py',
-                   'test-comparison.py', 'test-hardware-runner.py'):
+                   'test-comparison.py', 'test-hardware-runner.py', 'test-mesh-defaults.py'):
         subprocess.run(['python3', '-B', str(TOOLS / 'tests' / script)], check=True)
     print(f'Executables: {output}')
 

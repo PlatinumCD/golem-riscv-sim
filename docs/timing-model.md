@@ -10,19 +10,18 @@ The [CPU ledger](../src/sst/execution/cpuExecutionLedger.h) charges each issue
 region:
 
 ```text
-cycles = max(ceil(retired instructions / cpu_issue_width),
-             retired vector instructions)
+guest_cpu_cycles = retired instructions  # scalar + vector, one issue per cycle
 ```
 
 Component defaults are a 1 GHz CPU, issue width 1, and a 1,000-instruction
-grant. Supported widths are 1, 2, and 4. Occupancy carries across ordinary
-quantum ends; architectural device boundaries close the region.
+grant. The managed core is single-issue. Device and memory waits add elapsed
+time without retiring instructions.
 [Execution control](../src/sst/execution/cpuExecutionController.cc) schedules
 stops and replays batched records using their instruction counts.
 
-Grants provide bounded functional lookahead. Without rollback, asynchronous
+Grants limit how much QEMU can execute before reporting back. Without rollback, asynchronous
 arrivals during a grant can change the software path observed at its next
-boundary. Record quantum and batching settings with results. Control handshakes
+boundary. Record the instruction quantum with results. Control handshakes
 add no synthetic CPU cycle. RVV issue is counted, but arithmetic dependencies,
 operation latency, and VL/SEW/LMUL occupancy are not modeled.
 
@@ -31,7 +30,7 @@ Protocol versions come from the linked headers:
 
 | FD | Purpose | Protocol version |
 |---:|---|---:|
-| 41 | Grants, stops, waits, memory records, and completion control | [26](../src/bridge/include/mittens/SyncTileBridge.h) |
+| 41 | Grants, stops, waits, memory records, and completion control | [27](../src/bridge/include/mittens/SyncTileBridge.h) |
 | 42 | NIC packet and DMA payload transport | [7](../src/bridge/include/mittens/NICTileBridge.h) |
 | 43 | Analog commands, operands, and results | [1](../src/bridge/include/mittens/AnalogTileBridge.h) |
 | 44 | Shared sparse global-RAM backing when configured | File backing, not a bridge protocol |
@@ -42,15 +41,18 @@ resume when their controller satisfies the boundary.
 
 ## Memory and scratchpad
 
-[Tile configuration](../src/sst/configuration/tileParameters.h) supports
-`native`, `memhierarchy`, and `streaming` memory backends. Native is the
-component default. MemHierarchy uses the `memoryIF` StandardMem interface for
-ordinary RAM data-access timing; QEMU supplies functional data. Streaming
-deployments use explicit private scratchpad and shared global-RAM DMA.
-Instruction fetch and TLB timing are not detailed models.
+Every managed tile executes from scratchpad.
+Code, constants, data and stack occupy SPM; shared main memory uses explicit DMA.
+An 8 KiB instruction cache times every dynamic
+fetch and fills from the same SPM banks as data/DMA clients. A one-cycle hit
+overlaps the instruction's issue cost; additional lookup and fill time stalls
+the core. Instructions that fault retain their fetch time without being
+counted as retired instructions. This path uses single-issue, unbatched
+execution, with no extra program-memory mapping or data cache. TLB timing is
+not modeled. See the
+[boot and cache configuration](architecture.md#scratchpad-backed-instruction-cache).
 
-The private noncoherent scratchpad is implemented and enabled explicitly with
-`scratchpad_enabled` (component default false). Defaults when enabled are:
+The scratchpad is private to each tile and enabled by default:
 
 | Resource | Default |
 |---|---:|
@@ -65,23 +67,24 @@ The private noncoherent scratchpad is implemented and enabled explicitly with
 [Scratchpad timing](../src/sst/memory/scratchpad/scratchpadTimingModel.cc)
 splits requests into beats, selects a bank using
 `floor(offset / CPU_port_bytes) % banks`, and reserves an available port.
-Read and write ports have separate availability. CPU accesses and local DMA
+Read and write ports have separate availability. Cache fills, CPU accesses and DMA
 clients share these reservations; conflicts delay service. Capacity and access
 ranges are checked. DMA clients also maintain engine availability.
 
 [Memory access control](../src/sst/memory/memoryAccessController.cc) holds a
-CPU scratchpad access until its scheduled deadline. Transport batching and
-run compaction replay accesses through this model; compact host records do
-not remove modeled memory service. StandardMem loads and stores have bounded
-queues (defaults: eight loads, one store). Fences drain older timed stores;
-independent request grouping uses instruction identity and dependency metadata.
+CPU scratchpad access until its scheduled deadline. An aligned eight-element
+RVV e32,m1 load/store is one 32-byte transaction. This instruction-local
+combining does not depend on cross-instruction batching and does not eliminate
+any modeled bytes. Partial or faulting accesses retain their actual served bytes.
 
-Optional initialization batching charges setup plus
-`ceil(total_bytes / memory_init_bytes_per_cycle)`, with defaults of two
-cycles and 32 bytes/cycle. This aggregates initialization traffic without
-warming a modeled cache. See
-[initialization control](../src/sst/synchronization/initializationBarrierClient.cc)
-and tile parameters for phase/barrier settings.
+Before the first instruction, the boot image consumes shared-memory read
+service and SPM write service. Both must complete before QEMU gets an execution
+grant. `SCRATCHPAD_BOOT` reports this interval separately from guest CPU cycles.
+Loading bytes into SPM does not prewarm the instruction cache.
+
+The CPU cannot access a separate RAM or data-cache path. Unsupported execution
+settings are rejected before launch. Capacity, bank geometry, cache geometry,
+clocks and DMA resources remain parameterized.
 
 ## Shared global RAM
 
@@ -101,8 +104,9 @@ setup_cycles
 
 Defaults are eight setup cycles, 64-byte bursts, two fixed cycles per burst,
 and 32 bytes/cycle per channel. Readiness and channel queue delays are
-additional. The controller supports bulk barriers and exact dependencies;
-exact reads wait for committed coverage of their ranges. Configurable
+additional. In exact-dependency mode, application reads wait for committed
+coverage of their ranges. Loader reads are separately identified and do not
+wait for application producers; they still pay shared-memory and SPM service. Configurable
 scheduling priorities and channel reservations affect contention.
 
 The [tile DMA client](../src/sst/memory/globalDMAClient.cc) tracks tokens,
@@ -125,23 +129,22 @@ model contention and backpressure. SST link latency is configured separately.
 
 The [wormhole NIC](../src/sst/network/wormholeNetworkInterface.cc) handles
 injection and receive delivery. The [mesh builder](../tests/support/mesh.py)
-also supports Merlin, which needs explicit tail-delivery timing because head
-arrival alone does not mean the payload is complete. Record backend, widths,
+uses this router and NIC exclusively. A request is delivered after its tail
+arrives; RX must not charge network serialization again. Record widths,
 clocks, link latencies, buffer sizes, and lane counts with results.
 
 [TX DMA](../src/sst/network/tx/txController.cc) reserves SPM reads and stages
-data in a bounded FIFO before injection. The default FIFO is 128 bytes;
-zero disables timed TX DMA. [RX DMA](../src/sst/network/rx/rxController.cc)
+data in a FIFO before injection. The default FIFO is 128 bytes per lane and
+must hold at least one DMA beat. [RX DMA](../src/sst/network/rx/rxController.cc)
 reserves SPM writes and schedules completion before authorizing guest visibility.
 TX and RX each support 1, 2, or 4 lanes; both default to 1. Multiple lanes still
 contend for shared SPM ports and router outputs. Optional RX streaming releases
 eligible arrived fragments before the whole frame completes.
 
-Without the SPM timing path, the
-[receive DMA engine](../src/sst/network/receiveDMAEngine.cc) uses a configured
-clock, width, and setup delay (defaults: 1 GHz, 256 bits, eight cycles).
-The receive burst queue defaults to four entries. TX/RX waits use fd 41
-and controller events.
+SPM-backed RX service is measured in CPU cycles, not `rx_dma_clock` cycles.
+The receive burst queue defaults to four entries. TX/RX waits use fd 41 and
+controller events. Submitting work asynchronously does not by itself prove
+overlap: overlapping service must be visible in the timed trace.
 
 ## Analog and measurements
 
@@ -160,7 +163,7 @@ and units when interpreting traces.
 
 [Source tests](../src/sst/tests/) cover the CPU ledger, scratchpad timing,
 global-RAM readiness, and wormhole network.
-[CPU timing](../tests/platform/cpu-timing/) and
-[RVV execution](../tests/platform/riscv-vector/) provide guest-level checks.
-Use [analysis tools](../tools/analysis/) for profile/report processing and
-[compiler checks](../tools/compiler/) for deployment validation.
+[SPM/I-cache regressions](../tests/platform/scratchpad-icache/) check guest
+execution, fetches, vector transaction widths and quantum independence.
+The [test guide](../tests/README.md) lists the hardware regressions. Use the
+[profile analyzer](../tools/analysis/analyze-performance-profile.py) for reports.

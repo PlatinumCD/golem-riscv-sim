@@ -30,10 +30,12 @@ for k in "${K_VALUES[@]}"; do
 
     test -s "${profile}/tile-0-summary.csv"
     test -s "${tasks}/tile-0.csv"
-    python3 - "${RESULTS}" "${k}" \
+    PYTHONPATH="${PROJECT_ROOT}/tests/support${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${RESULTS}" "${k}" \
         "${profile}/tile-0-summary.csv" "${tasks}/tile-0.csv" <<'PY'
 import csv
 import sys
+from pathlib import Path
+from region import assert_register_only
 
 results, k_text, summary_path, task_path = sys.argv[1:]
 k = int(k_text)
@@ -60,10 +62,7 @@ if measured_instructions < k:
 finish_tick = summary["finish_tick"]
 if finish_tick % 1000:
     raise SystemExit(f"finish tick is not an integer 1 GHz cycle: {finish_tick}")
-if summary.get("scratchpad_service_cycles", 0) != 0:
-    raise SystemExit("RVV-only diagnostic used scratchpad service")
-if summary.get("physical_global_dma_submitted", 0) != 0:
-    raise SystemExit("RVV-only diagnostic submitted global DMA")
+assert_register_only(Path(summary_path).parent, start, finish)
 if summary.get("network_packets", 0) != 0:
     raise SystemExit("RVV-only diagnostic generated NoC packets")
 

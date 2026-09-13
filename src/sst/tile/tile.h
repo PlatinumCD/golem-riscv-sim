@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "../analog/analogController.h"
 #include "../memory/memoryAccessController.h"
 #include "../memory/globalDMAClient.h"
+#include "../memory/scratchpadBootImage.h"
 #include "../synchronization/initializationBarrierClient.h"
 #include "../execution/uniqueFileDescriptor.h"
 #include "../configuration/tileConfiguration.h"
@@ -73,10 +75,7 @@ class Tile : public SST::Component
 
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS({"networkIF",
                                          "Network interface connecting the tile to the SST mesh",
-                                         "SST::Interfaces::SimpleNetwork"},
-                                        {"memoryIF",
-                                         "Optional StandardMem interface for ordinary RAM",
-                                         "SST::Interfaces::StandardMem"})
+                                         "SST::Interfaces::SimpleNetwork"})
 
     Tile(SST::ComponentId_t id, SST::Params& params);
     ~Tile() override;
@@ -118,11 +117,12 @@ class Tile : public SST::Component
     void handleReceiveDMAEvent(SST::Event* event);
     void handleTransmitDMAEvent(SST::Event* event);
     void handleGlobalDMAEvent(SST::Event* event);
+    void submitBootSegment();
+    bool advanceScratchpadBoot();
     void handleMemoryInitializationBarrierEvent(SST::Event* event);
     void handleEpochBarrierEvent(SST::Event* event);
     void handleNetworkCompletionEvent(SST::Event* event);
     void handleAnalogWakeEvent(SST::Event* event);
-    void handleMemoryResponse(SST::Interfaces::StandardMem::Request* request);
 
     bool observeQemuExit();
     void handleQemuExit(const QemuExitStatus& status);
@@ -157,8 +157,6 @@ class Tile : public SST::Component
     Configuration config_;
     SST::Output output_;
     SST::Interfaces::SimpleNetwork* network_;
-    SST::Interfaces::StandardMem* memoryInterface_;
-    SST::TimeConverter memoryClockTimeBase_;
     PerformanceProfile performanceProfile_;
     TaskTrace taskTrace_;
     std::string resolvedConfigurationPath_;
@@ -185,6 +183,13 @@ class Tile : public SST::Component
     SST::Link* memoryInitializationBarrierLink_ = nullptr;
     SST::Link* epochBarrierLink_ = nullptr;
     UniqueFileDescriptor globalRAMFileDescriptor_;
+    // QEMU has the functional image, but receives no execution grant until
+    // every boot segment has passed through shared RAM and the SPM write port.
+    std::optional<ScratchpadBootImage> bootImage_;
+    std::size_t bootSegment_ = 0;
+    std::uint64_t bootGlobalOffset_ = 0;
+    std::optional<std::uint64_t> bootWriteCompletion_;
+    bool bootReadPending_ = false;
     std::unique_ptr<AnalogController> analog_;
     std::unique_ptr<GlobalDMAClient> globalDMA_;
     std::unique_ptr<InitializationBarrierClient> barriers_;

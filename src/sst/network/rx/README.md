@@ -14,8 +14,7 @@ global. Multiple receive lanes require flit-level routing; burst coalescing
 is rejected for this configuration.
 
 RX scheduling chooses the earliest available DMA lane and preserves timing
-order for each source. Ordinary-memory lanes have separate DMA timing engines;
-SPM lanes use NetworkReceive[0..3] client identities in the **same** scratchpad
+order for each source. All lanes use NetworkReceive[0..3] client identities in the same scratchpad
 arbiter. Bank and write-port conflicts therefore still serialize service.
 The bridge burst queue remains bounded and functional completion ownership
 is unchanged. This does not duplicate scratchpad capacity or write ports.

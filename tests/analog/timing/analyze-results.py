@@ -13,8 +13,8 @@ OP_STORE = 4
 WORDS_PER_BEAT = 8
 ROWS = 9
 COLS = 9
-COMPUTE_CYCLES = 8
-SST_TICKS_PER_ANALOG_CYCLE = 1000
+COMPUTE_CYCLES = 16
+SST_TICKS_PER_ANALOG_CYCLE = 10000
 
 
 @dataclass
@@ -285,7 +285,12 @@ def validate_case(name, array_count, trace_path, summary_path):
         finish = phase_event(rows, arrival["ticket"], finish_phase)
         device_duration = finish["device_cycle"] - start["device_cycle"]
         sst_duration = finish["event_tick"] - start["event_tick"]
-        if sst_duration != device_duration * SST_TICKS_PER_ANALOG_CYCLE:
+        # Commands can arrive between analog clock edges. The controller maps
+        # absolute ticks to floor(clock cycles), so do the same at both ends;
+        # multiplying a duration incorrectly includes the arrival's phase.
+        elapsed_edges = (finish["event_tick"] // SST_TICKS_PER_ANALOG_CYCLE -
+                         start["event_tick"] // SST_TICKS_PER_ANALOG_CYCLE)
+        if elapsed_edges != device_duration:
             raise AssertionError(
                 f"{name}: ticket {arrival['ticket']} advanced "
                 f"{device_duration} device cycles but {sst_duration} SST ticks"

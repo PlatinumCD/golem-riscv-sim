@@ -59,11 +59,8 @@ bool teardown() {
          wait(token);
 }
 
-void leaveTerminalScratchpadAccessPending() {
-  // Exercise the real-model terminal path: the model runtime reads its final
-  // scratchpad-resident state after the exact-readiness teardown has completed.
-  // With scratchpad access batching enabled this access is still buffered when
-  // platform_exit publishes the guest-exit event.
+void checkScratchpadAfterTeardown() {
+  // The CPU can still access its local SPM after DMA teardown.
   volatile uint8_t *scratchpad = reinterpret_cast<volatile uint8_t *>(
       golem::platform::ScratchpadBase);
   scratchpad[kTotalBytes + kTileId] = static_cast<uint8_t>(kTileId + 1U);
@@ -87,7 +84,7 @@ int runFirstProducer() {
 
   if (!teardown())
     return fail("exact RAM tile 0 teardown failed");
-  leaveTerminalScratchpadAccessPending();
+  checkScratchpadAfterTeardown();
   uart_puts("exact global RAM tile 0: PASS\n");
   return 0;
 }
@@ -107,7 +104,7 @@ int runSecondProducer() {
     return fail("exact RAM second publication failed");
   if (!teardown())
     return fail("exact RAM tile 1 teardown failed");
-  leaveTerminalScratchpadAccessPending();
+  checkScratchpadAfterTeardown();
   uart_puts("exact global RAM tile 1: PASS\n");
   return 0;
 }
@@ -144,7 +141,7 @@ int runConsumer() {
   }
   if (!teardown())
     return fail("exact RAM tile 2 teardown failed");
-  leaveTerminalScratchpadAccessPending();
+  checkScratchpadAfterTeardown();
   uart_puts("exact global RAM tile 2: PASS\n");
   return 0;
 }

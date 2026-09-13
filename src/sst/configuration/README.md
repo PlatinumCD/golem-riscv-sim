@@ -13,6 +13,13 @@ This directory reads and validates settings before resource execution.
 defaults, and documentation. Controller state and scheduling queues do not
 belong in configuration objects.
 
+There is one execution architecture: code/data/stack in SPM, timed instruction
+fetches through the I-cache, and explicit shared-memory DMA. Managed tiles need
+a `globalDMA` connection for boot; their ELF layout must fit the configured SPM.
+The [mesh builder](../../../tests/support/mesh.py) wires that controller and the
+wormhole routers. SPM geometry, cache geometry, links, lanes and analog resources
+remain configurable. Unsupported execution modes fail before guest launch.
+
 The [parameter reference](../../../docs/parameters.md) lists the same settings
 as readable tables. After editing defaults or descriptions, regenerate it with
 `python3 tools/hardware/parameter-reference.py`; `--check` verifies it is current.

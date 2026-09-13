@@ -17,7 +17,7 @@ from hardware_suite import Case, GROUPS, HARDWARE, ROOT, selected_cases, runtime
 class HardwareRunnerTests(unittest.TestCase):
     def test_hardware_default_is_an_allowlist(self):
         cases = selected_cases()
-        self.assertEqual(len(cases), 28)
+        self.assertEqual(len(cases), 32)
         self.assertFalse(any(case.requires_runtime for case in cases))
         self.assertFalse(set(case.name for case in cases) & set(case.name for case in runtime_cases()))
         self.assertTrue(all(case.script.is_file() for case in cases))

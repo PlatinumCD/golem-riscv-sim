@@ -62,7 +62,7 @@ class NetworkTimingProbe final : public SST::Component
         std::uint32_t destination;
         std::uint32_t payloadWords;
         std::uint64_t injectionTick;
-        std::uint64_t headArrivalTick;
+        std::uint64_t deliveryTick;
         std::uint64_t completionTick;
     };
 

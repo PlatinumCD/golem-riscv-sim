@@ -12,10 +12,9 @@ constexpr uint32_t WordsPerTransfer = 4;
 constexpr uint64_t TransferStride = 64;
 constexpr uint64_t InitializationGlobalOffset = 4096;
 constexpr uint64_t InitializationScratchpadOffset = 2048;
-constexpr uint32_t MacroTransferCount = 4;
-constexpr uint64_t MacroGlobalOffset = 8192;
-constexpr uint64_t MacroScratchpadOffset = 4096;
-constexpr uint64_t MacroInstructionBound = 65536;
+constexpr uint32_t GroupTransferCount = 4;
+constexpr uint64_t GroupGlobalOffset = 8192;
+constexpr uint64_t GroupScratchpadOffset = 4096;
 
 uint32_t expected(uint32_t transfer, uint32_t word) {
     return UINT32_C(0x10203040) ^ (transfer << 16U) ^ word;
@@ -25,7 +24,7 @@ uint32_t initializationExpected(uint32_t word) {
     return UINT32_C(0xa5c30000) ^ word;
 }
 
-uint32_t macroExpected(uint32_t transfer, uint32_t word) {
+uint32_t groupExpected(uint32_t transfer, uint32_t word) {
     return UINT32_C(0x5a710000) ^ (transfer << 12U) ^ word;
 }
 }  // namespace
@@ -38,23 +37,18 @@ extern "C" int tile_main() {
     for (uint32_t word = 0; word < WordsPerTransfer; ++word) {
         initialization[word] = initializationExpected(word);
     }
-    if (!globalRAMInitialize(
+    if (!globalDMASubmit(
             InitializationGlobalOffset,
             InitializationScratchpadOffset,
-            WordsPerTransfer * sizeof(uint32_t))) {
+            WordsPerTransfer * sizeof(uint32_t),
+            UINT32_C(0x101), UINT64_C(2), 0,
+            ScratchpadDMADirection::ScratchpadToGlobalRAM) ||
+        !globalDMAWait(UINT64_C(2), UINT32_C(0x101))) {
         uart_puts("global RAM initialization failed\n");
         return 1;
     }
     for (uint32_t word = 0; word < WordsPerTransfer; ++word) {
         initialization[word] = 0;
-    }
-    mesh_nic::complete_memory_initialization();
-    if (globalRAMInitialize(
-            InitializationGlobalOffset,
-            InitializationScratchpadOffset,
-            WordsPerTransfer * sizeof(uint32_t))) {
-        uart_puts("global RAM initialization remained enabled\n");
-        return 1;
     }
     if (!globalDMASubmit(
             InitializationGlobalOffset,
@@ -186,96 +180,67 @@ extern "C" int tile_main() {
         }
     }
 
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         auto* scratchpad = reinterpret_cast<uint32_t*>(
-            ScratchpadBase + MacroScratchpadOffset +
+            ScratchpadBase + GroupScratchpadOffset +
             TransferStride * transfer);
         for (uint32_t word = 0; word < WordsPerTransfer; ++word) {
-            scratchpad[word] = macroExpected(transfer, word);
+            scratchpad[word] = groupExpected(transfer, word);
         }
     }
-    if (!globalDMAMacroBegin(
-            UINT64_C(3), MacroTransferCount, MacroInstructionBound)) {
-        uart_puts("global DMA write macro begin failed\n");
-        return 1;
-    }
-#if defined(MITTENS_SCRATCHPAD_DMA_INVALID_MACRO)
-    // A certified macro may contain only its recorded submit/wait sequence.
-    // This timed scratchpad access must be rejected by SST rather than being
-    // silently omitted from the modeled event stream.
-    auto* invalidMacroAccess = reinterpret_cast<volatile uint32_t*>(
-        ScratchpadBase + MacroScratchpadOffset);
-    *invalidMacroAccess = *invalidMacroAccess;
-#endif
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         if (!globalDMASubmit(
-                MacroGlobalOffset + TransferStride * transfer,
-                MacroScratchpadOffset + TransferStride * transfer,
+                GroupGlobalOffset + TransferStride * transfer,
+                GroupScratchpadOffset + TransferStride * transfer,
                 WordsPerTransfer * sizeof(uint32_t),
                 UINT32_C(0x200) + transfer,
                 UINT64_C(3),
                 transfer,
                 ScratchpadDMADirection::ScratchpadToGlobalRAM)) {
-            uart_puts("global DMA write macro submit failed\n");
+            uart_puts("global DMA write group submit failed\n");
             return 1;
         }
     }
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         if (!globalDMAWait(UINT64_C(3), UINT32_C(0x200) + transfer)) {
-            uart_puts("global DMA write macro wait failed\n");
+            uart_puts("global DMA write group wait failed\n");
             return 1;
         }
-    }
-    if (!globalDMAMacroEnd(UINT64_C(3), MacroTransferCount)) {
-        uart_puts("global DMA write macro end failed\n");
-        return 1;
     }
 
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         auto* scratchpad = reinterpret_cast<uint32_t*>(
-            ScratchpadBase + MacroScratchpadOffset +
+            ScratchpadBase + GroupScratchpadOffset +
             TransferStride * transfer);
         for (uint32_t word = 0; word < WordsPerTransfer; ++word) {
             scratchpad[word] = 0;
         }
     }
-    if (!globalDMAMacroBegin(
-            UINT64_C(4), MacroTransferCount, MacroInstructionBound)) {
-        uart_puts("global DMA read macro begin failed\n");
-        return 1;
-    }
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         if (!globalDMASubmit(
-                MacroGlobalOffset + TransferStride * transfer,
-                MacroScratchpadOffset + TransferStride * transfer,
+                GroupGlobalOffset + TransferStride * transfer,
+                GroupScratchpadOffset + TransferStride * transfer,
                 WordsPerTransfer * sizeof(uint32_t),
                 UINT32_C(0x300),
                 UINT64_C(4),
                 transfer,
                 ScratchpadDMADirection::GlobalRAMToScratchpad)) {
-            uart_puts("global DMA read macro submit failed\n");
+            uart_puts("global DMA read group submit failed\n");
             return 1;
         }
-        // The production scalar descriptor window reuses its one hardware
-        // token after every completed wait.  Keep this regression inside one
-        // event tape so the macro and SST lifecycle must support that legal
-        // submit/wait/submit/wait sequence.
+        // A completed token can be reused by the next descriptor.
         if (!globalDMAWait(UINT64_C(4), UINT32_C(0x300))) {
-            uart_puts("global DMA read macro wait failed\n");
+            uart_puts("global DMA read group wait failed\n");
             return 1;
         }
     }
-    if (!globalDMAMacroEnd(UINT64_C(4), MacroTransferCount)) {
-        uart_puts("global DMA read macro end failed\n");
-        return 1;
-    }
-    for (uint32_t transfer = 0; transfer < MacroTransferCount; ++transfer) {
+    for (uint32_t transfer = 0; transfer < GroupTransferCount; ++transfer) {
         const auto* scratchpad = reinterpret_cast<const uint32_t*>(
-            ScratchpadBase + MacroScratchpadOffset +
+            ScratchpadBase + GroupScratchpadOffset +
             TransferStride * transfer);
         for (uint32_t word = 0; word < WordsPerTransfer; ++word) {
-            if (scratchpad[word] != macroExpected(transfer, word)) {
-                uart_puts("global DMA macro data mismatch\n");
+            if (scratchpad[word] != groupExpected(transfer, word)) {
+                uart_puts("global DMA group data mismatch\n");
                 return 1;
             }
         }

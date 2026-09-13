@@ -67,7 +67,7 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
         "-nodefaults",
         "-no-user-config",
         "-machine",
-        "virt",
+        "virt,mittens-scratchpad-boot=on",
         "-cpu",
         cpu,
         "-smp",
@@ -88,6 +88,8 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
     };
 
     if (config.syncBridgeFileDescriptor >= 0) {
+        arguments.push_back("-global");
+        arguments.push_back("mittens-sync.instruction-fetch-timing=on");
         arguments.push_back("-icount");
         arguments.push_back("shift=0,sleep=off");
         arguments.push_back("-global");
@@ -95,50 +97,7 @@ std::vector<std::string> buildArguments(const QemuConfiguration& config)
             "mittens-sync.bridge-fd=" +
             std::to_string(kChildSyncBridgeFileDescriptor));
         arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.memory-timing=") +
-            (config.memoryTimingEnabled ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.memory-init-batching=") +
-            (config.memoryInitializationBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.memory-access-batching=") +
-            (config.memoryAccessBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.scratchpad-access-batching=") +
-            (config.scratchpadAccessBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string(
-                "mittens-sync.scratchpad-access-run-compaction=") +
-            (config.scratchpadAccessRunCompaction ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.memory-event-batching=") +
-            (config.memoryEventBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.global-dma-submit-batching=") +
-            (config.globalDMASubmitBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.global-dma-macro-execution=") +
-            (config.globalDMAMacroExecution ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.analog-command-batching=") +
-            (config.analogCommandBatching ? "on" : "off"));
-        arguments.push_back("-global");
-        arguments.push_back(
-            "mittens-sync.memory-access-batch-records=" +
-            std::to_string(config.memoryAccessBatchRecords));
-        arguments.push_back("-global");
-        arguments.push_back(
-            std::string("mittens-sync.scratchpad-enabled=") +
-            (config.scratchpadEnabled ? "on" : "off"));
+        arguments.push_back("mittens-sync.scratchpad-enabled=on");
         arguments.push_back("-global");
         arguments.push_back(
             "mittens-sync.scratchpad-base=" +

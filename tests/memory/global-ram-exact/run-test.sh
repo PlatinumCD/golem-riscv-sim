@@ -18,15 +18,14 @@ export MITTENS_GLOBAL_RAM_EXACT_STATS="${OUTPUT_DIR}/statistics.csv"
 export MITTENS_GLOBAL_RAM_EXACT_PROFILE="${PROFILE_DIR}"
 
 rm -f -- "${LOG}" "${MITTENS_GLOBAL_RAM_EXACT_STATS}"
-mkdir -p -- "${PROFILE_DIR}"
+mkdir -p -- "${PROFILE_DIR}" "${OUTPUT_DIR}/serial"
 find "${PROFILE_DIR}" -maxdepth 1 -type f -delete
-MITTENS_TEST_GLOBAL_DMA_SUBMIT_BATCHING=1 \
 timeout --foreground --signal=TERM --kill-after=10s 300s \
     "${INSTALL_ROOT}/sst-core/bin/sst" "${TEST_DIR}/simulation.py" 2>&1 | \
     tee "${LOG}"
 
 for tile in 0 1 2; do
-    grep -F "exact global RAM tile ${tile}: PASS" "${LOG}" >/dev/null
+    grep -F "exact global RAM tile ${tile}: PASS" "${OUTPUT_DIR}/serial/tile-${tile}.log" >/dev/null
 done
 if grep -F "memory_requests=" "${LOG}" | \
     grep -Ev "memory_requests=0([[:space:]]|$)" >/dev/null; then
@@ -34,13 +33,19 @@ if grep -F "memory_requests=" "${LOG}" | \
     exit 1
 fi
 
-python3 - "${MITTENS_GLOBAL_RAM_EXACT_STATS}" <<'PY'
+python3 - "${MITTENS_GLOBAL_RAM_EXACT_STATS}" "${PROFILE_DIR}/global-ram-requests.csv" <<'PY'
 import csv
 import sys
 
+with open(sys.argv[2], newline="") as stream:
+    requests = list(csv.DictReader(stream))
+boot = [r for r in requests if int(r["execution_id"]) == 0]
+application = [r for r in requests if int(r["execution_id"]) == 91]
+assert len(application) == 6 and sum(int(r["byte_count"]) for r in application) == 24576
+assert boot and all(r["direction"] == "read" for r in boot)
 expected = {
-    "requests": 6,
-    "bytes": 24576,
+    "requests": 6 + len(boot),
+    "bytes": 24576 + sum(int(r["byte_count"]) for r in boot),
     "readiness_blocked_reads": 4,
     "readiness_releases": 4,
     "readiness_interval_lookups": 8,
@@ -83,8 +88,10 @@ with (profile / "global-ram-progress.csv").open(
     controller = list(csv.DictReader(source))
 assert controller and controller[-1]["kind"] == "final", controller
 final = controller[-1]
-assert int(final["physical_dma_submitted"]) == 6, final
-assert int(final["physical_dma_completed"]) == 6, final
+with (profile / "global-ram-requests.csv").open() as stream:
+    request_count = sum(1 for _ in csv.DictReader(stream))
+assert int(final["physical_dma_submitted"]) == request_count, final
+assert int(final["physical_dma_completed"]) == request_count, final
 assert int(final["readiness_blocked"]) == 4, final
 assert int(final["readiness_released"]) == 4, final
 assert int(final["readiness_currently_blocked"]) == 0, final

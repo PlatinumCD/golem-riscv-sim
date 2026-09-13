@@ -56,7 +56,8 @@ enum class ScratchpadDMAClient : std::uint8_t {
     NetworkReceive1 = 6,
     NetworkReceive2 = 7,
     NetworkReceive3 = 8,
-    Count = 9,
+    InstructionFetch = 9,
+    Count = 10,
 };
 
 // Read-only reservation evidence. Cycles are CPU-domain; a beat occupies its
@@ -97,6 +98,10 @@ class ScratchpadTimingModel final
         bool write,
         ScratchpadDMAClient client = ScratchpadDMAClient::GlobalRAM,
         bool chargeSetup = true);
+    ScratchpadSchedule scheduleInstructionFetch(
+        std::uint64_t currentCycle,
+        std::uint64_t offset,
+        std::uint64_t byteCount);
 
     const ScratchpadTimingConfiguration& configuration() const noexcept
     {

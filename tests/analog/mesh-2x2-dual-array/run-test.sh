@@ -41,7 +41,7 @@ require_packet_count() {
         -v port="${port}" \
         -v expected="${expected}" '
             $1 == router &&
-            $2 == "send_packet_count" &&
+            $2 == "packets_forwarded" &&
             $3 == port {
                 found = 1
                 total += $7
@@ -89,15 +89,15 @@ run_backend() {
     fi
 
     # Forward pass: 0 -> 1 -> 3 -> 2.
-    require_packet_count "${statistics}" router_0_0 port0 4
-    require_packet_count "${statistics}" router_1_0 port2 4
-    require_packet_count "${statistics}" router_1_1 port1 4
+    require_packet_count "${statistics}" router_0_0 east 4
+    require_packet_count "${statistics}" router_1_0 south 4
+    require_packet_count "${statistics}" router_1_1 west 4
 
     # Reverse pass after tile 2's local array-0 -> array-1 handoff:
     # 2 -> 3 -> 1 -> 0.
-    require_packet_count "${statistics}" router_0_1 port0 4
-    require_packet_count "${statistics}" router_1_1 port3 4
-    require_packet_count "${statistics}" router_1_0 port1 4
+    require_packet_count "${statistics}" router_0_1 east 4
+    require_packet_count "${statistics}" router_1_1 north 4
+    require_packet_count "${statistics}" router_1_0 west 4
 }
 
 run_backend native
