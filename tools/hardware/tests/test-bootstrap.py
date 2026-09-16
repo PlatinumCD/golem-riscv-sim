@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class BootstrapTests(unittest.TestCase):
-    def test_dma_deadline_and_accounting_need_no_runtime_archive(self):
+    def test_dma_clock_and_accounting_need_no_runtime_archive(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             llvm = root / 'llvm/bin'
@@ -23,7 +23,7 @@ class BootstrapTests(unittest.TestCase):
             env = {key: value for key, value in os.environ.items() if not key.startswith('GOLEM_')}
             env.update(GOLEM_LLVM_DIR=str(root / 'llvm'), GOLEM_BUILD_ROOT=str(root / 'build'),
                        GOLEM_INSTALL_ROOT=str(root / 'install'), MOCK_LOG=str(root / 'commands.log'))
-            for name in ('cpu_memory_deadline', 'global_dma_clock'):
+            for name in ('global_dma_clock',):
                 result = subprocess.run(['bash', str(ROOT / 'src/sst/tests' / (name + '_build.sh')),
                                          str(root / name)], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

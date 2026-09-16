@@ -12,6 +12,8 @@ namespace SST::Mittens
 // Immutable after construction. Controllers consume resolved settings.
 struct TileConfiguration
 {
+    // Executable SPM, its instruction cache, and streaming DMA are mandatory.
+    // Parameters below describe resource sizes/timing, not alternate backends.
 #define MITTENS_FIELD(type, field, name, value, category, help, documented) type field = value;
     MITTENS_TILE_PARAMETERS(MITTENS_FIELD)
 #undef MITTENS_FIELD
@@ -20,8 +22,6 @@ struct TileConfiguration
     // parser unit tests construct snapshots directly; managed tiles validate
     // this contract before launching a guest.
     std::string memory = "16M";
-    std::string memoryBackend = "streaming";
-    bool memoryInitializationBatching = false;
     bool memoryAccessBatching = false;
     bool scratchpadAccessBatching = false;
     bool scratchpadAccessRunCompaction = false;
@@ -30,17 +30,10 @@ struct TileConfiguration
     bool globalDMAMacroExecution = false;
     bool analogCommandBatching = false;
     std::uint32_t memoryAccessBatchRecords = 16;
-    std::uint32_t memoryInitializationBytesPerCycle = 32;
-    std::uint64_t memoryInitializationLatencyCycles = 2;
-    std::uint64_t memoryInitializationInstructionQuantum = UINT64_C(67108864);
     bool networkTailDelivery = true;
-    std::uint32_t memoryInitializationBarrierTiles = 0;
-    bool scratchpadBoot = true;
-    bool scratchpadEnabled = true;
-    std::uint32_t qemuReadySetWorkers = 1;
-    bool qemuRuntimeReadySet = false;
+    std::uint32_t qemuLocalLookaheadWorkers = 1;
     bool qemuLocalLookahead = false;
-    std::string qemuReadySetIndependenceProof = "";
+    std::string qemuLocalLookaheadIndependenceProof = "";
 
     static TileConfiguration read(SST::Params& params);
     void validate(SST::Output& output) const;

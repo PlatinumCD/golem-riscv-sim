@@ -13,7 +13,6 @@ ProgressSnapshot makeTileProgressSnapshot(const TileMeasurementSnapshot& data,
                                          std::uint64_t wallMilliseconds, const char* kind);
 std::string formatTileProgress(std::uint32_t tileId, const ProgressSnapshot& progress);
 std::string formatProgressWatchdog(std::uint32_t tileId, std::uint64_t timeoutMilliseconds,
-                                  std::uint64_t elapsedMilliseconds, std::uint64_t deploymentEpoch,
-                                  std::uint64_t initializationEpoch);
+                                  std::uint64_t elapsedMilliseconds, std::uint64_t deploymentEpoch);
 
 } // namespace SST::Mittens

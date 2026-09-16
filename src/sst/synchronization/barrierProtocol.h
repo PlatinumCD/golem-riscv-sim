@@ -16,10 +16,5 @@ enum class EpochBarrierContribution : std::uint32_t
     Idle = 2,
 };
 
-enum class MemoryInitializationBarrierMessage : std::uint32_t
-{
-    Arrive = 0,
-    Release = 1,
-};
 
 } // namespace SST::Mittens

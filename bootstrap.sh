@@ -40,7 +40,7 @@ actions:
   runtime        build optional Sculptor runtime; requires GOLEM_SCULPTOR_SOURCE
   platform       build optional compiler test images; requires GOLEM_SCULPTOR_SOURCE
   test           run the hardware correctness suite (same as test-hardware)
-  test-runtime   run host, QEMU, and QEMU/SST runtime proofs
+  test-runtime   run the optional runtime library proof
   test-elements  run the complete Mittens element test directory
 EOF
 }
@@ -148,7 +148,6 @@ case "${ACTION}" in
         ;;
     test-runtime)
         "${ROOT}/tests/runtime/library/run-test.sh"
-        "${ROOT}/tests/runtime/deployment-pair/run-test.sh"
         ;;
     -h|--help|help)
         usage

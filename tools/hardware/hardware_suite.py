@@ -31,7 +31,6 @@ def runtime_cases():
     return [Case('runtime/rx-controller', ROOT / 'src/sst/tests/rx_runtime_regression.sh', True, True)] + [Case(name, ROOT / 'tests' / name / entry, requires_runtime=required)
             for name, entry, required in (
                 ('runtime/library', 'run-test.sh', True),
-                ('runtime/deployment-pair', 'run-all.sh', True),
                 ('runtime/epoch-barrier', 'run-test.sh', False),
                 ('network/transmit-fanout', 'run-test.sh', True),
                 ('analog/distributed-matvec', 'run-test.sh', True))]
@@ -40,13 +39,15 @@ def runtime_cases():
 def hardware_cases():
     cases = [Case('host', ROOT / 'tools/hardware/verify.py'),
              Case('configuration', ROOT / 'src/sst/tests/run-configuration-test.py'),
+             Case('concurrent-capture', ROOT / 'src/sst/tests/concurrent_capture.py'),
+             Case('fetch-segments', ROOT / 'src/sst/tests/fetch_segments.py'),
              Case('component', ROOT / 'src/sst/tests/run-test.sh', True),
              Case('tx-controller', ROOT / 'src/sst/tests/tx_controller_regression.py', True),
              Case('rx-controller', ROOT / 'src/sst/tests/rx_controller_regression.sh', True)]
     for group, names in HARDWARE.items():
         for name in names:
             directory = ROOT / 'tests' / group / name
-            script = directory / ('run-all.sh' if name == 'deployment-pair' else 'run-test.sh')
+            script = directory / 'run-test.sh'
             cases.append(Case(f'{group}/{name}', script))
     cases.append(Case('validation/performance-profile', ROOT / 'tests/validation/performance-profile/run-test.sh'))
     return cases

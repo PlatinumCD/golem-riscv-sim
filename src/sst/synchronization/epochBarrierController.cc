@@ -23,6 +23,13 @@ EpochBarrierController::EpochBarrierController(
     stopAfterReleases_(
         params.find<std::uint32_t>("stop_after_releases", 0))
 {
+    localBootRelease_ = params.find<bool>("local_boot_release", false);
+    if (localBootRelease_) {
+        if (epochCount_ < 2 || stopAfterReleases_ == 1)
+            output_.fatal(CALL_INFO, -1, "local boot release requires a subsequent global epoch\n");
+        currentEpoch_ = 1;
+        bootArrivedTiles_.resize(tileCount_, false);
+    }
     if (tileCount_ == 0 || epochCount_ == 0 || releaseCycles_ == 0) {
         output_.fatal(
             CALL_INFO,
@@ -177,6 +184,19 @@ void EpochBarrierController::handleEvent(SST::Event* rawEvent)
             static_cast<unsigned>(epoch),
             static_cast<unsigned>(epochCount_));
     }
+    if (localBootRelease_ && epoch == 0) {
+        if (bootArrivedTiles_[tile] || contribution != EpochBarrierContribution::WorkComplete)
+            output_.fatal(CALL_INFO, -1, "invalid or duplicate local boot arrival: tile=%u\n", tile);
+        bootArrivedTiles_[tile] = true;
+        arrivalStatistic_->addData(1);
+        links_[tile]->send(releaseCycles_, clockTimeBase_, new EpochBarrierEvent(
+            tile, 0, EpochBarrierMessage::Release, EpochBarrierContribution::None));
+        output_.output("MITTENS_LOCAL_BOOT_RELEASE tile=%u arrival_cycle=%llu\n", tile,
+                       static_cast<unsigned long long>(currentClockCycle()));
+        return;
+    }
+    if (localBootRelease_ && !bootArrivedTiles_[tile])
+        output_.fatal(CALL_INFO, -1, "epoch arrival before local boot: tile=%u\n", tile);
     if (epoch < currentEpoch_) {
         output_.fatal(
             CALL_INFO,

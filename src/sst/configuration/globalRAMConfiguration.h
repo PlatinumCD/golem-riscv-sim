@@ -19,6 +19,7 @@ struct GlobalRAMConfiguration
     std::uint32_t per_tile_queue_depth;
     std::uint64_t setup_cycles;
     std::uint32_t bytes_per_cycle;
+    std::uint32_t shared_bytes_per_cycle;
     std::uint32_t burst_bytes;
     std::uint64_t fixed_latency_cycles;
     std::uint32_t maximum_request_bytes;
@@ -29,6 +30,8 @@ struct GlobalRAMConfiguration
     std::string dependency_mode;
     std::string profile_output_directory;
     std::string clock;
+    std::string image_file;
+    std::uint64_t image_offset;
     std::vector<std::uint32_t> active_tiles;
     static GlobalRAMConfiguration read(SST::Params& params);
     void validate(SST::Output& output_) const;

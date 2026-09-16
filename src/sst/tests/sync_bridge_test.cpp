@@ -296,10 +296,51 @@ void testInvalidGlobalDMAMacroEvent()
     bridge.close();
 }
 
+void testInstructionSegments()
+{
+    SharedSyncMemoryBridge bridge;
+    bridge.create(12);
+    void* address = mmap(nullptr, MITTENS_SYNC_BRIDGE_MAPPING_SIZE,
+                         PROT_READ | PROT_WRITE, MAP_SHARED, bridge.fileDescriptor(), 0);
+    assert(address != MAP_FAILED);
+    auto* mapping = static_cast<MittensSyncBridge*>(address);
+    for (auto invalid : {0U, 17U}) {
+        bool rejected = false;
+        try { bridge.configureInstructionSegments(invalid); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        assert(rejected);
+    }
+    bridge.configureInstructionSegments(16);
+    assert(mapping->fetch_segment_limit == 16);
+    bridge.grant(100);
+    mittens_sync_store_release(&mapping->state, MITTENS_SYNC_STATE_RUNNING);
+    mapping->fetch_segment_proposed = 8;
+    publish(mapping, MITTENS_SYNC_STOP_INSTRUCTION_FETCH, 0, 0,
+            MITTENS_SYNC_EVENT_FLAG_NONE, UINT32_MAX, 0, UINT32_MAX, 0,
+            UINT32_MAX, UINT32_MAX, 0, 0x90000000, 4);
+    const auto event = bridge.waitForEvent(std::chrono::milliseconds::zero());
+    assert(event && event->fetchInstructionCount == 8);
+    for (auto invalid : {0U, 9U}) {
+        bool rejected = false;
+        try { bridge.approveInstructionSegment(invalid); }
+        catch (const std::logic_error&) { rejected = true; }
+        assert(rejected);
+    }
+    bridge.approveInstructionSegment(4);
+    assert(mapping->fetch_segment_approved == 4);
+    bridge.resume(*event);
+    bool rejected = false;
+    try { bridge.approveInstructionSegment(4); }
+    catch (const std::logic_error&) { rejected = true; }
+    assert(rejected);
+    assert(munmap(address, MITTENS_SYNC_BRIDGE_MAPPING_SIZE) == 0);
+}
+
 } // namespace
 
 int main()
 {
+    testInstructionSegments();
     testGlobalDMAMacroEvent();
     testInvalidGlobalDMAMacroEvent();
 
@@ -587,31 +628,6 @@ int main()
 
         publish(
             mapping,
-            MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE,
-            24,
-            3,
-            MITTENS_SYNC_EVENT_FLAG_NONE,
-            UINT32_MAX,
-            1000,
-            UINT32_MAX,
-            2048,
-            UINT32_MAX,
-            UINT32_MAX,
-            0,
-            4096,
-            0,
-            MITTENS_SYNC_MEMORY_FLAG_NONE);
-
-        waitWhile(&mapping->state, MITTENS_SYNC_STATE_EVENT);
-        assert(
-            mittens_sync_load_acquire(&mapping->state) ==
-            MITTENS_SYNC_STATE_RESUME);
-        mittens_sync_store_release(
-            &mapping->state, MITTENS_SYNC_STATE_RUNNING);
-        wake(&mapping->state);
-
-        publish(
-            mapping,
             MITTENS_SYNC_STOP_TASK_START,
             25,
             4,
@@ -849,26 +865,6 @@ int main()
         memoryBatch->memoryBatch[1].flags ==
         MITTENS_SYNC_MEMORY_FLAG_WRITE);
     bridge.resume(*memoryBatch);
-
-    std::optional<QemuSyncEvent> memoryInitialization;
-    do {
-        memoryInitialization = bridge.waitForEvent(
-            std::chrono::milliseconds(100));
-    } while (!memoryInitialization.has_value());
-    assert(
-        memoryInitialization->stopReason ==
-        MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE);
-    assert(memoryInitialization->instructionsExecuted == 24);
-    assert(
-        memoryInitialization->memoryInitializationAccesses() ==
-        1000);
-    assert(
-        memoryInitialization->memoryInitializationReadBytes() ==
-        4096);
-    assert(
-        memoryInitialization->memoryInitializationWriteBytes() ==
-        2048);
-    bridge.resume(*memoryInitialization);
 
     std::optional<QemuSyncEvent> taskStart;
     do {

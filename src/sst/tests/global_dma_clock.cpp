@@ -38,7 +38,6 @@ extern "C" int tile_main() {
             source[word] = expected(transfer, word);
         }
     }
-    mesh_nic::complete_memory_initialization();
     mesh_nic::trace_task(mesh_nic::kTaskTraceStart, 51, Execution);
     for (uint32_t transfer = 0; transfer < Count; ++transfer) {
         if (!globalDMASubmit(

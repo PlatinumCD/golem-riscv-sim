@@ -9,7 +9,7 @@
 #include "../memory/memoryAccessCoalescer.h"
 #include "../network/packetEvent.h"
 #include "../memory/globalRAMBacking.h"
-#include "../execution/qemuReadySetExecutor.h"
+#include "../execution/qemuCaptureExecutor.h"
 
 #include <atomic>
 #include <chrono>
@@ -32,16 +32,16 @@ constexpr auto kSyncWaitTimeout = std::chrono::milliseconds(50);
 constexpr std::uint32_t kDeploymentFrameMagic = UINT32_C(0x474f4c4d);
 constexpr std::size_t kDeploymentFrameHeaderWords = 7;
 
-// A runtime ready set must contain every ordinary component event at one
+// A capture batch must contain every ordinary component event at one
 // modeled frontier.  A default-priority self event can run immediately after
 // the first tile submits and fragment the frontier into mostly scalar batches.
 // Put the dispatch one priority behind ordinary events, but ahead of SST's
 // barriers and one-shots, so every causally ready tile submits before any host
 // capture starts.  The dispatcher is local-only and never crosses a link.
-class RuntimeQemuReadySetDispatchEvent final : public SST::Event
+class CaptureWorkerDispatchEvent final : public SST::Event
 {
   public:
-    RuntimeQemuReadySetDispatchEvent()
+    CaptureWorkerDispatchEvent()
     {
         setPriority(EVENTPRIORITY + 1);
     }
@@ -84,7 +84,6 @@ constexpr std::uint32_t kCpuWakeInitial = UINT32_MAX;
 constexpr std::uint32_t kCpuWakeGlobalDMACompletion = UINT32_MAX - 1U;
 constexpr std::uint32_t kCpuWakeEpochRelease = UINT32_MAX - 2U;
 constexpr std::uint32_t kCpuWakeNoPendingStop = UINT32_MAX - 3U;
-constexpr std::uint32_t kCpuWakeMemoryInitializationRelease = UINT32_MAX - 4U;
 
 class ProgressWatchdogEvent final : public SST::Event
 {
@@ -143,8 +142,6 @@ class CpuWakeDiagnosticEvent final : public SST::Event
             return "mittens.cpu-sync.epoch-release";
         case kCpuWakeNoPendingStop:
             return "mittens.cpu-sync.no-pending-stop";
-        case kCpuWakeMemoryInitializationRelease:
-            return "mittens.cpu-sync.memory-initialization-release";
         default:
             return "mittens.cpu-sync.stop=" + std::to_string(source_);
         }
@@ -162,7 +159,6 @@ SST::Event* cpuWakeEvent(std::uint32_t source)
 }
 
 std::atomic<std::uint64_t> deploymentProgressEpoch{0};
-std::atomic<std::uint64_t> memoryInitializationExecutionProgressEpoch{0};
 
 } // namespace
 
@@ -174,8 +170,6 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
       state_(LifecycleState::Constructed)
 {
     std::unique_ptr<ScratchpadTimingModel> scratchpadTimingModel;
-    std::uint64_t qemuReadySetPartitionKey_ = 0;
-    std::uint32_t qemuReadySetPartitionWorkers_ = 1;
     config_.validate(output_);
     if (const char* directory = std::getenv("GOLEM_RESOLVED_CONFIG_DIR"))
     {
@@ -189,56 +183,25 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         registerStatistic<std::uint64_t>("scratchpad_read_service_cycles");
     scratchpadWriteServiceStatistic_ =
         registerStatistic<std::uint64_t>("scratchpad_write_service_cycles");
-    const RankInfo readySetRank = getRank();
-    const RankInfo readySetRanks = getNumRanks();
-    qemuReadySetPartitionKey_ =
-        (static_cast<std::uint64_t>(readySetRank.rank) << 32U) | readySetRank.thread;
-    if (config_.qemuReadySetWorkers > 1)
+    const RankInfo captureRanks = getNumRanks();
+    if (config_.qemuCaptureWorkers > 1)
     {
-        if (readySetRanks.thread == 0 || config_.qemuReadySetWorkers < readySetRanks.thread)
+        if (captureRanks.thread != 1 || captureRanks.rank != 1)
         {
             output_.fatal(CALL_INFO, -1,
-                          "tile %u requires the global QEMU ready-set worker budget "
-                          "(%u) to cover every SST thread (%u)\n",
-                          static_cast<unsigned>(config_.tileId),
-                          static_cast<unsigned>(config_.qemuReadySetWorkers),
-                          static_cast<unsigned>(readySetRanks.thread));
-        }
-        qemuReadySetPartitionWorkers_ =
-            config_.qemuReadySetWorkers / readySetRanks.thread +
-            (readySetRank.thread < config_.qemuReadySetWorkers % readySetRanks.thread ? 1U : 0U);
-        try
-        {
-            QemuCaptureCoordinator::registerInitialQemuReadySetTile(
-                qemuReadySetPartitionKey_, config_.tileId, config_.qemuReadySetWorkers,
-                qemuReadySetPartitionWorkers_, config_.memoryInitializationBarrierTiles,
-                config_.qemuReadySetIndependenceProof);
-        }
-        catch (const std::exception& error)
-        {
-            output_.fatal(CALL_INFO, -1, "tile %u could not join the initial QEMU ready set: %s\n",
-                          static_cast<unsigned>(config_.tileId), error.what());
-        }
-    }
-    if (config_.qemuRuntimeReadySet)
-    {
-        if (readySetRanks.thread != 1)
-        {
-            output_.fatal(CALL_INFO, -1,
-                          "tile %u runtime QEMU ready-set execution is not yet "
+                          "tile %u parallel QEMU capture execution is not yet "
                           "partition-local for %u SST threads\n",
                           static_cast<unsigned>(config_.tileId),
-                          static_cast<unsigned>(readySetRanks.thread));
+                          static_cast<unsigned>(captureRanks.thread));
         }
         try
         {
-            QemuCaptureCoordinator::registerRuntimeQemuReadySetTile(
-                config_.tileId, config_.qemuReadySetWorkers,
-                config_.memoryInitializationBarrierTiles, config_.qemuReadySetIndependenceProof);
+            QemuCaptureCoordinator::registerCaptureWorkerTile(
+                config_.tileId, config_.qemuCaptureWorkers);
         }
         catch (const std::exception& error)
         {
-            output_.fatal(CALL_INFO, -1, "tile %u could not join the runtime QEMU ready set: %s\n",
+            output_.fatal(CALL_INFO, -1, "tile %u could not join the parallel QEMU capture: %s\n",
                           static_cast<unsigned>(config_.tileId), error.what());
         }
     }
@@ -247,8 +210,8 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         try
         {
             QemuCaptureCoordinator::registerLocalQemuLookaheadTile(
-                config_.tileId, config_.qemuReadySetWorkers,
-                config_.memoryInitializationBarrierTiles, config_.qemuReadySetIndependenceProof);
+                config_.tileId, config_.qemuLocalLookaheadWorkers,
+                0, config_.qemuLocalLookaheadIndependenceProof);
         }
         catch (const std::exception& error)
         {
@@ -256,27 +219,24 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
                           static_cast<unsigned>(config_.tileId), error.what());
         }
     }
-    if (config_.scratchpadEnabled)
+    try
     {
-        try
-        {
-            scratchpadTimingModel =
-                std::make_unique<ScratchpadTimingModel>(ScratchpadTimingConfiguration{
-                    config_.scratchpadBytes,
-                    config_.scratchpadBanks,
-                    config_.scratchpadReadPorts,
-                    config_.scratchpadWritePorts,
-                    config_.scratchpadAccessWidthBits,
-                    config_.scratchpadLatencyCycles,
-                    config_.scratchpadDMASetupCycles,
-                    config_.scratchpadDMABytesPerCycle,
-                });
-        }
-        catch (const std::exception& error)
-        {
-            output_.fatal(CALL_INFO, -1, "tile %u has an invalid scratchpad configuration: %s\n",
-                          static_cast<unsigned>(config_.tileId), error.what());
-        }
+        scratchpadTimingModel =
+            std::make_unique<ScratchpadTimingModel>(ScratchpadTimingConfiguration{
+                config_.scratchpadBytes,
+                config_.scratchpadBanks,
+                config_.scratchpadReadPorts,
+                config_.scratchpadWritePorts,
+                config_.scratchpadAccessWidthBits,
+                config_.scratchpadLatencyCycles,
+                config_.scratchpadDMASetupCycles,
+                config_.scratchpadDMABytesPerCycle,
+            });
+    }
+    catch (const std::exception& error)
+    {
+        output_.fatal(CALL_INFO, -1, "tile %u has an invalid scratchpad configuration: %s\n",
+                      static_cast<unsigned>(config_.tileId), error.what());
     }
     try
     {
@@ -340,34 +300,23 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
                           "tile %u failed to configure its QEMU synchronization link\n",
                           static_cast<unsigned>(config_.tileId));
         }
-        if (config_.qemuRuntimeReadySet)
+        if (config_.qemuCaptureWorkers > 1)
         {
-            runtimeQemuReadySetLink_ = configureSelfLink(
-                "qemu-runtime-ready-set", cpuClockTimeBase_,
-                new SST::Event::Handler<Tile, &Tile::handleRuntimeQemuReadySetDispatch>(this));
-            if (runtimeQemuReadySetLink_ == nullptr)
+            captureWorkerLink_ = configureSelfLink(
+                "qemu-capture-workers", cpuClockTimeBase_,
+                new SST::Event::Handler<Tile, &Tile::handleCaptureWorkerDispatch>(this));
+            if (captureWorkerLink_ == nullptr)
             {
                 output_.fatal(CALL_INFO, -1,
                               "tile %u failed to configure its runtime QEMU "
-                              "ready-set link\n",
+                              "capture-worker link\n",
                               static_cast<unsigned>(config_.tileId));
             }
         }
         globalDMALink_ = configureLink(
             "globalDMA", new SST::Event::Handler<Tile, &Tile::handleGlobalDMAEvent>(this));
-        if (config_.scratchpadBoot && globalDMALink_ == nullptr)
+        if (globalDMALink_ == nullptr)
             output_.fatal(CALL_INFO, -1, "scratchpad_boot requires the globalDMA link\n");
-        memoryInitializationBarrierLink_ = configureLink(
-            "memoryInitBarrier",
-            new SST::Event::Handler<Tile, &Tile::handleMemoryInitializationBarrierEvent>(this));
-        if ((config_.memoryInitializationBarrierTiles == 0) !=
-            (memoryInitializationBarrierLink_ == nullptr))
-        {
-            output_.fatal(CALL_INFO, -1,
-                          "tile %u requires memory_init_barrier_tiles and the memoryInitBarrier "
-                          "link to be configured together\n",
-                          static_cast<unsigned>(config_.tileId));
-        }
         epochBarrierLink_ = configureLink(
             "epochBarrier", new SST::Event::Handler<Tile, &Tile::handleEpochBarrierEvent>(this));
         if ((config_.epochBarrierEpochs == 0) != (epochBarrierLink_ == nullptr))
@@ -532,6 +481,17 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
                                   { output_.verbose(CALL_INFO, level, 0, "%s", text.c_str()); }};
     MemoryAccessController::Host memoryHost;
     memoryHost.now = [this] { return Timing::Ticks{getCurrentSimCycle()}; };
+    memoryHost.instructionSegmentSafe = [this] {
+        const auto rx = rx_->status();
+        const auto analog = analog_->statistics();
+        // No local agent can write code while QEMU executes the approved
+        // register-only sequence. Future RX data has no SPM destination until
+        // this CPU posts a descriptor, which is itself a synchronization stop.
+        return globalDMA_->drained() && !analog_->hasDeferred() &&
+            analog.submitted == analog.completed && rx.pendingDescriptors == 0 &&
+            rx.pendingTransfers == 0 && rx.pendingNetwork == 0 &&
+            rx.readyBursts == 0 && rx.bridgeReceiveBursts == 0 && rx.incomingFrames == 0;
+    };
     memoryAccess_ = std::make_unique<MemoryAccessController>(
         config_, Timing::Clock<Timing::Cpu>(getTimeConverter(config_.cpuClock).getFactor()),
         std::move(scratchpadTimingModel), performanceProfile_, diagnostics, std::move(memoryHost));
@@ -573,18 +533,15 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         config_, Timing::Clock<Timing::Cpu>(getTimeConverter(config_.cpuClock).getFactor()),
         diagnostics, std::move(dmaHost));
 
-    InitializationBarrierClient::Host barrierHost;
+    EpochBarrierClient::Host barrierHost;
     barrierHost.running = [this] { return state_ == LifecycleState::Running; };
     barrierHost.globalDMADrained = [this] { return globalDMA_->drained(); };
+    barrierHost.analogDrained = [this] {
+        const auto s = analog_->statistics();
+        return !analog_->hasDeferred() && s.submitted == s.completed;
+    };
     barrierHost.pending = [this] { return cpu_->pending(); };
     barrierHost.completeWait = [this] { cpu_->completeWait(); };
-    if (memoryInitializationBarrierLink_)
-        barrierHost.sendInitialization =
-            [link = memoryInitializationBarrierLink_, tile = config_.tileId]
-        {
-            link->send(new MemoryInitializationBarrierEvent(
-                tile, MemoryInitializationBarrierMessage::Arrive));
-        };
     if (epochBarrierLink_)
         barrierHost.sendEpoch = [link = epochBarrierLink_, tile = config_.tileId](
                                     std::uint32_t epoch, EpochBarrierContribution contribution)
@@ -592,11 +549,9 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
             link->send(
                 new EpochBarrierEvent(tile, epoch, EpochBarrierMessage::Arrive, contribution));
         };
-    barrierHost.wakeInitialization = [this]
-    { cpuSyncLink_->send(cpuWakeEvent(kCpuWakeMemoryInitializationRelease)); };
     barrierHost.wakeEpoch = [this] { cpuSyncLink_->send(cpuWakeEvent(kCpuWakeEpochRelease)); };
     barriers_ =
-        std::make_unique<InitializationBarrierClient>(config_, diagnostics, std::move(barrierHost));
+        std::make_unique<EpochBarrierClient>(config_, diagnostics, std::move(barrierHost));
 
     output_.verbose(CALL_INFO, 1, 0,
         "configured tile %u (elf=%s, launch=%s, cpu=%s, issue=%u, "
@@ -613,7 +568,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
                     "ports=%uR/%uW, width=%u-bit, latency=%llu cycles, "
                     "dma=%uB-cycle/setup-%llu)\n",
                     static_cast<unsigned>(config_.tileId),
-                    config_.scratchpadEnabled ? "enabled" : "disabled",
+                    "enabled",
                     static_cast<unsigned long long>(config_.scratchpadBytes),
                     static_cast<unsigned>(config_.scratchpadBanks),
                     static_cast<unsigned>(config_.scratchpadReadPorts),
@@ -656,14 +611,13 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     };
     CpuExecutionController::Host host;
     host.running = [this]() { return state_ == LifecycleState::Running; };
-    host.initializing = [this]() { return barriers_->snapshot().memoryInitializationPhase_; };
     host.observeExit = [this]() { return observeQemuExit(); };
     host.watchdogReported = [this]() { return progressWatchdogReported_; };
     host.now = [this]() { return Timing::Ticks{getCurrentSimCycle()}; };
     host.watchdog = [this]() { maybeProgressWatchdog(); };
     host.terminateAll = []() { QemuProcess::terminateAll(); };
     host.scheduleCaptureDispatch = [this]()
-    { runtimeQemuReadySetLink_->send(new RuntimeQemuReadySetDispatchEvent()); };
+    { captureWorkerLink_->send(new CaptureWorkerDispatchEvent()); };
     host.serviceBridge = [this]() { serviceBridge(); };
     host.schedule =
         [this](Timing::Cycles<Timing::Cpu> cycles, std::uint32_t source, std::uint64_t generation)
@@ -676,15 +630,9 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
         if (cpuSyncLink_)
             cpuSyncLink_->send(cycles.value, new ProgressWatchdogEvent(generation));
     };
-    host.progress = [this](bool initializing)
+    host.progress = [this]()
     {
-        if (initializing)
-            observedMemoryInitializationExecutionProgressEpoch_ =
-                memoryInitializationExecutionProgressEpoch.fetch_add(1, std::memory_order_relaxed) +
-                1;
-        else
-            observedDeploymentProgressEpoch_ =
-                deploymentProgressEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
+        observedDeploymentProgressEpoch_ = deploymentProgressEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
         lastRetirementWallTime_ = std::chrono::steady_clock::now();
     };
     host.recordWait = [this](std::uint64_t start, std::uint64_t finish, const char* reason,
@@ -705,17 +653,19 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     { return analog_->startDeferredAnalogLoadLookahead(e); };
     host.deferredAnalogMatches = [this](const QemuSyncEvent& e)
     { return analog_->deferredMatches(e); };
-    host.validateInitialDevice = [this](const QemuSyncEvent& e)
-    { analog_->validateInitialCpuDevice(e); };
+
     host.memory = [this](const CpuMemoryAction& a) { return memoryAccess_->executeCpuMemory(a); };
-    host.instruction = [this](const CpuInstructionAction& a) { return memoryAccess_->executeInstruction(a); };
+    host.instruction = [this](const CpuInstructionAction& a) {
+        auto result = memoryAccess_->executeInstruction(a);
+        if (!a.invalidate && result.delay)
+            syncBridge_.approveInstructionSegment(result.instructionCount);
+        return result;
+    };
     host.analog = [this](const CpuAnalogAction& a) { return analog_->executeCpuAnalog(a); };
     host.network = [this](const CpuNetworkAction& a) { return executeCpuNetwork(a); };
     host.globalDMA = [this](const CpuGlobalDMAAction& a)
     { return globalDMA_->executeCpuGlobalDMA(a); };
     host.barrier = [this](const CpuBarrierAction& a) { return barriers_->executeCpuBarrier(a); };
-    host.initialization = [this](const CpuInitializationAction& a)
-    { return barriers_->executeCpuInitialization(a); };
     host.task = [this](const CpuTaskAction& a) { return executeCpuTask(a); };
     host.guestExit = [this]() { executeCpuExit(); };
     // Disabled-launch lifecycle fixtures have no CPU link, but the execution
@@ -723,8 +673,7 @@ Tile::Tile(SST::ComponentId_t id, SST::Params& params)
     if (!managedLaunch())
         cpuClockTimeBase_ = getTimeConverter(config_.cpuClock);
     cpu_ = std::make_unique<CpuExecutionController>(config_, cpuDomain(), std::move(transport),
-                                                    std::move(host), qemuReadySetPartitionKey_,
-                                                    qemuReadySetPartitionWorkers_);
+                                                    std::move(host));
 }
 
 Tile::~Tile()
@@ -776,18 +725,16 @@ void Tile::setup()
         try
         {
             syncBridge_.create(config_.tileId);
+            syncBridge_.configureInstructionSegments(config_.instructionFetchSegmentSize);
             globalRAMFileDescriptor_.reset(GlobalRAMBacking::duplicate(config_.globalRAMBytes));
-            if (config_.scratchpadBoot)
-            {
-                bootGlobalOffset_ = Timing::multiply(config_.tileId, config_.scratchpadBytes);
-                if (bootGlobalOffset_ > config_.globalRAMBytes ||
-                    config_.scratchpadBytes > config_.globalRAMBytes - bootGlobalOffset_)
-                    throw std::invalid_argument("shared RAM cannot hold this tile's boot slot");
-                bootImage_ = loadScratchpadBootImage(
-                    config_.elfPath, MITTENS_SCRATCHPAD_BASE, config_.scratchpadBytes);
-                seedScratchpadBootImage(globalRAMFileDescriptor_.get(), bootGlobalOffset_,
-                                       *bootImage_);
-            }
+            bootGlobalOffset_ = Timing::multiply(config_.tileId, config_.scratchpadBytes);
+            if (bootGlobalOffset_ > config_.globalRAMBytes ||
+                config_.scratchpadBytes > config_.globalRAMBytes - bootGlobalOffset_)
+                throw std::invalid_argument("shared RAM cannot hold this tile's boot slot");
+            bootImage_ = loadScratchpadBootImage(
+                config_.elfPath, MITTENS_SCRATCHPAD_BASE, config_.scratchpadBytes);
+            seedScratchpadBootImage(globalRAMFileDescriptor_.get(), bootGlobalOffset_,
+                                   *bootImage_);
         }
         catch (const std::exception& error)
         {
@@ -852,14 +799,11 @@ void Tile::setup()
         }
 
         state_ = LifecycleState::Running;
-        barriers_->start();
         const auto now = std::chrono::steady_clock::now();
         lastProgressWallTime_ = now;
         lastRetirementWallTime_ = now;
         lastProgressSnapshotWallTime_ = now;
         observedDeploymentProgressEpoch_ = deploymentProgressEpoch.load(std::memory_order_relaxed);
-        observedMemoryInitializationExecutionProgressEpoch_ =
-            memoryInitializationExecutionProgressEpoch.load(std::memory_order_relaxed);
         progressWatchdogInitialized_ = true;
         output_.verbose(CALL_INFO, 2, 0, "QEMU tile %u started with PID %d\n",
                         static_cast<unsigned>(config_.tileId), static_cast<int>(qemu_.pid()));
@@ -890,7 +834,7 @@ void Tile::handleCpuSyncEvent(SST::Event* event)
     }
 }
 
-void Tile::handleRuntimeQemuReadySetDispatch(SST::Event* event)
+void Tile::handleCaptureWorkerDispatch(SST::Event* event)
 {
     delete event;
     try
@@ -900,7 +844,7 @@ void Tile::handleRuntimeQemuReadySetDispatch(SST::Event* event)
     catch (const std::exception& error)
     {
         QemuProcess::terminateAll();
-        output_.fatal(CALL_INFO, -1, "tile %u runtime QEMU ready-set execution failed: %s\n",
+        output_.fatal(CALL_INFO, -1, "tile %u parallel QEMU capture execution failed: %s\n",
                       static_cast<unsigned>(config_.tileId), error.what());
     }
 }
@@ -981,18 +925,6 @@ bool Tile::advanceScratchpadBoot()
                    static_cast<unsigned long long>(now));
     bootImage_.reset();
     return true;
-}
-void Tile::handleMemoryInitializationBarrierEvent(SST::Event* rawEvent)
-{
-    std::unique_ptr<SST::Event> owned(rawEvent);
-    deviceNotification(
-        [&]
-        {
-            auto* e = dynamic_cast<MemoryInitializationBarrierEvent*>(rawEvent);
-            if (!e)
-                throw std::runtime_error("invalid initialization barrier event type");
-            barriers_->onInitializationRelease(e->tileId(), e->message());
-        });
 }
 void Tile::handleEpochBarrierEvent(SST::Event* rawEvent)
 {
@@ -1120,6 +1052,7 @@ void Tile::handleAnalogWakeEvent(SST::Event* rawEvent)
             if (!e)
                 throw std::runtime_error("invalid analog wake event type");
             analog_->onWake(e->generation());
+            barriers_->onAnalogProgress();
         });
 }
 bool Tile::handleNetworkSend(int)
@@ -1157,6 +1090,7 @@ void Tile::serviceBridge()
     }
 
     analog_->serviceAnalogBridge();
+    barriers_->onAnalogProgress();
 }
 
 void Tile::serviceOutgoingPackets()
@@ -1261,17 +1195,6 @@ void Tile::maybeProgressWatchdog()
         observedDeploymentProgressEpoch_ = deploymentEpoch;
         lastRetirementWallTime_ = now;
     }
-    const bool memoryInitializationBarrierPending =
-        config_.memoryInitializationBarrierTiles != 0 &&
-        barriers_->snapshot().memoryInitializationBarrierArrived_ &&
-        !barriers_->snapshot().memoryInitializationBarrierReleaseReady_;
-    const std::uint64_t initializationExecutionEpoch =
-        memoryInitializationExecutionProgressEpoch.load(std::memory_order_relaxed);
-    if (initializationExecutionEpoch != observedMemoryInitializationExecutionProgressEpoch_)
-    {
-        observedMemoryInitializationExecutionProgressEpoch_ = initializationExecutionEpoch;
-        lastRetirementWallTime_ = now;
-    }
     const auto snapshotElapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProgressSnapshotWallTime_)
             .count();
@@ -1284,11 +1207,7 @@ void Tile::maybeProgressWatchdog()
     const auto retirementElapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRetirementWallTime_)
             .count();
-    const std::uint64_t watchdogMilliseconds =
-        memoryInitializationBarrierPending && config_.progressWatchdogMilliseconds <=
-                                                  std::numeric_limits<std::uint64_t>::max() / 10
-            ? config_.progressWatchdogMilliseconds * 10
-            : config_.progressWatchdogMilliseconds;
+    const std::uint64_t watchdogMilliseconds = config_.progressWatchdogMilliseconds;
     if (retirementElapsed < static_cast<std::int64_t>(watchdogMilliseconds))
     {
         return;
@@ -1297,7 +1216,7 @@ void Tile::maybeProgressWatchdog()
     recordProgressSnapshot("watchdog");
     output_.output("%s", formatProgressWatchdog(
         config_.tileId, watchdogMilliseconds, static_cast<std::uint64_t>(retirementElapsed),
-        deploymentEpoch, initializationExecutionEpoch).c_str());
+        deploymentEpoch).c_str());
     qemu_.terminate();
     QemuProcess::terminateAll();
     output_.fatal(CALL_INFO, -1,
@@ -1409,20 +1328,24 @@ void Tile::finish()
         }
     }
 
-    if (config_.qemuRuntimeReadySet)
+    if (config_.qemuCaptureWorkers > 1)
     {
-        const RuntimeQemuReadySetStatistics statistics =
-            QemuCaptureCoordinator::runtimeQemuReadySetStatistics();
+        const CaptureWorkerStatistics statistics =
+            QemuCaptureCoordinator::captureWorkerStatistics();
         if (statistics.reporterTile == config_.tileId)
         {
-            output_.output("MITTENS_RUNTIME_QEMU_READY_SET "
+            output_.output("MITTENS_QEMU_CAPTURE_WORKERS "
                            "dispatches=%llu captures=%llu parallel_dispatches=%llu "
-                           "max_batch=%zu workers=%u\n",
+                           "max_batch=%zu workers=%u host_dispatch_ns=%llu "
+                           "host_submit_ns=%llu host_collect_ns=%llu\n",
                            static_cast<unsigned long long>(statistics.dispatchCount),
                            static_cast<unsigned long long>(statistics.capturedTaskCount),
                            static_cast<unsigned long long>(statistics.parallelDispatchCount),
                            statistics.maximumBatchSize,
-                           static_cast<unsigned>(config_.qemuReadySetWorkers));
+                           static_cast<unsigned>(config_.qemuCaptureWorkers),
+                           static_cast<unsigned long long>(statistics.hostDispatchNanoseconds),
+                           static_cast<unsigned long long>(statistics.hostSubmitNanoseconds),
+                           static_cast<unsigned long long>(statistics.hostCollectNanoseconds));
         }
     }
     if (config_.qemuLocalLookahead)
@@ -1460,19 +1383,16 @@ void Tile::finish()
     }
 
     const ScratchpadTimingStatistics scratchpad = memoryAccess_->scratchpadStatistics();
-    if (config_.scratchpadBoot)
-    {
-        const auto cache = memoryAccess_->instructionStatistics();
-        output_.output("INSTRUCTION_CACHE tile=%u accesses=%llu hits=%llu misses=%llu "
-                       "fill_bytes=%llu stall_cycles=%llu invalidations=%llu unretired_fetches=%llu\n",
-            config_.tileId, static_cast<unsigned long long>(cache.fetches),
-            static_cast<unsigned long long>(cache.hits),
-            static_cast<unsigned long long>(cache.misses),
-            static_cast<unsigned long long>(cache.fillBytes),
-            static_cast<unsigned long long>(memoryAccess_->instructionStallCycles()),
-            static_cast<unsigned long long>(memoryAccess_->instructionInvalidations()),
-            static_cast<unsigned long long>(cpu_->statistics().unretiredInstructionFetches_));
-    }
+    const auto cache = memoryAccess_->instructionStatistics();
+    output_.output("INSTRUCTION_CACHE tile=%u accesses=%llu hits=%llu misses=%llu "
+                   "fill_bytes=%llu stall_cycles=%llu invalidations=%llu unretired_fetches=%llu\n",
+        config_.tileId, static_cast<unsigned long long>(cache.fetches),
+        static_cast<unsigned long long>(cache.hits),
+        static_cast<unsigned long long>(cache.misses),
+        static_cast<unsigned long long>(cache.fillBytes),
+        static_cast<unsigned long long>(memoryAccess_->instructionStallCycles()),
+        static_cast<unsigned long long>(memoryAccess_->instructionInvalidations()),
+        static_cast<unsigned long long>(cpu_->statistics().unretiredInstructionFetches_));
     scratchpadServiceStatistic_->addData(scratchpad.activeCycles);
     scratchpadReadServiceStatistic_->addData(scratchpad.readServiceCycles);
     scratchpadWriteServiceStatistic_->addData(scratchpad.writeServiceCycles);

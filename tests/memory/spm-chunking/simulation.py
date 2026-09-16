@@ -12,7 +12,7 @@ tile.addParams(dict(
     scratchpad_access_width_bits=256, scratchpad_read_ports=1, scratchpad_write_ports=1,
     scratchpad_latency_cycles=1, scratchpad_dma_bytes_per_cycle=32, scratchpad_dma_setup_cycles=8,
     instruction_cache_bytes=8192, instruction_cache_line_bytes=64, instruction_cache_ways=2,
-    memory_init_batching=False, memory_access_batching=False, scratchpad_access_batching=False,
+    memory_access_batching=False, scratchpad_access_batching=False,
     scratchpad_access_run_compaction=False, memory_event_batching=False,
     global_dma_submit_batching=False, global_dma_macro_execution=False,
     qemu_ready_set_workers=1, qemu_runtime_ready_set=False, qemu_local_lookahead=False,

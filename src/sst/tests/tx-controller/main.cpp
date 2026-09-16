@@ -234,7 +234,6 @@ extern "C" int tile_main() {
             scratchpad[word] = 0;
         }
     }
-    mesh_nic::complete_memory_initialization();
 
     if (ownedTransfers != 0) {
 #if MITTENS_FANOUT_RECORD_READY_CYCLES

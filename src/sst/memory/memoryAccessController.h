@@ -18,6 +18,7 @@ class MemoryAccessController final
     struct Host
     {
         std::function<Timing::Ticks()> now;
+        std::function<bool()> instructionSegmentSafe;
     };
     struct Statistics
     {
@@ -43,16 +44,13 @@ class MemoryAccessController final
         : config_(std::move(config)), clock_(clock), scratchpadTimingModel_(std::move(scratchpad)),
           performanceProfile_(profile), output_(std::move(diagnostics)), host_(std::move(host))
     {
-        if (config_.scratchpadBoot)
-        {
-            if (!scratchpadTimingModel_)
-                throw std::invalid_argument("instruction cache requires scratchpad");
-            instructionCache_ = std::make_unique<InstructionCache>(
-                MITTENS_SCRATCHPAD_BASE,
-                InstructionCacheConfiguration{config_.instructionCacheBytes,
-                    config_.instructionCacheLineBytes, config_.instructionCacheWays,
-                    config_.instructionCacheHitCycles}, *scratchpadTimingModel_);
-        }
+        if (!scratchpadTimingModel_)
+            throw std::invalid_argument("instruction cache requires scratchpad");
+        instructionCache_ = std::make_unique<InstructionCache>(
+            MITTENS_SCRATCHPAD_BASE,
+            InstructionCacheConfiguration{config_.instructionCacheBytes,
+                config_.instructionCacheLineBytes, config_.instructionCacheWays,
+                config_.instructionCacheHitCycles}, *scratchpadTimingModel_);
     }
     CpuDeviceResult executeCpuMemory(const CpuMemoryAction& action);
     CpuDeviceResult executeInstruction(const CpuInstructionAction& action);

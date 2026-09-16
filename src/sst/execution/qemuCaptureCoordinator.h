@@ -1,17 +1,21 @@
 #pragma once
-#include "qemuReadySetExecutor.h"
+#include "qemuCaptureExecutor.h"
 #include <array>
 #include <atomic>
 #include <chrono>
 namespace SST::Mittens
 {
-struct RuntimeQemuReadySetStatistics
+struct CaptureWorkerStatistics
 {
     std::uint32_t reporterTile;
     std::uint64_t dispatchCount;
     std::uint64_t capturedTaskCount;
     std::uint64_t parallelDispatchCount;
     std::size_t maximumBatchSize;
+    // Main-thread elapsed intervals, unlike overlapping per-worker capture sums.
+    std::uint64_t hostDispatchNanoseconds;
+    std::uint64_t hostSubmitNanoseconds;
+    std::uint64_t hostCollectNanoseconds;
 };
 struct QemuCaptureHostStatistics
 {
@@ -53,21 +57,11 @@ class QemuCaptureCoordinator final
     static void recordLocalQemuLookaheadConsume(bool ready) noexcept;
     static void recordLocalQemuLookaheadFusedTerminal(std::uint32_t stopReason) noexcept;
     static LocalQemuLookaheadStatistics localQemuLookaheadStatistics();
-    static RuntimeQemuReadySetStatistics runtimeQemuReadySetStatistics();
-    static void registerRuntimeQemuReadySetTile(std::uint32_t tileId, std::uint32_t workerCount,
-                                                std::uint32_t expectedTiles,
-                                                const std::string& independenceProof);
-    static void enqueueRuntimeQemuReadySetTask(QemuReadySetExecutor::Task task);
-    static std::vector<QemuReadySetExecutor::Completion>
-    dispatchRuntimeQemuReadySet(std::uint64_t frontierTick);
-    static void registerInitialQemuReadySetTile(std::uint64_t partitionKey, std::uint32_t tileId,
-                                                std::uint32_t workerBudget,
-                                                std::uint32_t partitionWorkerCount,
-                                                std::uint32_t expectedTiles,
-                                                const std::string& independenceProof);
-    static std::optional<std::vector<QemuReadySetExecutor::Completion>>
-    submitInitialQemuReadySetTask(std::uint64_t partitionKey, std::uint32_t workerBudget,
-                                  std::uint32_t partitionWorkerCount, std::uint32_t expectedTiles,
-                                  QemuReadySetExecutor::Task task);
+    static CaptureWorkerStatistics captureWorkerStatistics();
+    static void registerCaptureWorkerTile(std::uint32_t tileId, std::uint32_t workerCount);
+    // True only for the first task at this frontier: schedule one shared dispatch.
+    static bool enqueueCaptureWorkerTask(QemuCaptureExecutor::Task task);
+    static std::vector<QemuCaptureExecutor::Completion>
+    dispatchCaptureWorker(std::uint64_t frontierTick);
 };
 } // namespace SST::Mittens

@@ -32,8 +32,8 @@ libmittens_la_SOURCES = \
 	memory/globalDMAClient.cc \
 	memory/globalDMAProtocol.h \
 	synchronization/barrierProtocol.h \
-	synchronization/initializationBarrierClient.h \
-	synchronization/initializationBarrierClient.cc \
+	synchronization/epochBarrierClient.h \
+	synchronization/epochBarrierClient.cc \
 	profiling/measurementWriter.h \
 	profiling/measurementWriter.cc \
 	profiling/summarySnapshot.h \
@@ -63,8 +63,8 @@ libmittens_la_SOURCES = \
 	execution/qemuCaptureCoordinator.h \
 	execution/qemuCaptureCoordinator.cc \
 	execution/qemuProcess.cc \
-	execution/qemuReadySetExecutor.h \
-	execution/qemuReadySetExecutor.cc \
+	execution/qemuCaptureExecutor.h \
+	execution/qemuCaptureExecutor.cc \
 	memory/globalRAMBacking.h \
 	memory/globalRAMBacking.cc \
 	memory/globalDMAEvent.h \
@@ -78,11 +78,6 @@ libmittens_la_SOURCES = \
 	synchronization/epochBarrierController.cc \
 	probes/epochBarrierProbe.h \
 	probes/epochBarrierProbe.cc \
-	synchronization/memoryInitializationBarrierEvent.h \
-	synchronization/memoryInitializationBarrierController.h \
-	synchronization/memoryInitializationBarrierController.cc \
-	probes/memoryInitializationBarrierProbe.h \
-	probes/memoryInitializationBarrierProbe.cc \
 	bridge/sharedMemoryBridge.h \
 	bridge/sharedMemoryBridge.cc \
 	bridge/sharedSyncMemoryBridge.h \
@@ -131,11 +126,6 @@ EXTRA_DIST = \
 	tests/device_owners.py \
 	tests/cpu_execution_ledger_test.cpp \
 	tests/cpu_execution_controller_test.cpp \
-	tests/cpu_memory_deadline.cpp \
-	tests/cpu_memory_deadline.py \
-	tests/cpu_memory_deadline_build.sh \
-	tests/cpu_memory_deadline_simulation.py \
-	tests/cpu_memory_deadline.md \
 	README.md \
 	tests/run-test.sh \
 	tests/component_lifecycle.py \
@@ -153,14 +143,12 @@ EXTRA_DIST = \
 	tests/performance_profile.py \
 	tests/wormhole_network.py \
 	tests/sync_bridge_test.cpp \
-	tests/qemu_ready_set_executor_test.cpp \
-	tests/qemu_ready_set_boot.py \
-	tests/qemu_ready_set_boot_proof.json \
-	tests/run-qemu-ready-set-sst-test.sh \
+	tests/qemu_capture_executor_test.cpp \
+	tests/concurrent_capture.py \
+	tests/fetch_segments.py \
+	tests/concurrent_capture_simulation.py \
 	tests/epoch_barrier.py \
 	tests/run-epoch-barrier-test.sh \
-	tests/memory_initialization_barrier.py \
-	tests/run-memory-initialization-barrier-test.sh \
 	tests/memory_access_coalescer_test.cpp \
 	tests/global_ram_readiness_test.cpp \
 	tests/global_ram_readiness.py \

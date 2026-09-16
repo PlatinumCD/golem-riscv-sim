@@ -27,9 +27,17 @@ TileConfiguration TileConfiguration::read(SST::Params& params)
         if (params.find<Value>(name, expected) != expected)
             throw std::invalid_argument(std::string("fixed execution setting: ") + name);
     };
+    for (const char* removed : {"memory_init_batching", "memory_init_bytes_per_cycle",
+                                "memory_init_latency_cycles", "memory_init_instruction_quantum",
+                                "memory_init_barrier_tiles"}) {
+        if (params.contains(removed))
+            throw std::invalid_argument(std::string("removed aggregate initialization setting: ") + removed +
+                                        "; use timed SPM boot DMA and epoch barriers");
+    }
     fixed("memory", std::string("16M"));
+    // Accept explicit declarations of the one supported architecture, but do
+    // not store them as selectors or permit alternate execution paths.
     fixed("memory_backend", std::string("streaming"));
-    fixed("memory_init_batching", bool(false));
     fixed("memory_access_batching", bool(false));
     fixed("scratchpad_access_batching", bool(false));
     fixed("scratchpad_access_run_compaction", bool(false));
@@ -38,11 +46,7 @@ TileConfiguration TileConfiguration::read(SST::Params& params)
     fixed("global_dma_macro_execution", bool(false));
     fixed("analog_command_batching", bool(false));
     fixed("memory_access_batch_records", std::uint32_t(16));
-    fixed("memory_init_bytes_per_cycle", std::uint32_t(32));
-    fixed("memory_init_latency_cycles", std::uint64_t(2));
-    fixed("memory_init_instruction_quantum", std::uint64_t(UINT64_C(67108864)));
     fixed("network_tail_delivery", bool(true));
-    fixed("memory_init_barrier_tiles", std::uint32_t(0));
     fixed("scratchpad_boot", bool(true));
     fixed("scratchpad_enabled", bool(true));
     fixed("qemu_ready_set_workers", std::uint32_t(1));
@@ -62,9 +66,10 @@ TileConfiguration TileConfiguration::read(SST::Params& params)
 void TileConfiguration::validate(SST::Output& output_) const
 {
     const auto& config_ = *this;
-    if (!config_.scratchpadBoot || !config_.scratchpadEnabled || config_.memoryBackend != "streaming")
-        output_.fatal(CALL_INFO, -1,
-                      "only executable SPM with an instruction cache and streaming DMA is supported\n");
+    if (config_.instructionFetchSegmentSize == 0 || config_.instructionFetchSegmentSize > 16)
+        output_.fatal(CALL_INFO, -1, "instruction_fetch_segment_size must be between 1 and 16\n");
+    if (config_.qemuCaptureWorkers == 0 || config_.qemuCaptureWorkers > 64)
+        output_.fatal(CALL_INFO, -1, "qemu_capture_workers must be between 1 and 64\n");
     if ((config_.meshWidth == 0) != (config_.meshHeight == 0))
     {
         output_.fatal(CALL_INFO, -1,
@@ -111,21 +116,17 @@ void TileConfiguration::validate(SST::Output& output_) const
         output_.fatal(CALL_INFO, -1, "tile %u has an empty memory setting\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    if (config_.scratchpadBoot &&
-        (!config_.scratchpadEnabled || config_.memoryBackend != "streaming" ||
-         config_.memoryInitializationBatching || config_.memoryAccessBatching ||
+    if (config_.memoryAccessBatching ||
          config_.scratchpadAccessBatching || config_.memoryEventBatching ||
          config_.globalDMASubmitBatching || config_.globalDMAMacroExecution ||
          config_.analogCommandBatching || config_.cpuIssueWidth != 1 ||
-         config_.qemuReadySetWorkers != 1 || config_.qemuRuntimeReadySet ||
-         config_.qemuLocalLookahead))
+         config_.qemuLocalLookaheadWorkers != 1 ||
+         config_.qemuLocalLookahead)
     {
         output_.fatal(CALL_INFO, -1,
-                      "scratchpad_boot requires scratchpad_enabled, streaming memory, "
-                      "and unbatched single-issue execution without QEMU lookahead/ready sets\n");
+                      "executable SPM requires unbatched single-issue execution without local lookahead\n");
     }
-    if (config_.scratchpadBoot &&
-        (!isPowerOfTwo(config_.instructionCacheBytes) ||
+    if (!isPowerOfTwo(config_.instructionCacheBytes) ||
          !isPowerOfTwo(config_.instructionCacheLineBytes) ||
          !isPowerOfTwo(config_.instructionCacheWays) ||
          config_.instructionCacheLineBytes < 4 ||
@@ -133,7 +134,7 @@ void TileConfiguration::validate(SST::Output& output_) const
              config_.instructionCacheWays > config_.instructionCacheBytes ||
          config_.instructionCacheLineBytes > config_.scratchpadBytes ||
          config_.scratchpadBytes % config_.instructionCacheLineBytes != 0 ||
-         config_.instructionCacheHitCycles == 0))
+         config_.instructionCacheHitCycles == 0)
     {
         output_.fatal(CALL_INFO, -1, "invalid scratchpad instruction-cache geometry or latency\n");
     }
@@ -221,9 +222,8 @@ void TileConfiguration::validate(SST::Output& output_) const
                       "multiple of 32\n",
                       static_cast<unsigned>(config_.tileId));
     }
-    if (config_.scratchpadEnabled &&
-        (config_.receiveDMAWidthBits / 8 != config_.scratchpadDMABytesPerCycle ||
-         config_.receiveDMASetupCycles != config_.scratchpadDMASetupCycles))
+    if (config_.receiveDMAWidthBits / 8 != config_.scratchpadDMABytesPerCycle ||
+        config_.receiveDMASetupCycles != config_.scratchpadDMASetupCycles)
     {
         output_.fatal(
             CALL_INFO, -1,

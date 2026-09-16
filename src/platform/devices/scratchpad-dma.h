@@ -25,10 +25,12 @@ constexpr uint32_t ScratchpadDMAStatusError = UINT32_C(1) << 2;
 constexpr uint32_t ScratchpadDMAStatusMacroActive = UINT32_C(1) << 4;
 constexpr uint32_t ScratchpadDMACommandSubmit = 1;
 constexpr uint32_t ScratchpadDMACommandWait = 2;
-constexpr uint32_t ScratchpadDMACommandInitializeGlobalRAM = 3;
 constexpr uint32_t ScratchpadDMACommandWaitBatch = 4;
 constexpr uint32_t ScratchpadDMACommandMacroBegin = 5;
 constexpr uint32_t ScratchpadDMACommandMacroEnd = 6;
+constexpr uint32_t ScratchpadDMACommandQuery = 7;
+constexpr uint32_t ScratchpadDMACommandAcknowledge = 8;
+constexpr uint32_t ScratchpadDMACommandWaitAny = 9;
 constexpr uint32_t ScratchpadDMAMaximumJobs = 8;
 
 inline volatile uint32_t& scratchpadDMARegister(uintptr_t offset) {
@@ -70,6 +72,45 @@ inline bool globalDMAWait(uint64_t execution_id, uint32_t token_id) {
     scratchpadDMARegister(0x18) = static_cast<uint32_t>(execution_id);
     scratchpadDMARegister(0x1c) = static_cast<uint32_t>(execution_id >> 32);
     scratchpadDMARegister(0x24) = ScratchpadDMACommandWait;
+    return (scratchpadDMARegister(0x28) & ScratchpadDMAStatusError) == 0;
+}
+
+enum class GlobalDMACompletion : uint32_t { Pending, Complete, Error };
+
+// Non-destructive, exact-identity query. Complete includes functional copying.
+// The caller must retain source/destination ownership until Complete. Querying
+// an unknown or already acknowledged identity returns Error, never completion.
+inline GlobalDMACompletion globalDMACompletionCommand(
+    uint64_t execution_id, uint32_t token_id, uint32_t command) {
+    asm volatile("fence iorw, iorw" ::: "memory");
+    scratchpadDMARegister(0x14) = token_id;
+    scratchpadDMARegister(0x18) = static_cast<uint32_t>(execution_id);
+    scratchpadDMARegister(0x1c) = static_cast<uint32_t>(execution_id >> 32);
+    scratchpadDMARegister(0x24) = command;
+    const uint32_t status = scratchpadDMARegister(0x28);
+    asm volatile("fence iorw, iorw" ::: "memory");
+    if (status & ScratchpadDMAStatusError) return GlobalDMACompletion::Error;
+    return status & (UINT32_C(1) << 1) ? GlobalDMACompletion::Complete : GlobalDMACompletion::Pending;
+}
+
+inline GlobalDMACompletion globalDMAQuery(uint64_t execution_id, uint32_t token_id) {
+    return globalDMACompletionCommand(execution_id, token_id, ScratchpadDMACommandQuery);
+}
+
+// Atomically check the DMA and incoming mesh queue, then park if neither is
+// ready. Pending means mesh work is available; it never consumes that work or
+// retires the DMA. Complete has the same visibility contract as query.
+inline GlobalDMACompletion globalDMAWaitForEvent(uint64_t execution_id, uint32_t token_id) {
+    return globalDMACompletionCommand(execution_id, token_id, ScratchpadDMACommandWaitAny);
+}
+
+// Release one of the eight retained request/completion slots. Pending queries
+// never free a slot. This requires a preceding completed query.
+inline bool globalDMAAcknowledge(uint64_t execution_id, uint32_t token_id) {
+    scratchpadDMARegister(0x14) = token_id;
+    scratchpadDMARegister(0x18) = static_cast<uint32_t>(execution_id);
+    scratchpadDMARegister(0x1c) = static_cast<uint32_t>(execution_id >> 32);
+    scratchpadDMARegister(0x24) = ScratchpadDMACommandAcknowledge;
     return (scratchpadDMARegister(0x28) & ScratchpadDMAStatusError) == 0;
 }
 
@@ -137,30 +178,5 @@ inline bool globalDMAMacroEnd(
     return (scratchpadDMARegister(0x28) & ScratchpadDMAStatusError) == 0;
 }
 
-// Populate the functional global-RAM backing during deployment
-// initialization. The initialization marker charges the aggregate byte
-// volume once, and QEMU rejects this command after that marker.
-inline bool globalRAMInitialize(
-    uint64_t global_offset,
-    uint64_t scratchpad_offset,
-    uint32_t byte_count
-) {
-    if ((scratchpadDMARegister(0x28) & ScratchpadDMAStatusReady) == 0) {
-        return false;
-    }
-    scratchpadDMARegister(0x00) = static_cast<uint32_t>(global_offset);
-    scratchpadDMARegister(0x04) = static_cast<uint32_t>(global_offset >> 32);
-    scratchpadDMARegister(0x08) = static_cast<uint32_t>(scratchpad_offset);
-    scratchpadDMARegister(0x0c) =
-        static_cast<uint32_t>(scratchpad_offset >> 32);
-    scratchpadDMARegister(0x10) = byte_count;
-    scratchpadDMARegister(0x20) = static_cast<uint32_t>(
-        ScratchpadDMADirection::ScratchpadToGlobalRAM);
-    __asm__ volatile("fence rw, iorw" ::: "memory");
-    scratchpadDMARegister(0x24) =
-        ScratchpadDMACommandInitializeGlobalRAM;
-    __asm__ volatile("fence iorw, iorw" ::: "memory");
-    return (scratchpadDMARegister(0x28) & ScratchpadDMAStatusError) == 0;
-}
 
 }  // namespace golem::platform

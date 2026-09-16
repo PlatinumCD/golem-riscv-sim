@@ -17,7 +17,7 @@ def main():
     output = Path(tempfile.mkdtemp(prefix='golem-device-owners-'))
     sources = ['memory/memoryAccessController.cc', 'memory/instructionCache.cc',
                'memory/globalDMAClient.cc',
-               'synchronization/initializationBarrierClient.cc',
+               'synchronization/epochBarrierClient.cc',
                'memory/scratchpad/scratchpadTimingModel.cc',
                'analog/analogController.cc', 'analog/analogDevice.cc',
                'analog/nativeAnalogBackend.cc', 'analog/timingAnalogBackend.cc',

@@ -308,7 +308,6 @@ extern "C" int tile_main() {
             return fail("array-setup", 1);
         }
     }
-    mesh_nic::complete_memory_initialization();
 
     if constexpr (kProducerTile != kMvmTile) {
         if constexpr (kTileId == kMvmTile) {

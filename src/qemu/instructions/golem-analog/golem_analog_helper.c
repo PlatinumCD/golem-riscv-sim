@@ -16,7 +16,6 @@
 
 #include "mittens/AnalogTileBridge.h"
 
-bool mittens_sync_memory_initialization_active(void);
 void mittens_sync_yield_memory(
     uint64_t physical_address,
     uint32_t size,
@@ -46,7 +45,6 @@ target_ulong HELPER(golem_analog)(
     bool wait_for_completion = false;
     uint64_t status;
     uint64_t matrix_word_count;
-    uint32_t matrix_byte_count = 0;
     uint32_t valid_rows = 0;
     uint32_t valid_columns = 0;
     uint32_t index;
@@ -80,7 +78,6 @@ target_ulong HELPER(golem_analog)(
             return MITTENS_ANALOG_STATUS_INVALID_PAYLOAD;
         }
         input_word_count = (uint32_t)matrix_word_count;
-        matrix_byte_count = input_word_count * sizeof(uint32_t);
         break;
     case MITTENS_ANALOG_OPERATION_LOAD_VECTOR:
         command.operand0 = rs1;
@@ -106,28 +103,7 @@ target_ulong HELPER(golem_analog)(
 
     if (input_word_count != 0) {
         input_words = g_new(uint32_t, input_word_count);
-        if (operation == MITTENS_ANALOG_OPERATION_SET_MATRIX &&
-            mittens_sync_memory_initialization_active()) {
-            if (cpu_memory_rw_debug(
-                    env_cpu(env),
-                    rs1,
-                    input_words,
-                    matrix_byte_count,
-                    false) != 0) {
-                return MITTENS_ANALOG_STATUS_INVALID_PAYLOAD;
-            }
-            for (index = 0; index < input_word_count; ++index) {
-                input_words[index] = le32_to_cpu(input_words[index]);
-            }
-            /*
-             * The debug copy is the host implementation of one architectural
-             * SetMatrix snapshot. Charge its exact bytes through the normal
-             * aggregate initialization accounting instead of generating one
-             * QEMU/SST rendezvous per scalar word.
-             */
-            mittens_sync_yield_memory(
-                rs1, matrix_byte_count, false, 0, 0);
-        } else {
+        {
             for (index = 0; index < input_word_count; ++index) {
                 input_words[index] = cpu_ldl_data_ra(
                     env, rs1 + (target_ulong)index * sizeof(uint32_t),

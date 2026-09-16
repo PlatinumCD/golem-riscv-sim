@@ -173,10 +173,16 @@ GlobalRAMController::GlobalRAMController(SST::ComponentId_t id, SST::Params& par
     try
     {
         backingDescriptor_ = GlobalRAMBacking::duplicate(capacityBytes_);
+        // Component construction precedes Tile::setup(), where QEMU starts.
+        // Consequently every tile sees the complete image before its first DMA.
+        if (!configuration_.image_file.empty())
+            GlobalRAMBacking::loadImage(backingDescriptor_, capacityBytes_,
+                                        configuration_.image_file,
+                                        configuration_.image_offset);
     }
     catch (const std::exception& error)
     {
-        output_.fatal(CALL_INFO, -1, "cannot create sparse backing: %s\n", error.what());
+        output_.fatal(CALL_INFO, -1, "cannot initialize sparse backing: %s\n", error.what());
     }
 
     links_.resize(tileCount_, nullptr);
@@ -1060,7 +1066,25 @@ bool GlobalRAMController::clockTick(SST::Cycle_t cycle)
         }
         queue.erase(selected);
         --queuedRequests_;
-        const std::uint64_t service = serviceCycles(request.event->byteCount());
+        std::uint64_t service = serviceCycles(request.event->byteCount());
+        if (configuration_.shared_bytes_per_cycle != 0)
+        {
+            // Channels overlap setup/latency, but share one payload bus.
+            // Reserve complete requests in admission order; do not partition
+            // bandwidth statically among idle and busy channels.
+            const std::uint64_t bytes = request.event->byteCount();
+            const std::uint64_t privateTransfer = (bytes + bytesPerCycle_ - 1) / bytesPerCycle_;
+            const std::uint64_t rate = std::min(bytesPerCycle_, configuration_.shared_bytes_per_cycle);
+            const std::uint64_t transfer = (bytes + rate - 1) / rate;
+            const std::uint64_t latency = service - privateTransfer;
+            if (latency > UINT64_MAX - now)
+                output_.fatal(CALL_INFO, -1, "global RAM shared bus latency overflow\n");
+            const std::uint64_t start = std::max(now + latency, sharedPayloadAvailableCycle_);
+            if (transfer > UINT64_MAX - start)
+                output_.fatal(CALL_INFO, -1, "global RAM shared bus completion overflow\n");
+            sharedPayloadAvailableCycle_ = start + transfer;
+            service = sharedPayloadAvailableCycle_ - now;
+        }
         if (service > UINT64_MAX - now)
         {
             output_.fatal(CALL_INFO, -1, "global DMA completion overflow\n");

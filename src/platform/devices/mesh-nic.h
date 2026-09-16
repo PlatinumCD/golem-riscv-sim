@@ -13,7 +13,6 @@ constexpr uint32_t kReceiveDmaSubmitReady = 1U << 0;
 constexpr uint32_t kReceiveDmaCompletionValid = 1U << 1;
 constexpr uint32_t kTaskTraceStart = 1;
 constexpr uint32_t kTaskTraceFinish = 2;
-constexpr uint32_t kMemoryInitializationComplete = 3;
 constexpr uint32_t kEpochBarrierArrive = 4;
 constexpr uint32_t kEpochWorkComplete = 0;
 constexpr uint32_t kEpochIdle = 1;
@@ -194,11 +193,6 @@ inline void trace_task(
     __asm__ volatile("fence iorw, iorw" ::: "memory");
 }
 
-inline void complete_memory_initialization() {
-    __asm__ volatile("fence rw, iorw" ::: "memory");
-    registers()[13] = kMemoryInitializationComplete;
-    __asm__ volatile("fence iorw, iorw" ::: "memory");
-}
 
 inline bool arrive_epoch(uint32_t completed_epoch, uint32_t contribution) {
     if (contribution != kEpochWorkComplete &&

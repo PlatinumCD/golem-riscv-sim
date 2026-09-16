@@ -15,8 +15,6 @@ using SST::Mittens::GlobalRAMPerformanceProfile;
 using SST::Mittens::GlobalRAMProgressSnapshot;
 using SST::Mittens::GlobalRAMRequestTimeline;
 using SST::Mittens::GlobalRAMTeardownTimeline;
-using SST::Mittens::MemoryInitializationBarrierPerformanceProfile;
-using SST::Mittens::MemoryInitializationBarrierTimeline;
 
 namespace {
 
@@ -102,7 +100,6 @@ int main()
         progress.analogCommandsCompleted = 16;
         progress.localEpoch = 2;
         progress.localEpochAvailable = 1;
-        progress.memoryInitializationComplete = 1;
         progress.waitReason = 3;
         progress.waitTicks = 99;
         progress.networkPackets = 4;
@@ -295,25 +292,6 @@ int main()
         profile.recordProgressSnapshot(progress);
     }
 
-    {
-        MemoryInitializationBarrierPerformanceProfile profile;
-        profile.configure(directory.string());
-        assert(profile.enabled());
-        profile.record(MemoryInitializationBarrierTimeline{0, 10, 40});
-        profile.record(MemoryInitializationBarrierTimeline{2, 20, 41});
-        profile.record(MemoryInitializationBarrierTimeline{3, 30, 42});
-        assert(profile.totalsReconcile(3, 63, 32));
-        assert(!profile.totalsReconcile(3, 64, 32));
-
-        bool corruptTimelineRejected = false;
-        try {
-            profile.record(MemoryInitializationBarrierTimeline{1, 50, 49});
-        } catch (const std::logic_error&) {
-            corruptTimelineRejected = true;
-        }
-        assert(corruptTimelineRejected);
-    }
-
     const std::string waitText =
         readFile(directory / "tile-3-waits.csv");
     assert(waitText.find("nic-receive-wait,100,125,25") !=
@@ -336,7 +314,7 @@ int main()
     const std::string progressText =
         readFile(directory / "tile-3-progress.csv");
     assert(progressText.find(
-               "3,watchdog,123,456,789,790,12,1,13,11,17,16,2,1,1,3,99") !=
+               "3,watchdog,123,456,789,790,12,1,13,11,17,16,2,1,3,99") !=
            std::string::npos);
     assert(summaryText.find("network_word_hops,63") !=
            std::string::npos);
@@ -405,15 +383,6 @@ int main()
         readFile(directory / "global-ram-teardowns.csv");
     assert(globalRAMTeardownText.find("9,1,300,330,30") !=
            std::string::npos);
-    const std::string initializationBarrierText =
-        readFile(directory / "memory-init-barrier.csv");
-    assert(initializationBarrierText.find("0,10,40,30") !=
-           std::string::npos);
-    assert(initializationBarrierText.find("2,20,41,21") !=
-           std::string::npos);
-    assert(initializationBarrierText.find("3,30,42,12") !=
-           std::string::npos);
-
     std::error_code error;
     std::filesystem::remove_all(directory, error);
     assert(!error);

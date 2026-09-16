@@ -18,6 +18,7 @@ GlobalRAMConfiguration GlobalRAMConfiguration::read(SST::Params& params)
         params.find<std::uint32_t>("per_tile_queue_depth", 8),
         params.find<std::uint64_t>("setup_cycles", 8),
         params.find<std::uint32_t>("bytes_per_cycle", 32),
+        params.find<std::uint32_t>("shared_bytes_per_cycle", 0),
         params.find<std::uint32_t>("burst_bytes", 64),
         params.find<std::uint64_t>("fixed_latency_cycles", 2),
         params.find<std::uint32_t>("maximum_request_bytes", UINT32_MAX),
@@ -28,6 +29,8 @@ GlobalRAMConfiguration GlobalRAMConfiguration::read(SST::Params& params)
         params.find<std::string>("dependency_mode", "bulk_barrier"),
         params.find<std::string>("profile_output_directory", ""),
         params.find<std::string>("clock", "1GHz"),
+        params.find<std::string>("image_file", ""),
+        params.find<std::uint64_t>("image_offset", 0),
         {},
     };
     params.find_array("active_tiles", config.active_tiles);
@@ -59,6 +62,9 @@ void GlobalRAMConfiguration::validate(SST::Output& output_) const
     if (dependency_mode != "bulk_barrier" && dependency_mode != "exact_dependencies")
         output_.fatal(CALL_INFO, -1, "invalid global RAM dependency_mode: %s\n",
                       dependency_mode.c_str());
+    if (!image_file.empty() && dependency_mode != "bulk_barrier")
+        output_.fatal(CALL_INFO, -1,
+                      "host-loaded RAM images currently require bulk_barrier readiness\n");
     if (std::adjacent_find(active_tiles.begin(), active_tiles.end()) != active_tiles.end())
         output_.fatal(CALL_INFO, -1, "global RAM active tile list contains a duplicate\n");
     if (active_tiles.empty())
@@ -83,6 +89,7 @@ void GlobalRAMConfiguration::emit() const
             out.add("per_tile_queue_depth", "hardware", per_tile_queue_depth);
             out.add("setup_cycles", "hardware", setup_cycles);
             out.add("bytes_per_cycle", "hardware", bytes_per_cycle);
+            out.add("shared_bytes_per_cycle", "hardware", shared_bytes_per_cycle);
             out.add("burst_bytes", "hardware", burst_bytes);
             out.add("fixed_latency_cycles", "hardware", fixed_latency_cycles);
             out.add("maximum_request_bytes", "hardware", maximum_request_bytes);
@@ -93,6 +100,8 @@ void GlobalRAMConfiguration::emit() const
             out.add("dependency_mode", "hardware", dependency_mode);
             out.add("profile_output_directory", "measurement", profile_output_directory);
             out.add("clock", "hardware", clock);
+            out.add("image_file", "workload", image_file);
+            out.add("image_offset", "workload", image_offset);
             out.add("active_tiles", "hardware", active_tiles);
         });
 }

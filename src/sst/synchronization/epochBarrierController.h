@@ -32,6 +32,7 @@ class EpochBarrierController final : public SST::Component
         {"clock", "Barrier-controller clock", "1GHz"},
         {"release_cycles", "Modeled controller cycles after the final arrival before release", "1"},
         {"stop_after_releases", "Optional clean single-thread prefix stop after this many completed releases; zero runs all epochs", "0"},
+        {"local_boot_release", "Release epoch zero per tile; epoch one remains global. Requires independently ready initialization inputs.", "0"},
         {"verbose", "Controller diagnostic verbosity", "0"})
 
     SST_ELI_DOCUMENT_PORTS(
@@ -60,6 +61,8 @@ class EpochBarrierController final : public SST::Component
     std::uint32_t epochCount_;
     std::uint64_t releaseCycles_;
     std::uint32_t stopAfterReleases_;
+    bool localBootRelease_ = false;
+    std::vector<bool> bootArrivedTiles_;
     std::vector<SST::Link*> links_;
     std::vector<bool> activeTiles_;
     std::vector<bool> arrivedTiles_;

@@ -20,6 +20,12 @@ The [mesh builder](../../../tests/support/mesh.py) wires that controller and the
 wormhole routers. SPM geometry, cache geometry, links, lanes and analog resources
 remain configurable. Unsupported execution modes fail before guest launch.
 
+SPM existence, SPM-backed boot, and the streaming memory backend are fixed
+requirements, not fields that controllers select at runtime. Configuration may
+explicitly declare `scratchpad_enabled=true`, `scratchpad_boot=true`, and
+`memory_backend=streaming`; conflicting values are rejected. Only resource
+geometry and timing remain variable for these components.
+
 The [parameter reference](../../../docs/parameters.md) lists the same settings
 as readable tables. After editing defaults or descriptions, regenerate it with
 `python3 tools/hardware/parameter-reference.py`; `--check` verifies it is current.

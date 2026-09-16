@@ -67,7 +67,6 @@ class AnalogController final
                deferredAnalogSubmission_->command.operation == MITTENS_ANALOG_OPERATION_LOAD_VECTOR;
     }
     bool startDeferredAnalogLoadLookahead(const QemuSyncEvent& event);
-    void validateInitialCpuDevice(const QemuSyncEvent& event) const;
     CpuDeviceResult executeCpuAnalog(const CpuAnalogAction& action);
     void serviceAnalogBridge(bool permitDeferredSubmission = false);
     void flushTrace()

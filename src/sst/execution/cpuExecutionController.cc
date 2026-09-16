@@ -1,6 +1,7 @@
 #include "cpuExecutionController.h"
 #include "../memory/memoryAccessCoalescer.h"
 #include <algorithm>
+#include <cstdlib>
 #include <sstream>
 namespace SST::Mittens
 {
@@ -11,27 +12,37 @@ void CpuExecutionController::grantAndCaptureQemu()
         return;
     }
 
+    if (config_.qemuCaptureWorkers > 1)
+    {
+        const auto budget = config_.syncInstructionQuantum;
+        const auto epoch = Timing::add(ledger_.snapshot().epoch, 1);
+        ledger_.beginGrant(epoch, budget);
+        ++synchronizationGrants_;
+        parallelCapturePending_ = true;
+        const bool needsDispatch = QemuCaptureCoordinator::enqueueCaptureWorkerTask(
+            makeCaptureTask(host_.now().value, epoch,
+                [budget, epoch](const Transport& transport) {
+                    if (transport.grant(budget) != epoch)
+                        throw std::runtime_error("concurrent capture grant epoch mismatch");
+                }));
+        if (needsDispatch)
+            host_.scheduleCaptureDispatch();
+        return;
+    }
     beginQemuGrant();
     captureQemuEvent();
 }
 
 void CpuExecutionController::beginQemuGrant()
 {
-    const auto budget = host_.initializing() ? config_.memoryInitializationInstructionQuantum
-                                             : config_.syncInstructionQuantum;
+    const auto budget = config_.syncInstructionQuantum;
     ledger_.beginGrant(transport_.grant(budget), budget);
     ++synchronizationGrants_;
 }
 
-void CpuExecutionController::reserveInitialQemuReadySetGrant()
-{
-    ledger_.beginGrant(Timing::add(ledger_.snapshot().epoch, 1),
-                       config_.memoryInitializationInstructionQuantum);
-    ++synchronizationGrants_;
-}
 
-QemuReadySetExecutor::Task CpuExecutionController::makeReadySetCaptureTask(
-    std::uint64_t frontierTick, std::uint64_t grantEpoch, CaptureMode mode,
+QemuCaptureExecutor::Task CpuExecutionController::makeCaptureTask(
+    std::uint64_t frontierTick, std::uint64_t grantEpoch,
     std::function<void(const Transport&)> startCapture)
 {
     return {
@@ -44,13 +55,11 @@ QemuReadySetExecutor::Task CpuExecutionController::makeReadySetCaptureTask(
             start(transport);
             return transport.captureHost(*lease);
         },
-        [this, lease = captureLease_, mode](const QemuSyncEvent& event)
+        [this, lease = captureLease_](const QemuSyncEvent& event)
         {
             if (!lease->load())
                 throw std::runtime_error("capture endpoint revoked");
             validateCapturedQemuEvent(event);
-            if (mode == CaptureMode::Initial)
-                validateInitialQemuReadySetEvent(event);
         },
         [this, lease = captureLease_, frontierTick](const QemuSyncEvent& event)
         {
@@ -58,77 +67,19 @@ QemuReadySetExecutor::Task CpuExecutionController::makeReadySetCaptureTask(
                 throw std::runtime_error("capture endpoint revoked");
             return previewQemuEventDeliveryTick(event, frontierTick);
         },
-        [this, lease = captureLease_, mode](const QemuSyncEvent& event)
+        [this, lease = captureLease_](const QemuSyncEvent& event)
         {
             // A completion can outlive its endpoint: guard before touching this.
             if (!lease->load())
                 return;
-            if (mode == CaptureMode::Runtime)
-            {
-                if (!runtimeQemuReadySetCapturePending_)
-                    throw std::logic_error("runtime QEMU ready-set commit has no pending capture");
-                runtimeQemuReadySetCapturePending_ = false;
-            }
+            if (!parallelCapturePending_)
+                throw std::logic_error("parallel QEMU capture commit has no pending capture");
+            parallelCapturePending_ = false;
             commitCapturedQemuEvent(event);
         },
     };
 }
 
-void CpuExecutionController::submitInitialQemuReadySetGrant()
-{
-    if (!host_.running() || initialQemuReadySetSubmitted_ || !host_.initializing() ||
-        synchronizationGrants_ != 0 || ledger_.snapshot().epoch != 0 ||
-        config_.qemuReadySetWorkers <= 1)
-    {
-        output_.fatal(0, -1, "tile %u attempted an ineligible initial QEMU ready-set grant\n",
-                      static_cast<unsigned>(config_.tileId));
-    }
-
-    /*
-     * Reserve the deterministic epoch on the SST thread, but let a bounded
-     * executor worker issue the actual bridge grant.  Granting here would
-     * wake every QEMU immediately and defeat the worker bound.
-     */
-    reserveInitialQemuReadySetGrant();
-    initialQemuReadySetSubmitted_ = true;
-    initialCapturePending_ = true;
-    const std::uint64_t frontierTick = host_.now().value;
-
-    const std::uint64_t grantEpoch = ledger_.snapshot().epoch;
-    const std::uint64_t instructionBudget = ledger_.snapshot().budget;
-
-    std::optional<std::vector<QemuReadySetExecutor::Completion>> completions;
-    try
-    {
-        completions = QemuCaptureCoordinator::submitInitialQemuReadySetTask(
-            qemuReadySetPartitionKey_, config_.qemuReadySetWorkers, qemuReadySetPartitionWorkers_,
-            config_.memoryInitializationBarrierTiles,
-            makeReadySetCaptureTask(frontierTick, grantEpoch, CaptureMode::Initial,
-                [grantEpoch, instructionBudget](const Transport& transport)
-                {
-                    if (transport.grant(instructionBudget) != grantEpoch)
-                    {
-                        throw std::runtime_error(
-                            "initial bridge grant epoch did not match its reservation");
-                    }
-                }));
-
-    }
-    catch (const std::exception& error)
-    {
-        output_.fatal(0, -1, "tile %u initial QEMU ready-set execution failed: %s\n",
-                      static_cast<unsigned>(config_.tileId), error.what());
-    }
-
-    if (!completions.has_value())
-    {
-        return;
-    }
-    for (const auto& completion : *completions)
-    {
-        completion.commit(completion.event);
-    }
-}
 
 void CpuExecutionController::resumeAndCaptureQemu()
 {
@@ -137,6 +88,7 @@ void CpuExecutionController::resumeAndCaptureQemu()
         return;
     }
 
+    dmaOrMeshWaitArmed_ = false;
     pendingReadyTick_.reset();
     scheduledWakeGeneration_.reset();
     cancelProgressWatchdogEvent();
@@ -146,26 +98,27 @@ void CpuExecutionController::resumeAndCaptureQemu()
     {
         return;
     }
-    if (config_.qemuRuntimeReadySet)
+    if (config_.qemuCaptureWorkers > 1)
     {
         const std::uint64_t frontierTick = host_.now().value;
 
         pendingSyncEvent_.reset();
         transmitWaitArmed_ = false;
         receiveWaitArmed_ = false;
-        runtimeQemuReadySetCapturePending_ = true;
+        parallelCapturePending_ = true;
         try
         {
-            QemuCaptureCoordinator::enqueueRuntimeQemuReadySetTask(
-                makeReadySetCaptureTask(frontierTick, ledger_.snapshot().epoch, CaptureMode::Runtime,
+            const bool needsDispatch = QemuCaptureCoordinator::enqueueCaptureWorkerTask(
+                makeCaptureTask(frontierTick, ledger_.snapshot().epoch,
                     [event](const Transport& transport) { transport.resume(event); }));
-            host_.scheduleCaptureDispatch();
+            if (needsDispatch)
+                host_.scheduleCaptureDispatch();
         }
         catch (const std::exception& error)
         {
-            runtimeQemuReadySetCapturePending_ = false;
+            parallelCapturePending_ = false;
             host_.terminateAll();
-            output_.fatal(0, -1, "tile %u could not enqueue runtime QEMU ready-set work: %s\n",
+            output_.fatal(0, -1, "tile %u could not enqueue parallel QEMU capture work: %s\n",
                           static_cast<unsigned>(config_.tileId), error.what());
         }
         return;
@@ -226,7 +179,7 @@ void CpuExecutionController::startLocalQemuLookahead(const QemuSyncEvent& event)
     try
     {
         localQemuLookaheadFuture_.emplace(QemuCaptureCoordinator::submitLocalQemuLookahead(
-            config_.qemuReadySetWorkers,
+            config_.qemuLocalLookaheadWorkers,
             [transport = transport_, lease = captureLease_, event, quantumEnd, grantEpoch,
              instructionBudget]()
             {
@@ -326,81 +279,6 @@ void CpuExecutionController::validateCapturedQemuEvent(const QemuSyncEvent& even
                              {event.instructionsExecuted, event.vectorInstructionsExecuted});
 }
 
-void CpuExecutionController::validateInitialQemuReadySetEvent(const QemuSyncEvent& event) const
-{
-    if (!host_.running() || !host_.initializing() || !initialQemuReadySetSubmitted_ ||
-        pendingSyncEvent_.has_value())
-    {
-        throw std::logic_error("tile state changed while the initial grant was in flight");
-    }
-    const bool supportedStop = event.stopReason == MITTENS_SYNC_STOP_QUANTUM_END ||
-                               event.stopReason == MITTENS_SYNC_STOP_ANALOG_SUBMIT ||
-                               event.stopReason == MITTENS_SYNC_STOP_ANALOG_SUBMIT_BATCH ||
-                               event.stopReason == MITTENS_SYNC_STOP_MEMORY_FENCE ||
-                               event.stopReason == MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE;
-    if (!supportedStop || !event.memoryBatch.empty() || !event.globalDMASubmitBatch.empty() ||
-        (!event.analogSubmitBatch.empty() && !config_.analogCommandBatching) ||
-        (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0)
-    {
-        std::ostringstream message;
-        message << "initial parallel grant produced an unsupported event: "
-                << "stop=" << syncStopReasonName(event.stopReason) << "(" << event.stopReason << ")"
-                << " flags=0x" << std::hex << event.flags << std::dec
-                << " batch_records=" << event.memoryBatch.size()
-                << " global_dma_batch_records=" << event.globalDMASubmitBatch.size()
-                << " analog_batch_records=" << event.analogSubmitBatch.size()
-                << " executed=" << event.instructionsExecuted
-                << " vectors=" << event.vectorInstructionsExecuted
-                << " analog_array=" << event.analogArrayId
-                << " analog_sequence=" << event.analogSequence << " memory_address=0x" << std::hex
-                << event.memoryAddress << std::dec << " memory_size=" << event.memorySize
-                << " memory_flags=0x" << std::hex << event.memoryFlags << std::dec
-                << " global_dma_offset=" << event.globalDMAOffset()
-                << " global_dma_scratchpad_offset=" << event.globalDMAScratchpadOffsetValue()
-                << " global_dma_bytes=" << event.globalDMAByteCount()
-                << " global_dma_token=" << event.globalDMATokenId();
-        throw std::runtime_error(message.str());
-    }
-    // With scratchpad-access batching enabled, an ordinary RISC-V fence is
-    // the first semantic stop in production guests.  It is eligible because
-    // capture stops before crossing the fence, it has no shared payload, and
-    // SST drains any tile-local writes and resumes it only after deterministic
-    // owner-thread commit.  A fused/batched fence remains rejected above.
-    const std::uint32_t expectedFenceFlags = event.analogSubmitBatch.empty()
-                                                 ? MITTENS_SYNC_EVENT_FLAG_NONE
-                                                 : MITTENS_SYNC_EVENT_FLAG_ANALOG_BATCH;
-    if (event.stopReason == MITTENS_SYNC_STOP_MEMORY_FENCE &&
-        (event.flags != expectedFenceFlags || event.memoryAddress != 0 || event.memorySize != 0 ||
-         event.memoryFlags != MITTENS_SYNC_MEMORY_FLAG_NONE))
-    {
-        throw std::runtime_error("initial parallel memory-fence event is malformed");
-    }
-    if (!event.analogSubmitBatch.empty())
-    {
-        validateAnalogSubmitBatch(event);
-    }
-    host_.validateInitialDevice(event);
-    if (event.stopReason == MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE)
-    {
-        if (!config_.memoryInitializationBatching || event.memorySize != 0 ||
-            event.memoryFlags != MITTENS_SYNC_MEMORY_FLAG_NONE)
-        {
-            throw std::runtime_error("aggregate memory-initialization event is malformed");
-        }
-        const std::uint64_t reads = event.memoryInitializationReadBytes();
-        const std::uint64_t writes = event.memoryInitializationWriteBytes();
-        if (reads > UINT64_MAX - writes)
-        {
-            throw std::overflow_error("aggregate memory-initialization byte count overflowed");
-        }
-        const std::uint64_t transferCycles =
-            divideRoundUp(reads + writes, config_.memoryInitializationBytesPerCycle);
-        if (transferCycles > UINT64_MAX - config_.memoryInitializationLatencyCycles)
-        {
-            throw std::overflow_error("aggregate memory-initialization cycle count overflowed");
-        }
-    }
-}
 
 std::uint64_t CpuExecutionController::previewQemuEventDeliveryTick(const QemuSyncEvent& event,
                                                                    std::uint64_t frontierTick) const
@@ -413,7 +291,6 @@ std::uint64_t CpuExecutionController::previewQemuEventDeliveryTick(const QemuSyn
 
 void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
 {
-    initialCapturePending_ = false;
     const unsigned batchKinds = (!event.memoryBatch.empty() ? 1U : 0U) +
                                 (!event.globalDMASubmitBatch.empty() ? 1U : 0U) +
                                 (!event.analogSubmitBatch.empty() ? 1U : 0U);
@@ -464,6 +341,16 @@ void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
     // rather than raw instruction count, drives the liveness watchdog.
     const std::uint64_t instructionCycles =
         accountCpuTo(event, event.stopReason != MITTENS_SYNC_STOP_QUANTUM_END);
+    if (instructionDiagnosticStream_.is_open()) {
+        instructionDiagnosticStream_ << event.eventSequence << ','
+            << cpuDomain().after(host_.now(), {instructionCycles}).value << ','
+            << syncStopReasonName(event.stopReason) << ','
+            << ledger_.snapshot().total.instructions << ','
+            << ledger_.snapshot().totalCycles << ',';
+        if (event.stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH)
+            instructionDiagnosticStream_ << event.memoryAddress;
+        instructionDiagnosticStream_ << '\n';
+    }
     ++synchronizationEvents_;
     if (event.stopReason < synchronizationStopCounts_.size())
     {
@@ -471,21 +358,6 @@ void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
     }
     replacePending(event);
     const bool taskFinished = event.stopReason == MITTENS_SYNC_STOP_TASK_FINISH;
-    // Before the guest announces memory-initialization completion, a
-    // quantum end represents bounded forward execution through ABI
-    // setup, runtime-state construction, or analog-weight setup.  Publish
-    // that separately from runtime architectural progress so tiles that
-    // already reached the deployment barrier do not mistake a long setup
-    // interval on another tile for a deadlock.  Once initialization ends,
-    // quantum-only execution remains deliberately insufficient to keep
-    // the routing watchdog alive.
-    const bool initializationExecutionProgress =
-        host_.initializing() && event.stopReason == MITTENS_SYNC_STOP_QUANTUM_END &&
-        event.instructionsExecuted != 0;
-    if (initializationExecutionProgress)
-    {
-        host_.progress(true);
-    }
     // A quantum-end event can represent nothing more than QEMU spinning
     // in the NIC wait loop.  Counting those instructions as deployment
     // progress keeps the watchdog alive forever when a network cycle is
@@ -498,6 +370,8 @@ void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
         event.stopReason != MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT &&
         event.stopReason != MITTENS_SYNC_STOP_ANALOG_WAIT &&
         event.stopReason != MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT &&
+        event.stopReason != MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY &&
+        event.stopReason != MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY &&
         event.stopReason != MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH;
     if (taskFinished)
     {
@@ -511,7 +385,7 @@ void CpuExecutionController::commitCapturedQemuEvent(const QemuSyncEvent& event)
         // consumer as an independent liveness domain.  Quantum-end and
         // explicit wait events are not progress signals: they can repeat
         // forever without a task, DMA, memory, or bridge transition.
-        host_.progress(false);
+        host_.progress();
     }
 
     output_.verbose(
@@ -535,7 +409,7 @@ void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
     const bool fusedEvent = (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0;
     if (memoryBatchEnvelope_.has_value() || event.memoryBatch.empty() ||
         (standaloneBatch && fusedEvent) || (!standaloneBatch && !fusedEvent) ||
-        (instructionLocalVector && (!config_.scratchpadBoot || !standaloneBatch)) ||
+        (instructionLocalVector && !standaloneBatch) ||
         (standaloneBatch && (event.flags & ~(MITTENS_SYNC_EVENT_FLAG_QUANTUM_END |
                                            MITTENS_SYNC_EVENT_FLAG_VECTOR_MEMORY)) != 0))
     {
@@ -648,7 +522,7 @@ void CpuExecutionController::beginMemoryBatch(const QemuSyncEvent& event)
             ++taskFinishEvents_;
         }
     }
-    host_.progress(false);
+    host_.progress();
     if (memoryBatchScratchpad_)
     {
         if (fusedEvent)
@@ -1200,6 +1074,8 @@ bool CpuExecutionController::waitIsProfiled(std::uint32_t reason) const noexcept
 {
     switch (reason)
     {
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY:
+        return true;
     case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
     case MITTENS_SYNC_STOP_INSTRUCTION_FENCE:
     case MITTENS_SYNC_STOP_NIC_TRANSMIT:
@@ -1210,7 +1086,6 @@ bool CpuExecutionController::waitIsProfiled(std::uint32_t reason) const noexcept
     case MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT:
     case MITTENS_SYNC_STOP_NIC_RX_SOFTWARE_CLAIM:
     case MITTENS_SYNC_STOP_MEMORY_ACCESS:
-    case MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH:
@@ -1309,14 +1184,18 @@ const char* syncStopReasonName(std::uint32_t reason)
         return "nic-rx-dma-submit";
     case MITTENS_SYNC_STOP_MEMORY_ACCESS:
         return "memory-access";
-    case MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE:
-        return "memory-init-complete";
     case MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT:
         return "nic-transmit-wait";
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT:
         return "scratchpad-dma-submit";
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT:
         return "scratchpad-dma-wait";
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY:
+        return "scratchpad-dma-query";
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY:
+        return "scratchpad-dma-or-mesh-wait";
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK:
+        return "scratchpad-dma-ack";
     case MITTENS_SYNC_STOP_MEMORY_BATCH:
         return "memory-batch";
     case MITTENS_SYNC_STOP_MEMORY_FENCE:
@@ -1340,14 +1219,22 @@ const char* syncStopReasonName(std::uint32_t reason)
 
 CpuExecutionController::CpuExecutionController(TileConfiguration config,
                                                Timing::Clock<Timing::Cpu> clock,
-                                               Transport transport, Host host,
-                                               std::uint64_t partition, std::uint32_t workers)
+                                               Transport transport, Host host)
     : config_(std::move(config)), clock_(clock), transport_(std::move(transport)),
       host_(std::move(host)), output_{host_.log}, ledger_(config_.cpuIssueWidth)
 {
+    if (const char *directory = std::getenv("MITTENS_TIMING_DIRECTORY"); directory && *directory) {
+        programTimingStream_.open(std::string(directory) + "/tile" + std::to_string(config_.tileId) + ".timing-cycles.csv");
+        if (!programTimingStream_) throw std::runtime_error("cannot open tile program timing trace");
+        programTimingStream_ << "event_sequence,tick,cpu_cycle,ticks_per_cycle\n";
+    }
+    if (const char* directory=std::getenv("MITTENS_CPU_TRACE_DIRECTORY"); directory && *directory) {
+        instructionDiagnosticStream_.open(std::string(directory)+"/tile-"+
+            std::to_string(config_.tileId)+"-instructions.csv");
+        if (!instructionDiagnosticStream_) throw std::runtime_error("cannot open CPU diagnostic trace");
+        instructionDiagnosticStream_ << "event_sequence,tick,reason,instructions,cpu_cycles,fetch_pc\n";
+    }
     QemuCaptureCoordinator::attach(config_.tileId, captureLease_);
-    qemuReadySetPartitionKey_ = partition;
-    qemuReadySetPartitionWorkers_ = workers;
 }
 CpuExecutionController::~CpuExecutionController()
 {
@@ -1430,7 +1317,7 @@ void CpuExecutionController::onWake(std::optional<std::uint64_t> watchdog,
         cancelProgressWatchdogEvent();
         return;
     }
-    if (runtimeQemuReadySetCapturePending_ || initialCapturePending_)
+    if (parallelCapturePending_)
         return;
     if (pendingSyncEvent_)
     {
@@ -1445,18 +1332,21 @@ void CpuExecutionController::onWake(std::optional<std::uint64_t> watchdog,
         }
         return;
     }
-    if (config_.qemuReadySetWorkers > 1 && host_.initializing() && synchronizationGrants_ == 0)
-    {
-        submitInitialQemuReadySetGrant();
-        return;
-    }
     grantAndCaptureQemu();
 }
 void CpuExecutionController::dispatchCaptures()
 {
-    if (!host_.running() || !config_.qemuRuntimeReadySet)
+    // This event serves the shared frontier, not merely this tile. Even if
+    // its original owner stopped, live peers still need their captures.
+    if (!(config_.qemuCaptureWorkers > 1))
         return;
-    const auto completions = QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(host_.now().value);
+    auto completions = QemuCaptureCoordinator::dispatchCaptureWorker(host_.now().value);
+    // Match serial same-time submission order. Each commit schedules its own
+    // modeled delay; host completion order must not choose resource priority.
+    if (config_.qemuCaptureWorkers > 1)
+        std::sort(completions.begin(), completions.end(), [](const auto& a, const auto& b) {
+            return a.submissionSequence < b.submissionSequence;
+        });
     for (const auto& completion : completions)
         completion.commit(completion.event);
 }
@@ -1494,7 +1384,8 @@ void CpuExecutionController::completeDevice(std::uint64_t step)
         // unused issue credit must not pay for a later instruction as well.
         if (prepaidInstructionIssueCycles_ != 0)
             unretiredInstructionFetches_ = Timing::add(unretiredInstructionFetches_, 1);
-        prepaidInstructionIssueCycles_ = 1;
+        prepaidInstructionIssueCycles_ = pendingFetchInstructionCount_;
+        pendingFetchInstructionCount_ = 1;
     }
     if (reason == MITTENS_SYNC_STOP_MEMORY_ACCESS)
     {
@@ -1520,6 +1411,17 @@ void CpuExecutionController::resumeTransmitWaitIfReady()
 }
 void CpuExecutionController::resumeReceiveWaitIfReady()
 {
+    if (dmaOrMeshWaitArmed_ && pendingSyncEvent_ &&
+        pendingSyncEvent_->stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY &&
+        host_.receiveReady())
+    {
+        // Only cancel a DMA deadline after the CPU has reached the wait.
+        // Never bypass instruction-issue delay before that point.
+        pendingReadyTick_.reset();
+        scheduledWakeGeneration_.reset();
+        processPendingSyncEvent();
+        return;
+    }
     if (receiveWaitArmed_ && pendingSyncEvent_ &&
         pendingSyncEvent_->stopReason == MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT && host_.receiveReady())
         resumeAndCaptureQemu();
@@ -1538,8 +1440,7 @@ void CpuExecutionController::stop()
         localQemuLookaheadFuture_->wait();
         localQemuLookaheadFuture_.reset();
     }
-    initialCapturePending_ = false;
-    runtimeQemuReadySetCapturePending_ = false;
+    parallelCapturePending_ = false;
     localQemuLookaheadSourceSequence_ = 0;
     localQemuLookaheadSourceReason_ = MITTENS_SYNC_STOP_NONE;
     completeWait();
@@ -1554,7 +1455,7 @@ void CpuExecutionController::stop()
 }
 void CpuExecutionController::assertDrained() const
 {
-    if (localQemuLookaheadFuture_ || initialCapturePending_ || runtimeQemuReadySetCapturePending_)
+    if (localQemuLookaheadFuture_ || parallelCapturePending_)
         throw std::logic_error("unconsumed QEMU capture at shutdown");
 }
 bool CpuExecutionController::processPendingSyncEvent()
@@ -1580,6 +1481,11 @@ bool CpuExecutionController::processPendingSyncEvent()
         reason == MITTENS_SYNC_STOP_EPOCH_BARRIER_ARRIVE || reason == MITTENS_SYNC_STOP_GUEST_EXIT;
     if (drainStores && !host_.storesDrained())
         return false;
+    if (reason == MITTENS_SYNC_STOP_MEMORY_FENCE && programTimingStream_.is_open()) {
+        const auto time = host_.now();
+        programTimingStream_ << event.eventSequence << ',' << time.value << ','
+                             << cpuDomain().floor(time).value << ',' << cpuDomain().factor() << '\n';
+    }
     CpuDeviceResult result;
     switch (reason)
     {
@@ -1653,17 +1559,24 @@ bool CpuExecutionController::processPendingSyncEvent()
     }
     case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
     case MITTENS_SYNC_STOP_INSTRUCTION_FENCE:
-        if (!config_.scratchpadBoot || !host_.instruction || event.flags != 0 ||
+        if (!host_.instruction || event.flags != 0 ||
             event.memoryFlags != 0)
             throw std::runtime_error("unexpected or malformed instruction-cache event");
         result = dispatchDevice(host_.instruction,
                                 CpuInstructionAction{event.memoryAddress, event.memorySize,
                                     reason == MITTENS_SYNC_STOP_INSTRUCTION_FENCE,
-                                    {scratchpadTimingCycle_}, step});
+                                    {scratchpadTimingCycle_}, step, event.fetchInstructionCount});
+        if (reason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH && result.delay)
+            pendingFetchInstructionCount_ = result.instructionCount;
         break;
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT:
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH:
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY:
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK:
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY:
+        if (reason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY)
+            host_.serviceBridge();
         result = dispatchDevice(host_.globalDMA,
                                 CpuGlobalDMAAction{reason,
                                                    event.flags,
@@ -1682,13 +1595,6 @@ bool CpuExecutionController::processPendingSyncEvent()
         result = dispatchDevice(
             host_.barrier, CpuBarrierAction{event.epochId, event.epochContribution, event.flags});
         break;
-    case MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE:
-        result = dispatchDevice(host_.initialization,
-                                CpuInitializationAction{event.memoryInitializationAccesses(),
-                                                        event.memoryInitializationReadBytes(),
-                                                        event.memoryInitializationWriteBytes(),
-                                                        event.memorySize, event.memoryFlags});
-        break;
     case MITTENS_SYNC_STOP_TASK_START:
     case MITTENS_SYNC_STOP_TASK_FINISH:
         result = dispatchDevice(host_.task,
@@ -1701,6 +1607,17 @@ bool CpuExecutionController::processPendingSyncEvent()
     default:
         throw std::runtime_error("unsupported CPU stop reason");
     }
+    if (reason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY && !result.complete)
+    {
+        dmaOrMeshWaitArmed_ = true;
+        if (host_.receiveReady())
+        {
+            result.complete = true;
+            result.delay.reset();
+        }
+    }
+    if (result.dmaCompletionStatus)
+        pendingSyncEvent_->dmaCompletionStatus = *result.dmaCompletionStatus;
     applyResult(result);
     if (result.complete)
     {

@@ -14,17 +14,20 @@ struct Fixture {
     std::vector<CpuInstructionAction> instructionActions;
     std::uint64_t now=0, epoch=0, resumes=0;
     std::uint64_t cpuTicks=1, memoryDelay=0;
-    bool running=true, initializing=false, block=false;
+    bool running=true, block=false;
+    bool meshReady=false, dmaReady=false;
+    std::uint64_t dmaDeadline=0;
+    std::uint32_t lastDMAStatus=99;
     std::atomic<bool> workerEntered{false}, workerExited{false};
     bool waitWorker=false;
     bool buffered=false, invalidResult=false, reenter=false;
     std::uint64_t instructionDelay=1;
-    unsigned watchdogCalls=0, initialValidations=0;
+    std::uint32_t instructionCount=1;
+    unsigned watchdogCalls=0, dispatchRequests=0;
     ~Fixture() { if(cpu) cpu->stop(); }
     Fixture() {
         config.cpuIssueWidth=4; config.syncInstructionQuantum=100;
-        config.memoryInitializationInstructionQuantum=100;
-        config.memoryInitializationBarrierTiles=1; config.qemuReadySetWorkers=2;
+        config.qemuLocalLookaheadWorkers=2;
         config.scratchpadAccessBatching=true; config.scratchpadBytes=4096;
         config.globalDMASubmitBatching=true; config.globalDMAMacroExecution=true;
         config.analogCommandBatching=true;
@@ -35,7 +38,7 @@ struct Fixture {
     void create() {
         CpuExecutionController::Transport t;
         t.grant=[this](std::uint64_t) { return ++epoch; };
-        t.resume=[this](const QemuSyncEvent&) { ++resumes; };
+        t.resume=[this](const QemuSyncEvent& e) { ++resumes; lastDMAStatus=e.dmaCompletionStatus; };
         t.poll=[this]() -> std::optional<QemuSyncEvent> { return take(); };
         t.captureHost=[this](const std::atomic<bool>& active) {
             workerEntered=true;
@@ -46,19 +49,18 @@ struct Fixture {
             workerExited=true; return take();
         };
         CpuExecutionController::Host h;
-        h.running=[this]{return running;}; h.initializing=[this]{return initializing;};
+        h.running=[this]{return running;};
         h.observeExit=[] {return false;}; h.watchdogReported=[] {return false;};
         h.now=[this]{return Timing::Ticks{now};}; h.watchdog=[this]{++watchdogCalls;}; h.terminateAll=[]{};
-        h.scheduleCaptureDispatch=[]{}; h.serviceBridge=[]{};
+        h.scheduleCaptureDispatch=[this]{++dispatchRequests;}; h.serviceBridge=[]{};
         h.schedule=[this](auto cycles,auto,auto generation){wakes.push_back(cycles.value);wakeGenerations.push_back(generation);}; h.scheduleWatchdog=[](auto,auto){};
-        h.progress=[](bool){}; h.recordWait=[](auto,auto,const char*,auto){};
+        h.progress=[](){}; h.recordWait=[](auto,auto,const char*,auto){};
         h.log=[](int,const std::string&){};
         h.scratchpadAvailable=[] {return true;}; h.storesDrained=[] {return true;};
-        h.receiveReady=[] {return false;}; h.transmitReady=[](bool){return false;};
+        h.receiveReady=[this] {return meshReady;}; h.transmitReady=[](bool){return false;};
         h.scratchpad=[](const auto&,std::uint64_t cursor) {ScratchpadSchedule s{}; s.completionCycle=cursor+2; s.serviceCycles=2; return s;};
         h.analogArrayCount=[] {return 2U;}; h.analogSubmitted=[](auto,auto){return true;};
         h.prepareDeferredAnalog=[](const auto&){return false;}; h.deferredAnalogMatches=[](const auto&){return false;};
-        h.validateInitialDevice=[this](const auto&){++initialValidations;};
         h.memory=[this](const auto& a){
             actions.push_back(MITTENS_SYNC_STOP_MEMORY_ACCESS); assert(a.group.size()<=2);
             if(memoryDelay) {const auto delay=memoryDelay; memoryDelay=0;
@@ -75,16 +77,26 @@ struct Fixture {
                 return CpuDeviceResult{true, {}, {}};
             return CpuDeviceResult{false, Timing::Cycles<Timing::Cpu>{instructionDelay},
                                    Timing::Cycles<Timing::Cpu>{
-                                       std::max(a.cursor.value, now / cpuTicks) + instructionDelay}};
+                                       std::max(a.cursor.value, now / cpuTicks) + instructionDelay},
+                                   false, instructionCount};
         };
         h.analog=[this](const auto& a){actions.push_back(a.reason); return CpuDeviceResult{!block,{},{}};};
-        h.globalDMA=[this](const auto& a){actions.push_back(a.reason); return CpuDeviceResult{!block,{},{}};};
+        h.globalDMA=[this](const auto& a){
+            actions.push_back(a.reason);
+            if(a.reason==MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY) {
+                CpuDeviceResult result;
+                result.complete=dmaReady;
+                result.dmaCompletionStatus=dmaReady?1:0;
+                if(!dmaReady && dmaDeadline>now) result.delay=Timing::Cycles<Timing::Cpu>{dmaDeadline-now};
+                return result;
+            }
+            return CpuDeviceResult{!block,{},{}};
+        };
         h.network=[](const auto&){return CpuDeviceResult{true,{},{}};};
         h.barrier=[](const auto&){return CpuDeviceResult{true,{},{}};};
-        h.initialization=[](const auto&){return CpuDeviceResult{true,{},{}};};
         h.task=[](const auto&){return CpuDeviceResult{true,{},{}};};
         h.guestExit=[this]{running=false; cpu->stop();};
-        cpu=std::make_unique<CpuExecutionController>(config,Timing::Clock<Timing::Cpu>(cpuTicks),std::move(t),std::move(h),0,config.qemuReadySetWorkers);
+        cpu=std::make_unique<CpuExecutionController>(config,Timing::Clock<Timing::Cpu>(cpuTicks),std::move(t),std::move(h));
     }
     void wake() {assert(!wakes.empty());now+=wakes.front()*cpuTicks;wakes.pop_front();auto generation=wakeGenerations.front();wakeGenerations.pop_front();cpu->onWake({},generation);}
 };
@@ -98,13 +110,13 @@ static MittensSyncMemoryAccess access(std::uint64_t i,std::uint64_t v,bool scrat
     a.flags=scratchpad ? MITTENS_SYNC_MEMORY_FLAG_SCRATCHPAD : 0;return a;
 }
 static void ordinary() {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.create();
     f.captures={event(3,1,MITTENS_SYNC_STOP_QUANTUM_END),event(2,0,MITTENS_SYNC_STOP_TASK_FINISH,2),event(3,0,MITTENS_SYNC_STOP_GUEST_EXIT,2)};
     f.cpu->onWake(); f.wake(); f.wake(); f.wake();
     assert(!f.running && f.cpu->accounting().total.instructions==6 && f.cpu->accounting().totalCycles==3);
 }
 static void memoryTail(bool fused,bool quantum) {
-    Fixture f; f.config.qemuReadySetWorkers=1;f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1;f.create();
     auto e=event(9,1,fused?MITTENS_SYNC_STOP_MEMORY_FENCE:MITTENS_SYNC_STOP_MEMORY_BATCH);
     e.flags=fused?MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH:quantum?MITTENS_SYNC_EVENT_FLAG_QUANTUM_END:0;
     e.memoryBatch={access(2,0),access(4,1)};
@@ -115,7 +127,7 @@ static void memoryTail(bool fused,bool quantum) {
     assert(f.cpu->statistics().memoryBatchLogicalAccesses_==2);
 }
 static void analogTail(bool fused) {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.create();
+    Fixture f;f.config.qemuLocalLookaheadWorkers=1;f.create();
     auto e=event(7,0,fused?MITTENS_SYNC_STOP_MEMORY_FENCE:MITTENS_SYNC_STOP_ANALOG_SUBMIT_BATCH);
     e.flags=fused?MITTENS_SYNC_EVENT_FLAG_ANALOG_BATCH:0;
     MittensSyncAnalogSubmit a{};a.instructions_executed=2;a.array_id=0;a.sequence=1;e.analogSubmitBatch.push_back(a);
@@ -125,7 +137,7 @@ static void analogTail(bool fused) {
     assert(f.actions.size()==1);
 }
 static void dma(bool macro,bool fusedWait) {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.create();
+    Fixture f;f.config.qemuLocalLookaheadWorkers=1;f.create();
     auto e=event(11,0,macro?MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO:fusedWait?MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH:MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT_BATCH);
     e.flags=fusedWait?MITTENS_SYNC_EVENT_FLAG_GLOBAL_DMA_SUBMITS:0;e.executionId=4;
     for(unsigned j=0;j<2;++j) {MittensSyncGlobalDMASubmit a{};a.instructions_executed=2+j*4;a.wait_instructions_executed=4+j*4;
@@ -138,7 +150,7 @@ static void dma(bool macro,bool fusedWait) {
     assert(f.actions.size()==(macro?4:fusedWait?3:2));
 }
 static void rejectNonScratchpadBatch() {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.create();
     auto e=event(7,1,MITTENS_SYNC_STOP_MEMORY_BATCH);
     e.memoryBatch={access(2,1,false)}; f.captures={e};
     bool rejected=false;
@@ -146,16 +158,18 @@ static void rejectNonScratchpadBatch() {
     assert(rejected);
 }
 static void runtimeCancel(bool collected) {
-    Fixture f; f.config.qemuRuntimeReadySet=true;
-    QemuCaptureCoordinator::registerRuntimeQemuReadySetTile(0,2,1,"test"); f.create();
+    Fixture f; f.config.qemuCaptureWorkers=2;
+    QemuCaptureCoordinator::registerCaptureWorkerTile(0,2); f.create();
     f.captures={event(2,0,MITTENS_SYNC_STOP_MEMORY_FENCE),event(3,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
-    f.cpu->onWake();f.wake();assert(f.cpu->hasPendingWork() && !f.cpu->pending());
+    f.cpu->onWake();f.cpu->dispatchCaptures();
+    f.workerEntered=false;
+    f.wake();assert(f.cpu->hasPendingWork() && !f.cpu->pending());
     if(collected) {
-        auto completions=QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(f.now);
+        auto completions=QemuCaptureCoordinator::dispatchCaptureWorker(f.now);
         assert(completions.size()==1); f.cpu.reset();
         completions.front().commit(completions.front().event); // revoked: no dereference of destroyed owner
     } else {
-        f.cpu->stop();assert(QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(f.now).empty());
+        f.cpu->stop();assert(QemuCaptureCoordinator::dispatchCaptureWorker(f.now).empty());
         assert(!f.workerEntered && !f.cpu->hasPendingWork());
     }
 }
@@ -167,12 +181,12 @@ static void localCancel() {
     f.cpu->stop();assert(f.workerExited && !f.cpu->hasPendingWork());
 }
 static void runtimeSuccess() {
-    Fixture f;f.config.qemuRuntimeReadySet=true;
-    QemuCaptureCoordinator::registerRuntimeQemuReadySetTile(0,2,1,"test");f.create();
+    Fixture f;f.config.qemuCaptureWorkers=2;
+    QemuCaptureCoordinator::registerCaptureWorkerTile(0,2);f.create();
     f.captures={event(2,0,MITTENS_SYNC_STOP_MEMORY_FENCE),event(3,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
-    f.cpu->onWake();f.wake();
-    auto completions=QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(f.now);
-    assert(completions.size()==1 && f.resumes==1 && f.initialValidations==0);
+    f.cpu->onWake();f.cpu->dispatchCaptures();f.wake();
+    auto completions=QemuCaptureCoordinator::dispatchCaptureWorker(f.now);
+    assert(completions.size()==1 && f.resumes==1);
     auto& completion=completions.front();completion.commit(completion.event);
     const auto cycles=f.cpu->accounting().totalCycles;
     bool threw=false;
@@ -180,21 +194,27 @@ static void runtimeSuccess() {
     assert(threw && f.cpu->accounting().totalCycles==cycles);
     f.wake();assert(!f.running && f.cpu->accounting().total.instructions==3);
 }
-static void initialCapture(const std::string& mode) {
-    Fixture f;f.initializing=true;
-    QemuCaptureCoordinator::registerInitialQemuReadySetTile(0,0,2,2,1,"test");f.create();
-    const bool invalid=mode=="initial-invalid", mismatch=mode=="initial-epoch-mismatch";
-    f.captures={event(2,0,invalid?MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT:MITTENS_SYNC_STOP_MEMORY_FENCE)};
-    if(mismatch)f.epoch=5;
-    std::string error;
-    try{f.cpu->onWake();}catch(const std::exception& e){error=e.what();}
-    if(invalid || mismatch) {
-        assert(error.find(invalid?"unsupported event":"did not match its reservation")!=std::string::npos);
-        assert(!f.cpu->pending() && f.cpu->accounting().total.instructions==0 && f.initialValidations==0);
-    } else {
-        assert(error.empty() && f.cpu->pending() && f.initialValidations==1);
-        assert(f.cpu->accounting().epoch==1 && f.cpu->statistics().synchronizationGrants_==1);
+static void stoppedDispatchOwner(bool replacement=false) {
+    Fixture owner, peer;
+    owner.config.tileId=0; peer.config.tileId=1;
+    owner.config.qemuCaptureWorkers=2; peer.config.qemuCaptureWorkers=2;
+    QemuCaptureCoordinator::registerCaptureWorkerTile(0,2);
+    QemuCaptureCoordinator::registerCaptureWorkerTile(1,2);
+    owner.create(); peer.create();
+    peer.captures={event(1,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
+    owner.cpu->onWake();
+    if (!replacement) peer.cpu->onWake();
+    assert(owner.dispatchRequests==1 && peer.dispatchRequests==0);
+    owner.running=false; owner.cpu->stop();
+    if (replacement) {
+        peer.cpu->onWake();
+        assert(peer.dispatchRequests==1); // All old work cancelled; a new event is needed.
     }
+    owner.cpu->dispatchCaptures(); // Still services the live peer's queued task.
+    assert(peer.workerEntered && !owner.workerEntered);
+    if (replacement) peer.cpu->dispatchCaptures(); // Stale/replacement event must not recapture.
+    peer.wake();
+    assert(!peer.running && peer.cpu->accounting().total.instructions==1);
 }
 static void localSuccess() {
     QemuCaptureCoordinator::registerLocalQemuLookaheadTile(0,2,1,"test");
@@ -207,15 +227,8 @@ static void localSuccess() {
         assert(!f.running && f.cpu->accounting().totalCycles==4 && f.cpu->accounting().total.instructions==10);
     }
 }
-static void initialCancel() {
-    Fixture f;f.initializing=true;f.waitWorker=true;f.config.memoryInitializationBarrierTiles=2;
-    QemuCaptureCoordinator::registerInitialQemuReadySetTile(0,0,2,2,2,"test");
-    QemuCaptureCoordinator::registerInitialQemuReadySetTile(0,1,2,2,2,"test");f.create();
-    f.cpu->onWake();while(!f.workerEntered.load())std::this_thread::yield();
-    assert(f.cpu->hasPendingWork() && !f.cpu->pending());f.cpu->stop();assert(f.workerExited && !f.cpu->hasPendingWork());
-}
 static void completionGuards() {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.block=true;f.create();
+    Fixture f;f.config.qemuLocalLookaheadWorkers=1;f.block=true;f.create();
     auto e=event(7,0,MITTENS_SYNC_STOP_ANALOG_SUBMIT_BATCH);
     for(unsigned n=0;n<2;++n){MittensSyncAnalogSubmit a{};a.instructions_executed=2+n*2;a.sequence=1+n;e.analogSubmitBatch.push_back(a);}
     f.captures={e,event(8,0,MITTENS_SYNC_STOP_GUEST_EXIT)};f.cpu->onWake();
@@ -228,14 +241,14 @@ static void completionGuards() {
     threw=false;try{f.cpu->completeDevice(second);}catch(const std::logic_error&){threw=true;}assert(threw);
 }
 static void callbackContract(bool reenter) {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.reenter=reenter;f.invalidResult=!reenter;f.create();
+    Fixture f;f.config.qemuLocalLookaheadWorkers=1;f.reenter=reenter;f.invalidResult=!reenter;f.create();
     auto e=event(2,0,MITTENS_SYNC_STOP_MEMORY_ACCESS);e.memorySize=4;f.captures={e};f.cpu->onWake();
     auto step=f.cpu->pendingStepId();auto cycles=f.cpu->accounting().totalCycles;
     bool threw=false;try{f.wake();}catch(const std::logic_error&){threw=true;}
     assert(threw && step==f.cpu->pendingStepId() && cycles==f.cpu->accounting().totalCycles);
 }
 static void bufferedWatchdog() {
-    Fixture f;f.config.qemuReadySetWorkers=1;f.buffered=true;f.create();
+    Fixture f;f.config.qemuLocalLookaheadWorkers=1;f.buffered=true;f.create();
     auto e=event(2,0,MITTENS_SYNC_STOP_MEMORY_ACCESS);e.memoryFlags=MITTENS_SYNC_MEMORY_FLAG_WRITE;e.memorySize=4;
     f.captures={e,event(3,0,MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT)};f.cpu->onWake();auto before=f.watchdogCalls;
     f.wake();assert(f.watchdogCalls==before+2); // new capture + blocked-path observation
@@ -246,7 +259,7 @@ static void bufferedWatchdog() {
 // Invoke the real controller exactly as an independent buffered-store response
 // does, between capture installation and the captured instruction deadline.
 static bool earlyDeliveryOracle(std::uint64_t factor=1) {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
     f.cpuTicks=factor;
     f.buffered=true; f.create();
     auto store=event(2,0,MITTENS_SYNC_STOP_MEMORY_ACCESS);
@@ -263,7 +276,7 @@ static bool earlyDeliveryOracle(std::uint64_t factor=1) {
     return pass;
 }
 static void deadlineEntries(std::uint64_t factor, bool memory) {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
     f.cpuTicks=factor; f.block=true; f.create();
     auto e=event(82,0,memory?MITTENS_SYNC_STOP_MEMORY_ACCESS:MITTENS_SYNC_STOP_ANALOG_WAIT);
     e.memorySize=4;
@@ -286,7 +299,7 @@ static void deadlineEntries(std::uint64_t factor, bool memory) {
     assert(f.cpu->pendingStepId()==next && f.resumes==1);
 }
 static void serviceDeadline(std::uint64_t factor) {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
     f.cpuTicks=factor; f.memoryDelay=100; f.create();
     auto e=event(2,0,MITTENS_SYNC_STOP_MEMORY_ACCESS);e.memorySize=4;
     f.captures={e,event(3,0,MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT)};
@@ -312,8 +325,8 @@ static void deadlines() {
     }
 }
 static void instructionFetchAccounting() {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
-    f.config.scratchpadBoot=true; f.instructionDelay=3; f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
+    f.instructionDelay=3; f.create();
     auto miss=event(2,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
     miss.memoryAddress=MITTENS_SCRATCHPAD_BASE; miss.memorySize=4;
     auto hit=event(3,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
@@ -332,9 +345,27 @@ static void instructionFetchAccounting() {
            f.cpu->accounting().totalCycles==4);
     assert(f.now==6 && f.cpu->statistics().unretiredInstructionFetches_==0);
 }
+static void instructionSegmentAccounting() {
+    for (unsigned count : {2, 4, 8, 16}) {
+        for (unsigned hitCycles : {1, 3}) {
+            Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
+            f.instructionCount=count;
+            f.instructionDelay=count*hitCycles; f.create();
+            auto fetch=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
+            fetch.memoryAddress=MITTENS_SCRATCHPAD_BASE; fetch.memorySize=4;
+            fetch.fetchInstructionCount=count;
+            f.captures={fetch,event(count,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
+            f.cpu->onWake();
+            for (unsigned n=0; n<8 && f.running; ++n) f.wake();
+            assert(!f.running && f.instructionActions[0].count==count);
+            assert(f.cpu->accounting().totalCycles==count && f.now==count*hitCycles);
+            assert(f.cpu->statistics().unretiredInstructionFetches_==0);
+        }
+    }
+}
 static void repeatedInstructionFetchIcount() {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
-    f.config.scratchpadBoot=true; f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
+    f.create();
     auto first=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
     first.eventSequence=1;
     first.memoryAddress=MITTENS_SCRATCHPAD_BASE; first.memorySize=4;
@@ -354,9 +385,9 @@ static void repeatedInstructionFetchIcount() {
 static void instructionQuantumStability() {
     for (auto factor : {1U, 1000U}) {
         for (bool split : {false, true}) {
-            Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
+            Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
             f.config.syncInstructionQuantum=split ? 1 : 100;
-            f.config.scratchpadBoot=true; f.cpuTicks=factor; f.create();
+            f.cpuTicks=factor; f.create();
             auto first=event(0,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH,1);
             first.memoryAddress=MITTENS_SCRATCHPAD_BASE; first.memorySize=4;
             auto second=first;
@@ -378,8 +409,8 @@ static void instructionQuantumStability() {
     }
 }
 static void instructionFenceOrdering() {
-    Fixture f; f.config.qemuReadySetWorkers=1; f.config.cpuIssueWidth=1;
-    f.config.scratchpadBoot=true; f.create();
+    Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.config.cpuIssueWidth=1;
+    f.create();
     auto fetch=event(2,0,MITTENS_SYNC_STOP_INSTRUCTION_FETCH);
     fetch.memoryAddress=MITTENS_SCRATCHPAD_BASE; fetch.memorySize=4;
     auto fence=event(3,0,MITTENS_SYNC_STOP_INSTRUCTION_FENCE);
@@ -392,9 +423,8 @@ static void instructionFenceOrdering() {
 }
 static void instructionLocalVector(bool crossInstruction=false) {
     Fixture f;
-    f.config.qemuReadySetWorkers=1;
+    f.config.qemuLocalLookaheadWorkers=1;
     f.config.cpuIssueWidth=1;
-    f.config.scratchpadBoot=true;
     f.config.scratchpadAccessBatching=false;
     f.config.scratchpadAccessRunCompaction=false;
     f.create();
@@ -423,18 +453,48 @@ static void instructionLocalVector(bool crossInstruction=false) {
     assert(f.cpu->accounting().total.instructions==2);
     assert(f.cpu->statistics().memoryBatchLogicalAccesses_==8);
 }
+static void dmaOrMeshWake() {
+    // Cover receive-before-arm, receive-after-arm, and DMA-only wakeup.
+    for(unsigned mode=0;mode<3;++mode) {
+        Fixture f; f.config.qemuLocalLookaheadWorkers=1; f.dmaDeadline=100; f.create();
+        f.captures={event(4,0,MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY),
+                    event(4,0,MITTENS_SYNC_STOP_GUEST_EXIT)};
+        f.cpu->onWake();
+        if(mode==0) {
+            f.meshReady=true;
+            f.cpu->resumeReceiveWaitIfReady();
+            assert(f.resumes==0); // Cannot skip instruction issue before wait.
+        }
+        f.wake();
+        if(mode!=0) {
+            assert(f.resumes==0);
+            if(mode==1) {
+                f.now=5; f.meshReady=true; f.cpu->resumeReceiveWaitIfReady();
+            } else {
+                f.dmaReady=true; f.wake();
+            }
+        }
+        assert(f.resumes==1);
+        assert(f.lastDMAStatus==(mode==2?1U:0U));
+        // A stale previously armed DMA timer cannot resume a second time.
+        f.cpu->resumeReceiveWaitIfReady();
+        assert(f.resumes==1);
+    }
+}
 int main(int argc,char** argv) {
+    dmaOrMeshWake();
+    instructionSegmentAccounting();
     const std::string mode=argc>1?argv[1]:"replay";
     if(mode=="replay") { instructionLocalVector(); instructionLocalVector(true); }
     if(mode=="delivery-oracle")return earlyDeliveryOracle()?0:1;
     if(mode=="deadlines"){deadlines();std::cout<<"CPU deadline entries: PASS\n";return 0;}
-    if(mode=="runtime-cancel")runtimeCancel(false);
+    if(mode=="stopped-dispatch-owner")stoppedDispatchOwner();
+    else if(mode=="cancelled-dispatch-replacement")stoppedDispatchOwner(true);
+    else if(mode=="runtime-cancel")runtimeCancel(false);
     else if(mode=="runtime-success")runtimeSuccess();
     else if(mode=="late-commit")runtimeCancel(true);
     else if(mode=="local-cancel")localCancel();
     else if(mode=="local-success")localSuccess();
-    else if(mode=="initial-cancel")initialCancel();
-    else if(mode=="initial-success" || mode=="initial-invalid" || mode=="initial-epoch-mismatch")initialCapture(mode);
     else {ordinary();memoryTail(false,false);memoryTail(false,true);memoryTail(true,false);analogTail(false);analogTail(true);dma(false,false);dma(false,true);dma(true,false);rejectNonScratchpadBatch();completionGuards();callbackContract(false);callbackContract(true);bufferedWatchdog();deadlines();instructionFetchAccounting();repeatedInstructionFetchIcount();instructionQuantumStability();instructionFenceOrdering();}
     std::cout<<"CPU controller "<<mode<<": PASS\n";
 }

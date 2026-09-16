@@ -11,7 +11,6 @@ extern "C" int tile_main()
     constexpr uintptr_t spm = 0x90000000;
     for (unsigned i = 0; i < 8; ++i)
         reinterpret_cast<volatile uint32_t*>(spm)[i] = 1;
-    mesh_nic::complete_memory_initialization();
     asm volatile("vsetivli zero, 8, e32, m1, ta, ma\n\tvmv.v.i v9, 0"
                  ::: "v9", "memory");
     mesh_nic::trace_task(mesh_nic::kTaskTraceStart, 1, 0);

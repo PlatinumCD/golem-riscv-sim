@@ -37,23 +37,13 @@ struct QemuSyncEvent {
     std::vector<MittensSyncMemoryAccess> memoryBatch;
     std::vector<MittensSyncGlobalDMASubmit> globalDMASubmitBatch;
     std::vector<MittensSyncAnalogSubmit> analogSubmitBatch;
+    std::uint32_t fetchInstructionCount = 1;
+    std::uint32_t dmaCompletionStatus = 2; // Pending=0, Complete=1, Error=2.
     std::uint64_t memoryProgramCounter() const noexcept
     {
         return analogSequence;
     }
     std::uint64_t memoryReturnAddress() const noexcept
-    {
-        return executionId;
-    }
-    std::uint64_t memoryInitializationAccesses() const noexcept
-    {
-        return analogSequence;
-    }
-    std::uint64_t memoryInitializationReadBytes() const noexcept
-    {
-        return memoryAddress;
-    }
-    std::uint64_t memoryInitializationWriteBytes() const noexcept
     {
         return executionId;
     }
@@ -93,6 +83,8 @@ class SharedSyncMemoryBridge final
         SharedSyncMemoryBridge&&) = delete;
 
     void create(std::uint32_t tileId);
+    void configureInstructionSegments(std::uint32_t limit);
+    void approveInstructionSegment(std::uint32_t count);
     void close() noexcept;
 
     int fileDescriptor() const noexcept { return fileDescriptor_; }

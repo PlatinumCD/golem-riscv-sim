@@ -33,7 +33,7 @@ build_mesh(
     statistics_path=required_path("MITTENS_MESH_STATS"),
     mesh_router_backend=os.environ.get(
         "MITTENS_MESH_ROUTER_BACKEND",
-        "merlin",
+        "mittens",
     ),
     active_tiles=[0, 8],
 )

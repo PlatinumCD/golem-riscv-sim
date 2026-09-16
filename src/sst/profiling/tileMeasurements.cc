@@ -16,14 +16,11 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         "stop_analog_submit=%llu stop_analog_wait=%llu "
         "stop_analog_submit_batch=%llu analog_batch_records=%llu "
         "stop_task_start=%llu stop_task_finish=%llu "
-        "stop_memory=%llu stop_memory_init=%llu stop_memory_batch=%llu "
+        "stop_memory=%llu stop_memory_batch=%llu "
         "memory_batch_records=%llu memory_batch_logical_accesses=%llu "
         "stop_memory_fence=%llu stop_epoch_barrier=%llu "
         "memory_requests=%llu "
         "memory_responses=%llu memory_reads=%llu memory_writes=%llu "
-        "memory_init_handshakes=%llu memory_init_accesses=%llu "
-        "memory_init_read_bytes=%llu memory_init_write_bytes=%llu "
-        "memory_init_cycles=%llu "
         "network_tx_packets=%llu network_tx_words=%llu "
         "network_rx_packets=%llu network_rx_words=%llu "
         "rx_dma_transfers=%llu rx_dma_words=%llu "
@@ -63,8 +60,6 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         static_cast<unsigned long long>(
             data.cpu.synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_ACCESS]),
         static_cast<unsigned long long>(
-            data.cpu.synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE]),
-        static_cast<unsigned long long>(
             data.cpu.synchronizationStopCounts_[MITTENS_SYNC_STOP_MEMORY_BATCH]),
         static_cast<unsigned long long>(data.cpu.memoryBatchTransportRecords_),
         static_cast<unsigned long long>(data.cpu.memoryBatchLogicalAccesses_),
@@ -76,11 +71,6 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         static_cast<unsigned long long>(data.memory.memoryResponses_),
         static_cast<unsigned long long>(data.memory.memoryReads_),
         static_cast<unsigned long long>(data.memory.memoryWrites_),
-        static_cast<unsigned long long>(data.barriers.memoryInitializationHandshakes_),
-        static_cast<unsigned long long>(data.barriers.memoryInitializationAccesses_),
-        static_cast<unsigned long long>(data.barriers.memoryInitializationReadBytes_),
-        static_cast<unsigned long long>(data.barriers.memoryInitializationWriteBytes_),
-        static_cast<unsigned long long>(data.barriers.memoryInitializationCycles_),
         static_cast<unsigned long long>(data.tx.networkTransmitPackets),
         static_cast<unsigned long long>(data.tx.networkTransmitWords),
         static_cast<unsigned long long>(data.rx.networkReceivePackets),
@@ -114,7 +104,7 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         "stop_dma_wait_batch=%llu dma_wait_batch_records=%llu "
         "dma_macro_records=%llu\n",
         static_cast<unsigned>(data.configuration.tileId),
-        data.configuration.scratchpadEnabled ? 1U : 0U,
+        1U, // Scratchpad is a required architectural resource.
         static_cast<unsigned long long>(data.configuration.scratchpadBytes),
         static_cast<unsigned long long>(scratchpad.cpuRequests),
         static_cast<unsigned long long>(scratchpad.dmaTransfers),
@@ -143,7 +133,6 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         "wait_rx_dma_submit_ticks=%llu "
         "wait_rx_software_claim_ticks=%llu wait_analog_submit_ticks=%llu "
         "wait_analog_completion_ticks=%llu wait_memory_ticks=%llu "
-        "wait_memory_init_ticks=%llu "
         "wait_scratchpad_dma_submit_ticks=%llu "
         "wait_scratchpad_dma_wait_ticks=%llu "
         "wait_scratchpad_dma_wait_batch_ticks=%llu "
@@ -160,8 +149,6 @@ void reportTileProfile(SST::Output& output, const TileMeasurementSnapshot& data)
         static_cast<unsigned long long>(data.cpu.waitTicks_[MITTENS_SYNC_STOP_ANALOG_SUBMIT]),
         static_cast<unsigned long long>(data.cpu.waitTicks_[MITTENS_SYNC_STOP_ANALOG_WAIT]),
         static_cast<unsigned long long>(data.cpu.waitTicks_[MITTENS_SYNC_STOP_MEMORY_ACCESS]),
-        static_cast<unsigned long long>(
-            data.cpu.waitTicks_[MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE]),
         static_cast<unsigned long long>(
             data.cpu.waitTicks_[MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT]),
         static_cast<unsigned long long>(data.cpu.waitTicks_[MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT]),

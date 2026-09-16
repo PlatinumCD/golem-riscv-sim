@@ -1,4 +1,5 @@
 #pragma once
+#include <fstream>
 #include "cpuExecutionLedger.h"
 #include "cpuActions.h"
 #include "diagnosticMessage.h"
@@ -44,12 +45,12 @@ class CpuExecutionController final
     };
     struct Host
     {
-        std::function<bool()> running, initializing, observeExit, watchdogReported;
+        std::function<bool()> running, observeExit, watchdogReported;
         std::function<Timing::Ticks()> now;
         std::function<void()> watchdog, terminateAll, scheduleCaptureDispatch, serviceBridge;
         std::function<void(Timing::Cycles<Timing::Cpu>, std::uint32_t, std::uint64_t)> schedule;
         std::function<void(Timing::Cycles<Timing::Cpu>, std::uint64_t)> scheduleWatchdog;
-        std::function<void(bool)> progress;
+        std::function<void()> progress;
         std::function<void(std::uint64_t, std::uint64_t, const char*, std::uint64_t)> recordWait;
         std::function<void(int, const std::string&)> log;
         std::function<bool()> scratchpadAvailable, storesDrained, receiveReady;
@@ -58,21 +59,18 @@ class CpuExecutionController final
         std::function<std::uint32_t()> analogArrayCount;
         std::function<bool(std::uint32_t, std::uint64_t)> analogSubmitted;
         std::function<bool(const QemuSyncEvent&)> prepareDeferredAnalog, deferredAnalogMatches;
-        std::function<void(const QemuSyncEvent&)> validateInitialDevice;
         std::function<CpuDeviceResult(const CpuMemoryAction&)> memory;
         std::function<CpuDeviceResult(const CpuInstructionAction&)> instruction;
         std::function<CpuDeviceResult(const CpuAnalogAction&)> analog;
         std::function<CpuDeviceResult(const CpuNetworkAction&)> network;
         std::function<CpuDeviceResult(const CpuGlobalDMAAction&)> globalDMA;
         std::function<CpuDeviceResult(const CpuBarrierAction&)> barrier;
-        std::function<CpuDeviceResult(const CpuInitializationAction&)> initialization;
         std::function<CpuDeviceResult(const CpuTaskAction&)> task;
         std::function<void()> guestExit;
     };
 
     CpuExecutionController(TileConfiguration config, Timing::Clock<Timing::Cpu> clock,
-                           Transport transport, Host host, std::uint64_t partition = 0,
-                           std::uint32_t workers = 1);
+                           Transport transport, Host host);
     ~CpuExecutionController();
     CpuExecutionController(const CpuExecutionController&) = delete;
     CpuExecutionController& operator=(const CpuExecutionController&) = delete;
@@ -100,8 +98,8 @@ class CpuExecutionController final
     }
     bool hasPendingWork() const noexcept
     {
-        return pendingSyncEvent_.has_value() || initialCapturePending_ ||
-               runtimeQemuReadySetCapturePending_ || localQemuLookaheadFuture_.has_value() ||
+        return pendingSyncEvent_.has_value() ||
+               parallelCapturePending_ || localQemuLookaheadFuture_.has_value() ||
                memoryBatchEnvelope_ || analogSubmitBatchEnvelope_ ||
                globalDMASubmitBatchEnvelope_ || globalDMAMacroRunEnvelope_;
     }
@@ -198,6 +196,8 @@ class CpuExecutionController final
     }
     TileConfiguration config_;
     Timing::Clock<Timing::Cpu> clock_;
+    std::ofstream programTimingStream_;
+    std::ofstream instructionDiagnosticStream_;
     Transport transport_;
     Host host_;
     Diagnostics output_;
@@ -205,24 +205,21 @@ class CpuExecutionController final
     // In scratchpad boot mode the blocking fetch already pays the next
     // instruction's issue cycle. Keep it in the ledger, not twice in elapsed time.
     std::uint64_t prepaidInstructionIssueCycles_ = 0;
+    std::uint32_t pendingFetchInstructionCount_ = 1;
     std::uint64_t unretiredInstructionFetches_ = 0;
     std::shared_ptr<std::atomic<bool>> captureLease_ = std::make_shared<std::atomic<bool>>(true);
     bool stopped_ = false;
-    bool initialCapturePending_ = false;
-    enum class CaptureMode { Initial, Runtime };
-    QemuReadySetExecutor::Task makeReadySetCaptureTask(
-        std::uint64_t frontierTick, std::uint64_t grantEpoch, CaptureMode mode,
+    QemuCaptureExecutor::Task makeCaptureTask(
+        std::uint64_t frontierTick, std::uint64_t grantEpoch,
         std::function<void(const Transport&)> startCapture);
     void grantAndCaptureQemu();
     void beginQemuGrant();
-    void reserveInitialQemuReadySetGrant();
-    void submitInitialQemuReadySetGrant();
     void resumeAndCaptureQemu();
+    bool dmaOrMeshWaitArmed_ = false;
     void startLocalQemuLookahead(const QemuSyncEvent& event);
     bool consumeLocalQemuLookahead(const QemuSyncEvent& event);
     void captureQemuEvent();
     void validateCapturedQemuEvent(const QemuSyncEvent& event) const;
-    void validateInitialQemuReadySetEvent(const QemuSyncEvent& event) const;
     std::uint64_t previewQemuEventDeliveryTick(const QemuSyncEvent& event,
                                                std::uint64_t frontierTick) const;
     void beginMemoryBatch(const QemuSyncEvent& event);
@@ -251,10 +248,7 @@ class CpuExecutionController final
     bool cpuSyncWakeScheduledDuringHandler_ = false;
     std::optional<std::uint64_t> progressWatchdogWakeTick_;
     std::uint64_t progressWatchdogWakeGeneration_ = 0;
-    std::uint64_t qemuReadySetPartitionKey_ = 0;
-    std::uint32_t qemuReadySetPartitionWorkers_ = 1;
-    bool initialQemuReadySetSubmitted_ = false;
-    bool runtimeQemuReadySetCapturePending_ = false;
+    bool parallelCapturePending_ = false;
     std::optional<std::future<QemuSyncEvent>> localQemuLookaheadFuture_;
     std::uint64_t localQemuLookaheadSourceSequence_ = 0;
     std::uint32_t localQemuLookaheadSourceReason_ = MITTENS_SYNC_STOP_NONE;

@@ -1,6 +1,9 @@
 #include "globalRAMBacking.h"
 
 #include <cerrno>
+#include <array>
+#include <algorithm>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -69,6 +72,47 @@ int GlobalRAMBacking::duplicate(std::uint64_t capacityBytes)
             "cannot duplicate global RAM backing descriptor");
     }
     return duplicate;
+}
+
+void GlobalRAMBacking::loadImage(int descriptor, std::uint64_t capacityBytes,
+                                 const std::string& path, std::uint64_t offset)
+{
+    std::ifstream image(path, std::ios::binary | std::ios::ate);
+    if (!image || image.tellg() < 0) {
+        throw std::runtime_error("cannot open global RAM image: " + path);
+    }
+    const auto bytes = static_cast<std::uint64_t>(image.tellg());
+    if (descriptor < 0 || capacityBytes > INT64_MAX ||
+        offset > capacityBytes || bytes > capacityBytes - offset) {
+        throw std::invalid_argument("global RAM image exceeds backing capacity");
+    }
+    image.seekg(0);
+    std::array<char, 65536> buffer;
+    std::uint64_t remaining = bytes;
+    while (remaining != 0) {
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining, buffer.size()));
+        if (!image.read(buffer.data(), count)) {
+            throw std::runtime_error("cannot read global RAM image: " + path);
+        }
+        std::size_t done = 0;
+        while (done < count) {
+            const ssize_t written = ::pwrite(
+                descriptor, buffer.data() + done, count - done,
+                static_cast<off_t>(offset + done));
+            if (written < 0) {
+                if (errno == EINTR) continue;
+                throw std::system_error(errno, std::generic_category(),
+                                        "cannot load global RAM image");
+            }
+            if (written == 0) {
+                throw std::runtime_error("short global RAM image write");
+            }
+            done += static_cast<std::size_t>(written);
+        }
+        offset += count;
+        remaining -= count;
+    }
 }
 
 } // namespace Mittens

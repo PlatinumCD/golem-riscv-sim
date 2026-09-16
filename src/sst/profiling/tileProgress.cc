@@ -27,7 +27,6 @@ ProgressSnapshot makeTileProgressSnapshot(const TileMeasurementSnapshot& data,
     progress.analogCommandsCompleted = data.analog.completed;
     progress.localEpochAvailable = data.configuration.epochBarrierEpochs != 0;
     progress.localEpoch = progress.localEpochAvailable ? data.barriers.expectedEpochBarrier_ : UINT32_MAX;
-    progress.memoryInitializationComplete = !data.barriers.memoryInitializationPhase_;
     progress.waitReason = data.cpu.activeWaitStartTick_.has_value()
                               ? data.cpu.activeWaitReason_
                               : static_cast<std::uint32_t>(MITTENS_SYNC_STOP_NONE);
@@ -85,7 +84,6 @@ std::string formatTileProgress(std::uint32_t tileId, const ProgressSnapshot& pro
             << " analog_commands_completed=" << progress.analogCommandsCompleted
             << " local_epoch=" << progress.localEpoch
             << " local_epoch_available=" << progress.localEpochAvailable
-            << " memory_initialization_complete=" << progress.memoryInitializationComplete
             << " wait_reason=" << progress.waitReason
             << " wait_ticks=" << progress.waitTicks
             << " pending_network=" << progress.pendingNetworkReceives
@@ -96,15 +94,14 @@ std::string formatTileProgress(std::uint32_t tileId, const ProgressSnapshot& pro
 }
 
 std::string formatProgressWatchdog(std::uint32_t tileId, std::uint64_t timeoutMilliseconds,
-                                  std::uint64_t elapsedMilliseconds, std::uint64_t deploymentEpoch,
-                                  std::uint64_t initializationEpoch)
+                                  std::uint64_t elapsedMilliseconds, std::uint64_t deploymentEpoch)
 {
     return diagnosticMessage("watchdog formatting failed",
         "MITTENS_PROGRESS_WATCHDOG tile=%u timeout_ms=%llu "
-        "progress_elapsed_ms=%llu deployment_epoch=%llu initialization_execution_epoch=%llu\n",
+        "progress_elapsed_ms=%llu deployment_epoch=%llu\n",
         static_cast<unsigned>(tileId), static_cast<unsigned long long>(timeoutMilliseconds),
         static_cast<unsigned long long>(elapsedMilliseconds),
-        static_cast<unsigned long long>(deploymentEpoch), static_cast<unsigned long long>(initializationEpoch));
+        static_cast<unsigned long long>(deploymentEpoch));
 }
 
 } // namespace SST::Mittens

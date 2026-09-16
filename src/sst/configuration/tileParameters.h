@@ -119,7 +119,9 @@
       "epoch_barrier_epochs", 0, "hardware",                                                     \
       "Number of modeled deployment epochs, including boot epoch zero; zero disables "           \
       "the epoch barrier",                                                                       \
-      "0")
+      "0")                                                                                      \
+    X(bool, epochBarrierDrainAnalog, "epoch_barrier_drain_analog", false, "hardware",             \
+      "Wait for local analog completion before contributing to an epoch barrier", "0")
 
 // CPU clock, issue, and QEMU scheduling controls.
 #define MITTENS_TILE_CPU_PARAMETERS(X)                                                           \
@@ -139,6 +141,12 @@
       "sync_instruction_quantum", 1000, "execution",                                             \
       "Maximum instructions SST grants QEMU at once",                                            \
       "1000")                                                                                    \
+    X(std::uint32_t, qemuCaptureWorkers,                                                        \
+      "qemu_capture_workers", 1, "execution",                                                  \
+      "Host capture workers for same-time QEMU requests; 1 retains serial capture", "1")        \
+    X(std::uint32_t, instructionFetchSegmentSize,                                               \
+      "instruction_fetch_segment_size", 1, "execution",                                        \
+      "Maximum register-only cache-hit fetch group; 1 disables grouping, maximum 16", "1")     \
     X(std::uint32_t, qemuCaptureSpinMicroseconds,                                                \
       "qemu_capture_spin_us", 0, "execution",                                                    \
       "Host-only busy-poll interval before an SST-to-QEMU capture falls back to futex"           \

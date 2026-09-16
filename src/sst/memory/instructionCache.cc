@@ -108,4 +108,20 @@ void InstructionCache::invalidate() noexcept
     for (auto& line : lines_)
         line.valid = false;
 }
+
+bool InstructionCache::resident(std::uint64_t address, std::uint32_t bytes) const noexcept
+{
+    if ((bytes != 2 && bytes != 4) || (address & 1) ||
+        !AddressRegion{spmBase_, scratchpad_.configuration().capacityBytes}.containsRange(address, bytes))
+        return false;
+    const auto first = (address - spmBase_) / configuration_.lineBytes;
+    const auto last = (address - spmBase_ + bytes - 1) / configuration_.lineBytes;
+    for (auto number = first; number <= last; ++number) {
+        auto begin = lines_.begin() + (number % sets_) * configuration_.ways;
+        if (std::none_of(begin, begin + configuration_.ways, [number, this](const Line& line) {
+                return line.valid && line.tag == number / sets_;
+            })) return false;
+    }
+    return true;
+}
 } // namespace SST::Mittens

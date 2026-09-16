@@ -6,6 +6,7 @@ LLVM ?= $(if $(GOLEM_LLVM_DIR),$(GOLEM_LLVM_DIR),$(INSTALL_ROOT)/llvm)
 TARGET ?= riscv64-unknown-elf
 CPU ?= golem-analog
 ABI ?= lp64d
+REGISTER_ITERATIONS ?= 100
 CLANG ?= $(LLVM)/bin/clang
 CLANGXX ?= $(LLVM)/bin/clang++
 STARTUP_LD ?= $(PLATFORM_STARTUP_ROOT)/scratchpad.ld
@@ -13,7 +14,7 @@ OUT := $(if $(GOLEM_TEST_RESULTS_ROOT),$(GOLEM_TEST_RESULTS_ROOT),$(PROJECT_ROOT
 
 COMMON := --target=$(TARGET) -mcpu=$(CPU) -mabi=$(ABI) -mcmodel=medany \
           -ffreestanding -fno-stack-protector -fdata-sections -O2 -g
-TESTS := warm-loop eviction straddle fence-i trap-ram rvv-spm rvv-fault reload-code dma-code
+TESTS := warm-loop eviction straddle fence-i trap-ram rvv-spm rvv-fault reload-code dma-code register-segment register-trigger
 
 .PHONY: all clean
 .SECONDARY:
@@ -34,7 +35,7 @@ $(OUT)/exit.o: $(PLATFORM_STARTUP_ROOT)/platform-exit.cpp | $(OUT)
 		-I$(PLATFORM_ROOT) -c $< -o $@
 
 $(OUT)/%.o: $(TEST_DIR)/%.S $(TEST_DIR)/common.S | $(OUT)
-	$(CLANG) $(COMMON) -mno-relax -c $< -o $@
+	$(CLANG) $(COMMON) -DREGISTER_ITERATIONS=$(REGISTER_ITERATIONS) -mno-relax -c $< -o $@
 
 $(OUT)/%.o: $(TEST_DIR)/%.cpp | $(OUT)
 	$(CLANGXX) $(COMMON) -std=c++20 -fno-exceptions -fno-rtti \

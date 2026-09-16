@@ -61,7 +61,6 @@
 
 #define MITTENS_NIC_TRACE_EVENT_START 1
 #define MITTENS_NIC_TRACE_EVENT_FINISH 2
-#define MITTENS_NIC_TRACE_EVENT_MEMORY_INIT_COMPLETE 3
 #define MITTENS_NIC_TRACE_EVENT_EPOCH_BARRIER_ARRIVE 4
 
 typedef struct MittensNICReceiveDMA {
@@ -522,8 +521,10 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
             !mittens_bridge_tx_push(s->bridge, packet)) {
             mittens_nic_set_error(s, MITTENS_BRIDGE_ERROR_TX_FULL,
                                   "TX_DATA write while TX_READY is clear");
-        } else if (mittens_sync_available() &&
-                   !mittens_bridge_tx_ready(s->bridge)) {
+        } else if (mittens_sync_available()) {
+            /* Timestamp every scalar send at its instruction boundary.
+             * Waiting for a full ring or the next instruction quantum leaves
+             * sparse messages invisible to SST for an arbitrary interval. */
             mittens_sync_yield_nic_transmit(
                 MITTENS_SYNC_STOP_NIC_TRANSMIT, false);
         }
@@ -653,10 +654,6 @@ static void mittens_nic_write(void *opaque, hwaddr offset,
                 MITTENS_SYNC_STOP_TASK_FINISH,
                 s->trace_task_id,
                 s->trace_execution_id);
-            return;
-        }
-        if (value == MITTENS_NIC_TRACE_EVENT_MEMORY_INIT_COMPLETE) {
-            mittens_sync_memory_init_complete();
             return;
         }
         if (value == MITTENS_NIC_TRACE_EVENT_EPOCH_BARRIER_ARRIVE) {

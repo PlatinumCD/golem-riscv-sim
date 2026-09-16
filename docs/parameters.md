@@ -61,6 +61,7 @@ use `--check` to detect stale documentation.
 |---|---|---|---|---|
 | `global_ram_bytes` | `std::uint64_t` | `34359738368` | hardware | Deployment-wide sparse global RAM capacity |
 | `epoch_barrier_epochs` | `std::uint32_t` | `0` | hardware | Number of modeled deployment epochs, including boot epoch zero; zero disables the epoch barrier |
+| `epoch_barrier_drain_analog` | `bool` | `false` | hardware | Wait for local analog completion before contributing to an epoch barrier |
 
 ## CPU clock, issue, and QEMU scheduling controls
 
@@ -70,6 +71,8 @@ use `--check` to detect stale documentation.
 | `cpu_clock` | `std::string` | `1GHz` | hardware | Clock defining the synchronized CPU issue cycle |
 | `cpu_issue_width` | `std::uint32_t` | `1` | hardware | Scalar issue width; executable-SPM fetch accounting currently requires 1 |
 | `sync_instruction_quantum` | `std::uint64_t` | `1000` | execution | Maximum instructions SST grants QEMU at once |
+| `qemu_capture_workers` | `std::uint32_t` | `1` | execution | Host capture workers for same-time QEMU requests; 1 retains serial capture |
+| `instruction_fetch_segment_size` | `std::uint32_t` | `1` | execution | Maximum register-only cache-hit fetch group; 1 disables grouping, maximum 16 |
 | `qemu_capture_spin_us` | `std::uint32_t` | `0` | execution | Host-only busy-poll interval before an SST-to-QEMU capture falls back to futex sleep |
 
 ## RISC-V Vector Extension

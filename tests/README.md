@@ -27,6 +27,10 @@ SST, including boot DMA and instruction-cache timing. Numerical and payload
 checks remain separate from performance counters; use the run's `results.json`
 for actual pass/fail status.
 
+CPU deadline and stale-wakeup checks run in the host controller tests. Integrated
+clock-domain checks use `src/sst/tests/global_dma_clock.py` with timed shared-RAM
+DMA; they do not require a CPU data-cache backend.
+
 ## Full registry
 
 ```bash
@@ -42,7 +46,7 @@ bash tests/run-all.sh --help
 | Memory | Do global RAM, scratchpad DMA, oversized-data chunking, exact accounting, and DMA contention behave correctly? | `bash tests/run-all.sh --group memory` |
 | Network | Do pair/mesh transfers, timing, fan-out, pipelines, and communication-envelope accounting work? | `bash tests/run-all.sh --group network` |
 | Analog | Do instructions, operations, timing, routing, and distributed MVM/recombination work? | `bash tests/run-all.sh --group analog` |
-| Runtime (optional) | Do the library, pair deployment, epoch barrier, runtime transmit fan-out, and distributed matvec work? | `bash tests/run-all.sh --suite runtime` |
+| Runtime (optional) | Do the library, epoch barrier, runtime transmit fan-out, and distributed matvec work? | `bash tests/run-all.sh --suite runtime` |
 | Host | Do hardware infrastructure checks pass? ([source](../tools/hardware/verify.py)) | `bash tests/run-all.sh --case host` |
 | Configuration | Are component configurations validated? ([source](../src/sst/tests/run-configuration-test.py)) | `bash tests/run-all.sh --case configuration` |
 | Components/controllers | Do isolated components, TX regressions, and software-owned RX payload checks pass? ([sources](../src/sst/tests)) | `bash tests/run-all.sh --case component --case tx-controller --case rx-controller` |

@@ -1,4 +1,4 @@
-#include "qemuReadySetExecutor.h"
+#include "qemuCaptureExecutor.h"
 
 #include <algorithm>
 #include <map>
@@ -9,20 +9,20 @@
 namespace SST {
 namespace Mittens {
 
-QemuReadySetExecutionError::QemuReadySetExecutionError(
+QemuCaptureExecutionError::QemuCaptureExecutionError(
     std::uint32_t tileId,
     const std::string& message) :
     std::runtime_error(
-        "ready-set QEMU tile " + std::to_string(tileId) + ": " +
+        "QEMU capture tile " + std::to_string(tileId) + ": " +
         message),
     tileId_(tileId)
 {}
 
-QemuReadySetExecutor::QemuReadySetExecutor(std::size_t workerCount)
+QemuCaptureExecutor::QemuCaptureExecutor(std::size_t workerCount)
 {
     if (workerCount == 0) {
         throw std::invalid_argument(
-            "ready-set QEMU executor requires at least one worker");
+            "QEMU capture executor requires at least one worker");
     }
 
     workers_.reserve(workerCount);
@@ -45,7 +45,7 @@ QemuReadySetExecutor::QemuReadySetExecutor(std::size_t workerCount)
     }
 }
 
-QemuReadySetExecutor::~QemuReadySetExecutor()
+QemuCaptureExecutor::~QemuCaptureExecutor()
 {
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -59,24 +59,24 @@ QemuReadySetExecutor::~QemuReadySetExecutor()
     }
 }
 
-void QemuReadySetExecutor::begin(
+void QemuCaptureExecutor::begin(
     std::uint64_t frontierTick,
     std::size_t expectedTasks)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     if (stopping_) {
-        throw std::logic_error("ready-set QEMU executor is stopping");
+        throw std::logic_error("QEMU capture executor is stopping");
     }
     if (batchActive_) {
-        throw std::logic_error("ready-set QEMU batch is already active");
+        throw std::logic_error("QEMU capture batch is already active");
     }
     if (expectedTasks == 0) {
         throw std::invalid_argument(
-            "ready-set QEMU batch cannot be empty");
+            "QEMU capture batch cannot be empty");
     }
     if (!queue_.empty() || !batch_.empty() || finishedTasks_ != 0) {
         throw std::logic_error(
-            "ready-set QEMU executor retained stale batch state");
+            "QEMU capture executor retained stale batch state");
     }
 
     frontierTick_ = frontierTick;
@@ -85,73 +85,124 @@ void QemuReadySetExecutor::begin(
     batchActive_ = true;
 }
 
-void QemuReadySetExecutor::submit(Task task)
+void QemuCaptureExecutor::validateTaskLocked(const Task& task) const
 {
-    const std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) {
+        throw std::logic_error("QEMU capture executor is stopping");
+    }
     if (!batchActive_) {
-        throw std::logic_error("ready-set QEMU batch is not active");
+        throw std::logic_error("QEMU capture batch is not active");
     }
     if (ownerThread_ != std::this_thread::get_id()) {
         throw std::logic_error(
-            "ready-set QEMU task was submitted from a non-owner thread");
+            "QEMU capture task was submitted from a non-owner thread");
     }
     if (task.frontierTick != frontierTick_) {
-        throw QemuReadySetExecutionError(
+        throw QemuCaptureExecutionError(
             task.tileId,
             "task frontier " + std::to_string(task.frontierTick) +
                 " does not match batch frontier " +
                 std::to_string(frontierTick_));
     }
     if (batch_.size() >= expectedTasks_) {
-        throw QemuReadySetExecutionError(
+        throw QemuCaptureExecutionError(
             task.tileId, "batch received more tasks than declared");
     }
     if (task.grantEpoch == 0) {
-        throw QemuReadySetExecutionError(
+        throw QemuCaptureExecutionError(
             task.tileId, "grant epoch must be nonzero");
     }
     if (!task.capture || !task.validate ||
         !task.modeledDeliveryTick || !task.commit) {
-        throw QemuReadySetExecutionError(
+        throw QemuCaptureExecutionError(
             task.tileId, "task is missing a required callback");
     }
+}
+
+void QemuCaptureExecutor::submit(Task task)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    validateTaskLocked(task);
     if (!submittedTiles_.insert(task.tileId).second) {
-        throw QemuReadySetExecutionError(
+        throw QemuCaptureExecutionError(
             task.tileId, "tile was submitted more than once");
     }
 
     const std::uint64_t submissionSequence = batch_.size();
-    auto item = std::make_shared<WorkItem>(
-        std::move(task), submissionSequence);
-    batch_.push_back(item);
-    queue_.push_back(std::move(item));
+    const auto tileId = task.tileId;
+    try {
+        auto item = std::make_shared<WorkItem>(
+            std::move(task), submissionSequence);
+        batch_.push_back(item);
+        queue_.push_back(std::move(item));
+    } catch (...) {
+        if (batch_.size() > submissionSequence)
+            batch_.pop_back();
+        submittedTiles_.erase(tileId);
+        throw;
+    }
+    lock.unlock();
     workAvailable_.notify_one();
 }
 
-std::vector<QemuReadySetExecutor::Completion>
-QemuReadySetExecutor::collect()
+void QemuCaptureExecutor::submitBatch(std::vector<Task> tasks)
+{
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_ || !batchActive_ || ownerThread_ != std::this_thread::get_id())
+            throw std::logic_error("QEMU capture batch submission has no active owner");
+        if (!batch_.empty() || !queue_.empty() || finishedTasks_ != 0 ||
+            !submittedTiles_.empty() || tasks.size() != expectedTasks_)
+            throw std::logic_error("QEMU capture batch submission requires the full empty session");
+
+        // Stage every allocation and validation before publishing anything.
+        // Workers cannot observe a prefix, even if a callback or allocation fails.
+        std::unordered_set<std::uint32_t> tiles;
+        tiles.reserve(tasks.size());
+        for (const auto& task : tasks) {
+            validateTaskLocked(task);
+            if (!tiles.insert(task.tileId).second)
+                throw QemuCaptureExecutionError(task.tileId, "tile was submitted more than once");
+        }
+        std::vector<std::shared_ptr<WorkItem>> batch;
+        std::deque<std::shared_ptr<WorkItem>> queue;
+        batch.reserve(tasks.size());
+        for (auto& task : tasks) {
+            auto item = std::make_shared<WorkItem>(std::move(task), batch.size());
+            batch.push_back(item);
+            queue.push_back(std::move(item));
+        }
+        batch_.swap(batch);
+        queue_.swap(queue);
+        submittedTiles_.swap(tiles);
+    }
+    workAvailable_.notify_all();
+}
+
+std::vector<QemuCaptureExecutor::Completion>
+QemuCaptureExecutor::collect()
 {
     std::vector<std::shared_ptr<WorkItem>> batch;
     std::uint64_t frontier = 0;
     {
         std::unique_lock<std::mutex> lock(mutex_);
         if (!batchActive_) {
-            throw std::logic_error("ready-set QEMU batch is not active");
+            throw std::logic_error("QEMU capture batch is not active");
         }
         if (ownerThread_ != std::this_thread::get_id()) {
             throw std::logic_error(
-                "ready-set QEMU batch was collected from a non-owner thread");
+                "QEMU capture batch was collected from a non-owner thread");
         }
         if (batch_.size() != expectedTasks_) {
             throw std::logic_error(
-                "ready-set QEMU batch is incomplete: submitted " +
+                "QEMU capture batch is incomplete: submitted " +
                 std::to_string(batch_.size()) + " of " +
                 std::to_string(expectedTasks_));
         }
         batchFinished_.wait(lock, [this]() {
             return finishedTasks_ == expectedTasks_;
         });
-        batch = batch_;
+        batch.swap(batch_);
         frontier = frontierTick_;
         clearBatchLocked();
     }
@@ -164,13 +215,13 @@ QemuReadySetExecutor::collect()
 
     for (const auto& item : batch) {
         if (item->captureError) {
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId,
                 "capture failed: " +
                     describeException(item->captureError));
         }
         if (!item->event.has_value()) {
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId,
                 "capture completed without an event");
         }
@@ -178,20 +229,10 @@ QemuReadySetExecutor::collect()
 
     std::vector<Completion> completions;
     completions.reserve(batch.size());
-    std::map<std::uint32_t, std::size_t> capturedStopReasons;
-    std::size_t capturedBatchedEvents = 0;
-    for (const auto& item : batch) {
-        const QemuSyncEvent& event = *item->event;
-        ++capturedStopReasons[event.stopReason];
-        if (!event.memoryBatch.empty() ||
-            (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0) {
-            ++capturedBatchedEvents;
-        }
-    }
     for (const auto& item : batch) {
         const QemuSyncEvent& event = *item->event;
         if (event.grantEpoch != item->task.grantEpoch) {
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId,
                 "event grant epoch " +
                     std::to_string(event.grantEpoch) +
@@ -199,7 +240,7 @@ QemuReadySetExecutor::collect()
                     std::to_string(item->task.grantEpoch));
         }
         if (event.eventSequence == 0) {
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId,
                 "event sequence must be nonzero");
         }
@@ -209,6 +250,15 @@ QemuReadySetExecutor::collect()
             item->task.validate(event);
             delivery = item->task.modeledDeliveryTick(event);
         } catch (...) {
+            std::map<std::uint32_t, std::size_t> capturedStopReasons;
+            std::size_t capturedBatchedEvents = 0;
+            for (const auto& captured : batch) {
+                const auto& value = *captured->event;
+                ++capturedStopReasons[value.stopReason];
+                if (!value.memoryBatch.empty() ||
+                    (value.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0)
+                    ++capturedBatchedEvents;
+            }
             std::ostringstream message;
             message << "validation failed: "
                     << describeException(std::current_exception())
@@ -223,11 +273,11 @@ QemuReadySetExecutor::collect()
             }
             message << "; captured_batched_events="
                     << capturedBatchedEvents;
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId, message.str());
         }
         if (delivery < frontier) {
-            throw QemuReadySetExecutionError(
+            throw QemuCaptureExecutionError(
                 item->task.tileId,
                 "modeled delivery tick precedes the batch frontier");
         }
@@ -238,9 +288,16 @@ QemuReadySetExecutor::collect()
             item->task.tileId,
             item->task.grantEpoch,
             event.eventSequence,
-            event,
-            item->task.commit,
+            {},
+            {},
         });
+    }
+
+    // All validation and error diagnostics above see intact payloads. Only
+    // after the entire batch succeeds do completions take their ownership.
+    for (std::size_t index = 0; index < batch.size(); ++index) {
+        completions[index].event = std::move(*batch[index]->event);
+        completions[index].commit = std::move(batch[index]->task.commit);
     }
 
     std::sort(
@@ -263,7 +320,7 @@ QemuReadySetExecutor::collect()
     return completions;
 }
 
-void QemuReadySetExecutor::discard()
+void QemuCaptureExecutor::discard()
 {
     std::unique_lock<std::mutex> lock(mutex_);
     if (!batchActive_) {
@@ -271,7 +328,7 @@ void QemuReadySetExecutor::discard()
     }
     if (ownerThread_ != std::this_thread::get_id()) {
         throw std::logic_error(
-            "ready-set QEMU batch was discarded from a non-owner thread");
+            "QEMU capture batch was discarded from a non-owner thread");
     }
     const std::size_t submitted = batch_.size();
     batchFinished_.wait(lock, [this, submitted]() {
@@ -280,19 +337,19 @@ void QemuReadySetExecutor::discard()
     clearBatchLocked();
 }
 
-std::size_t QemuReadySetExecutor::submittedTaskCount() const
+std::size_t QemuCaptureExecutor::submittedTaskCount() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     return batch_.size();
 }
 
-bool QemuReadySetExecutor::active() const
+bool QemuCaptureExecutor::active() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     return batchActive_;
 }
 
-std::string QemuReadySetExecutor::describeException(
+std::string QemuCaptureExecutor::describeException(
     const std::exception_ptr& error)
 {
     if (!error) {
@@ -307,7 +364,7 @@ std::string QemuReadySetExecutor::describeException(
     }
 }
 
-void QemuReadySetExecutor::workerLoop()
+void QemuCaptureExecutor::workerLoop()
 {
     while (true) {
         std::shared_ptr<WorkItem> item;
@@ -329,15 +386,18 @@ void QemuReadySetExecutor::workerLoop()
             item->captureError = std::current_exception();
         }
 
+        bool drained;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             ++finishedTasks_;
+            drained = finishedTasks_ == batch_.size();
         }
-        batchFinished_.notify_one();
+        if (drained)
+            batchFinished_.notify_one();
     }
 }
 
-void QemuReadySetExecutor::clearBatchLocked()
+void QemuCaptureExecutor::clearBatchLocked()
 {
     queue_.clear();
     batch_.clear();

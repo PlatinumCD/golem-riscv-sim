@@ -35,7 +35,6 @@ struct ProgressSnapshot final
     std::uint64_t analogCommandsCompleted = 0;
     std::uint32_t localEpoch = UINT32_MAX;
     std::uint32_t localEpochAvailable = 0;
-    std::uint32_t memoryInitializationComplete = 0;
     std::uint32_t waitReason = 0;
     std::uint64_t waitTicks = 0;
     std::uint64_t networkPackets = 0;
@@ -245,47 +244,6 @@ class GlobalRAMPerformanceProfile final
     std::uint64_t serviceCycles_ = 0;
     std::uint64_t teardownCount_ = 0;
     std::uint64_t teardownWaitCycles_ = 0;
-};
-
-struct MemoryInitializationBarrierTimeline final
-{
-    std::uint32_t tileId = 0;
-    std::uint64_t arrivalCycle = 0;
-    std::uint64_t releaseCycle = 0;
-
-    bool reconciles() const noexcept;
-};
-
-class MemoryInitializationBarrierPerformanceProfile final
-{
-  public:
-    MemoryInitializationBarrierPerformanceProfile() = default;
-    ~MemoryInitializationBarrierPerformanceProfile() = default;
-
-    MemoryInitializationBarrierPerformanceProfile(
-        const MemoryInitializationBarrierPerformanceProfile&) = delete;
-    MemoryInitializationBarrierPerformanceProfile&
-    operator=(const MemoryInitializationBarrierPerformanceProfile&) = delete;
-
-    void configure(const std::string& outputDirectory);
-    bool enabled() const noexcept
-    {
-        return enabled_;
-    }
-    void record(const MemoryInitializationBarrierTimeline& timeline);
-    bool totalsReconcile(std::uint64_t tileCount, std::uint64_t tileWaitCycles,
-                         std::uint64_t barrierWaitCycles) const noexcept;
-
-  private:
-    std::string path() const;
-
-    std::string outputDirectory_;
-    bool enabled_ = false;
-    std::ofstream stream_;
-    std::uint64_t tileCount_ = 0;
-    std::uint64_t tileWaitCycles_ = 0;
-    std::uint64_t firstArrivalCycle_ = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t lastReleaseCycle_ = 0;
 };
 
 } // namespace Mittens

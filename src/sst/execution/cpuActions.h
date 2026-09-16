@@ -27,6 +27,7 @@ struct CpuInstructionAction
     bool invalidate;
     Timing::Cycles<Timing::Cpu> cursor;
     std::uint64_t step;
+    std::uint32_t count = 1;
 };
 struct CpuNetworkAction
 {
@@ -44,11 +45,6 @@ struct CpuBarrierAction
 {
     std::uint32_t epoch, contribution, flags;
 };
-struct CpuInitializationAction
-{
-    std::uint64_t accesses, reads, writes;
-    std::uint32_t size, memoryFlags;
-};
 struct CpuTaskAction
 {
     std::uint32_t task;
@@ -63,6 +59,8 @@ struct CpuDeviceResult
     // Buffered writes historically advance internally but report blocked to
     // the enclosing wake handler, retaining its watchdog observation site.
     bool reportBlockedAfterCompletion = false;
+    std::uint32_t instructionCount = 1;
+    std::optional<std::uint32_t> dmaCompletionStatus = std::nullopt;
 };
 
 } // namespace SST::Mittens

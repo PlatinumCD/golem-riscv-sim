@@ -58,7 +58,6 @@ void printUnsigned(uint64_t value)
 
 int runSoftwarePayload()
 {
-    mesh_nic::complete_memory_initialization();
     if constexpr (MITTENS_TILE_ID == 0) {
         alignas(64) uint32_t payload[kSoftwarePayloadWords];
         for (uint32_t frame = 0;

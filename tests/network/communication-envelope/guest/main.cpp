@@ -56,7 +56,6 @@ extern "C" int tile_main() {
         }
     }
     for (uint32_t w = 0; w < 8; ++w) reinterpret_cast<volatile uint32_t*>(spm)[w] = w;
-    mesh_nic::complete_memory_initialization();
     trace(mesh_nic::kTaskTraceStart, traceRun, 0);
     if (static_cast<int>(tile) == DelayTile) delay(DelayInstructions);
     uint32_t iterations = static_cast<int>(tile) == RVVTile ? RVVIterations : 0;

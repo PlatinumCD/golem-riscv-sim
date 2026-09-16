@@ -1,9 +1,12 @@
 """Check mesh configuration without launching SST or a guest."""
 import importlib.util
+import os
 from pathlib import Path
+import runpy
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -42,6 +45,28 @@ spec.loader.exec_module(mesh)
 
 
 class MeshDefaults(unittest.TestCase):
+    def test_registered_mesh_fixture_uses_supported_architecture(self):
+        fixtures = {
+            'network/mesh-3x3': {
+                **{f'MITTENS_MESH_TILE{i}_ELF': f'tile{i}.elf' for i in range(9)},
+                'MITTENS_MESH_STATS': 'unused.csv',
+            },
+        }
+        for name, environment in fixtures.items():
+            with self.subTest(fixture=name), patch.dict(
+                os.environ, {'MITTENS_TEST_QEMU': 'qemu', **environment}, clear=True
+            ), patch.dict(sys.modules, {'mesh': mesh, 'support.mesh': mesh}):
+                components.clear()
+                runpy.run_path(str(ROOT / 'tests' / name / 'simulation.py'))
+                tiles = [c for c in components.values() if c.kind == 'mittens.tile']
+                self.assertEqual(len(tiles), 2)
+                for tile in tiles:
+                    self.assertTrue(tile.params['scratchpad_boot'])
+                    self.assertTrue(tile.params['scratchpad_enabled'])
+                    self.assertEqual(tile.params['memory_backend'], 'streaming')
+                self.assertFalse(any('memHierarchy' in c.kind or 'merlin' in c.kind
+                                     for c in components.values()))
+
     def build(self, **overrides):
         components.clear()
         return mesh.build_mesh(width=1, height=1, qemu_path='qemu',

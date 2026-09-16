@@ -18,11 +18,15 @@
 #include "qemu/futex.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "qemu/timer.h"
 #include "sysemu/cpu-timers.h"
 #include "sysemu/cpus.h"
 
 #include "mittens/SyncTileBridge.h"
 #include "mittens/MemoryMap.h"
+#include "mittens/FetchSegment.h"
+/* Implemented in the target translator; the device is built in libcommon. */
+bool mittens_sync_register_segment_safe(CPUState *cpu);
 
 typedef struct MittensScratchpadDMAJob {
     uint64_t execution_id;
@@ -34,6 +38,8 @@ typedef struct MittensScratchpadDMAJob {
     uint64_t logical_iteration;
     uint32_t byte_count;
     bool write_staged;
+    bool completion_visible;
+    bool completion_failed;
 } MittensScratchpadDMAJob;
 
 typedef struct MittensSyncDeviceState {
@@ -43,6 +49,10 @@ typedef struct MittensSyncDeviceState {
     uint64_t accounted_executed;
     uint64_t vector_instructions_executed;
     uint64_t fetch_vector_baseline;
+    uint64_t fetch_segment_pc;
+    uint32_t fetch_segment_words[MITTENS_SYNC_FETCH_SEGMENT_CAPACITY];
+    uint32_t fetch_segment_count;
+    uint32_t fetch_segment_index;
     uint64_t memory_instruction_program_counter;
     uint32_t memory_instruction_source_register_mask;
     uint32_t memory_instruction_destination_register_mask;
@@ -50,8 +60,8 @@ typedef struct MittensSyncDeviceState {
     int64_t accounted_remaining;
     bool terminal_event_published;
     bool memory_timing;
+    bool program_timing;
     bool instruction_fetch_timing;
-    bool memory_init_batching;
     bool memory_access_batching;
     bool scratchpad_access_batching;
     bool scratchpad_access_run_compaction;
@@ -67,10 +77,6 @@ typedef struct MittensSyncDeviceState {
     uint32_t global_dma_batch_count;
     MittensSyncAnalogSubmit *analog_batch;
     uint32_t analog_batch_count;
-    bool memory_init_active;
-    uint64_t memory_init_accesses;
-    uint64_t memory_init_read_bytes;
-    uint64_t memory_init_write_bytes;
     uint64_t last_event_grant_epoch;
     uint64_t last_event_instructions;
     bool scratchpad_enabled;
@@ -108,6 +114,80 @@ DECLARE_INSTANCE_CHECKER(
     MittensSyncDeviceState, MITTENS_SYNC, TYPE_MITTENS_SYNC)
 
 static MittensSyncDeviceState *mittens_sync_instance;
+
+/* Optional host-only progress sampling. Configuration is generated from ELF
+ * symbols, never guessed from memory. No simulated transactions are issued. */
+static void mittens_sample_program_progress(MittensSyncDeviceState *s, bool final, uint32_t reason)
+{
+    static bool configured;
+    static char *path;
+    static uint64_t address;
+    static int64_t previous_ms;
+    static FILE *timing;
+    static uint64_t timing_sequence;
+    if (!s || !s->bridge || !s->scratchpad_mapped) return;
+    if (!configured) {
+        configured = true;
+        const char *directory = getenv("MITTENS_PROGRESS_DIRECTORY");
+        if (!directory || !*directory) return;
+        char *config = g_strdup_printf("%s/tile%u.progress-address", directory,
+                                       s->bridge->tile_id);
+        FILE *file = fopen(config, "r");
+        g_free(config);
+        if (!file) return;
+        int ok = fscanf(file, "%" SCNx64, &address);
+        fclose(file);
+        if (ok != 1 || address < s->scratchpad_base ||
+            s->scratchpad_size < 64 ||
+            address - s->scratchpad_base > s->scratchpad_size - 64) {
+            error_report("invalid Sculptor progress address for tile %u", s->bridge->tile_id);
+            return;
+        }
+        const char *timing_dir = getenv("MITTENS_TIMING_DIRECTORY");
+        if (timing_dir && *timing_dir) {
+            char *trace = g_strdup_printf("%s/tile%u.timing-markers.csv", timing_dir, s->bridge->tile_id);
+            timing = fopen(trace, "w");
+            if (!timing) error_report("cannot open Sculptor timing markers: %s", trace);
+            else fprintf(timing, "event_sequence,sequence,work_id,phase,completed,total,connection_id,input_invocation\n");
+            g_free(trace);
+        }
+        path = g_strdup_printf("%s/tile%u.progress-live.json", directory,
+                               s->bridge->tile_id);
+    }
+    if (!path) return;
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    bool sample = final || now - previous_ms >= 100;
+    if (!sample && !(timing && reason == MITTENS_SYNC_STOP_MEMORY_FENCE)) return;
+    const uint8_t *record = (const uint8_t *)memory_region_get_ram_ptr(&s->scratchpad)
+                          + address - s->scratchpad_base;
+    uint64_t values[8];
+    for (int i = 0; i < 8; ++i) values[i] = ldq_le_p(record + 8*i);
+    if ((values[0] & 1) || values[0] != ldq_le_p(record) ||
+        values[7] != UINT64_C(0x5343554c50524f47)) return;
+    if (timing && reason == MITTENS_SYNC_STOP_MEMORY_FENCE && values[0] != timing_sequence) {
+        fprintf(timing, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%" PRIu64 ",%" PRIu64 ",%" PRId64 ",%" PRId64 "\n",
+            s->bridge->event_sequence + 1, values[0], values[1], values[2],
+            values[3], values[4], (int64_t)values[5], (int64_t)values[6]);
+        fflush(timing);
+        timing_sequence = values[0];
+    }
+    if (!sample) return;
+    previous_ms = now;
+    char *temporary = g_strdup_printf("%s.tmp", path);
+    FILE *file = fopen(temporary, "w");
+    if (file) {
+        fprintf(file, "{\"physical_tile\":%u,\"sequence\":%" PRIu64
+            ",\"work_id\":%" PRIu64 ",\"phase\":%" PRIu64
+            ",\"completed\":%" PRIu64 ",\"total\":%" PRIu64
+            ",\"connection_id\":%" PRId64 ",\"input_invocation\":%" PRId64
+            ",\"final\":%s}\n", s->bridge->tile_id, values[0], values[1],
+            values[2], values[3], values[4], (int64_t)values[5], (int64_t)values[6],
+            final ? "true" : "false");
+        if (fclose(file) == 0) rename(temporary, path);
+    }
+    g_free(temporary);
+}
 
 static uint64_t mittens_sync_current_executed(void);
 static uint64_t mittens_sync_preinstruction_executed(void);
@@ -152,7 +232,8 @@ void helper_mittens_sync_memory_instruction(
 
 void helper_mittens_sync_instruction_fetch(
     uint64_t program_counter,
-    uint32_t instruction_length)
+    uint32_t instruction_length,
+    uint32_t instruction)
 {
     MittensSyncDeviceState *s = mittens_sync_instance;
 
@@ -171,6 +252,46 @@ void helper_mittens_sync_instruction_fetch(
         }
         return;
     }
+    if (s->fetch_segment_index < s->fetch_segment_count) {
+        const uint32_t index = s->fetch_segment_index++;
+        if (program_counter != s->fetch_segment_pc + 4 * index ||
+            instruction_length != 4 || instruction != s->fetch_segment_words[index]) {
+            mittens_sync_set_error(MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE,
+                                   "approved instruction segment changed before execution");
+            cpu_loop_exit(current_cpu);
+            return;
+        }
+        goto reset_metadata;
+    }
+    s->fetch_segment_count = 0;
+    s->fetch_segment_index = 0;
+    s->bridge->fetch_segment_proposed = 1;
+    s->bridge->fetch_segment_approved = 1;
+    if (s->bridge->fetch_segment_limit > 1 && instruction_length == 4 && current_cpu != NULL) {
+        /* M-mode, masked interrupts, and a single mapped page. No translation
+         * changes or synchronous exceptions can occur in the whitelisted ALU
+         * sequence. Keep one-instruction TBs and the normal icount bookkeeping. */
+        const uint64_t executed = mittens_sync_preinstruction_executed();
+        if (mittens_sync_register_segment_safe(current_cpu) &&
+            executed < s->bridge->instruction_budget &&
+            mittens_fetch_segment_instruction(instruction)) {
+            uint32_t limit = MIN(s->bridge->fetch_segment_limit, MITTENS_SYNC_FETCH_SEGMENT_CAPACITY);
+            limit = MIN(limit, s->bridge->instruction_budget - executed);
+            s->fetch_segment_pc = program_counter;
+            s->fetch_segment_words[0] = instruction;
+            uint32_t count = 1;
+            const uint8_t *spm = memory_region_get_ram_ptr(&s->scratchpad);
+            for (; count < limit; ++count) {
+                const uint64_t pc = program_counter + 4 * count;
+                if ((pc >> 12) != (program_counter >> 12) ||
+                    !mittens_sync_scratchpad_contains(pc, 4)) break;
+                const uint32_t word = ldl_le_p(spm + pc - s->scratchpad_base);
+                if (!mittens_fetch_segment_instruction(word)) break;
+                s->fetch_segment_words[count] = word;
+            }
+            s->bridge->fetch_segment_proposed = count;
+        }
+    }
     /* This helper is emitted at the start of a one-instruction TB.  The
      * boundary therefore reports the count before the instruction, while
      * QEMU's normal icount/vector ledger remains unchanged. */
@@ -181,6 +302,16 @@ void helper_mittens_sync_instruction_fetch(
         program_counter, instruction_length,
         MITTENS_SYNC_MEMORY_FLAG_NONE,
         mittens_sync_preinstruction_executed(), true);
+    if (s->bridge->fetch_segment_approved == 0 ||
+        s->bridge->fetch_segment_approved > s->bridge->fetch_segment_proposed) {
+        mittens_sync_set_error(MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE,
+                               "invalid instruction segment approval");
+        cpu_loop_exit(current_cpu);
+        return;
+    }
+    s->fetch_segment_count = s->bridge->fetch_segment_approved;
+    s->fetch_segment_index = 1;
+reset_metadata:
     s->fetch_vector_baseline = s->vector_instructions_executed;
     /* Dependency metadata belongs to this instruction only. In particular,
      * code rewritten at the same PC must not inherit a prior scalar access. */
@@ -344,6 +475,7 @@ static void mittens_sync_publish_event_raw(
     if (s->terminal_event_published) {
         return;
     }
+    mittens_sample_program_progress(s, reason == MITTENS_SYNC_STOP_GUEST_EXIT, reason);
     bridge = s->bridge;
     state = mittens_sync_load_acquire(&bridge->state);
     if (state != MITTENS_SYNC_STATE_RUNNING) {
@@ -616,13 +748,6 @@ bool mittens_sync_instruction_fetch_timing_enabled(void)
            s->scratchpad_enabled;
 }
 
-bool mittens_sync_memory_initialization_active(void)
-{
-    MittensSyncDeviceState *s = mittens_sync_instance;
-
-    return s != NULL && s->bridge != NULL &&
-           !s->terminal_event_published && s->memory_init_active;
-}
 
 bool mittens_sync_scratchpad_contains(uint64_t address, uint64_t byte_count)
 {
@@ -633,31 +758,6 @@ bool mittens_sync_scratchpad_contains(uint64_t address, uint64_t byte_count)
                                         address, byte_count);
 }
 
-void mittens_sync_memory_init_complete(void)
-{
-    MittensSyncDeviceState *s = mittens_sync_instance;
-
-    if (s == NULL || s->bridge == NULL ||
-        !s->memory_init_batching || !s->memory_init_active) {
-        return;
-    }
-    s->memory_init_active = false;
-    mittens_sync_publish_event(
-        MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE,
-        MITTENS_SYNC_EVENT_FLAG_NONE,
-        UINT32_MAX,
-        s->memory_init_accesses,
-        UINT32_MAX,
-        s->memory_init_write_bytes,
-        UINT32_MAX,
-        UINT32_MAX,
-        0,
-        s->memory_init_read_bytes,
-        0,
-        MITTENS_SYNC_MEMORY_FLAG_NONE,
-        mittens_sync_current_executed(),
-        true);
-}
 
 int64_t mittens_sync_wait_for_grant(int64_t qemu_budget)
 {
@@ -799,7 +899,6 @@ void mittens_sync_guest_exit(void)
     if (!mittens_sync_available()) {
         return;
     }
-    mittens_sync_memory_init_complete();
     /*
      * Keep the bridge nonterminal while publish_event drains or fuses every
      * earlier memory/DMA/analog batch.  Only the completed guest-exit envelope
@@ -1097,25 +1196,6 @@ void mittens_sync_yield_memory(
     /* Preserve DMA-submit-before-memory ordering across the fd-41 batch. */
     (void)mittens_sync_flush_global_dma_batch(
         MITTENS_SYNC_EVENT_FLAG_NONE, true);
-    if (s->memory_init_active) {
-        if (s->memory_init_accesses == UINT64_MAX ||
-            (write &&
-             s->memory_init_write_bytes > UINT64_MAX - size) ||
-            (!write &&
-             s->memory_init_read_bytes > UINT64_MAX - size)) {
-            mittens_sync_set_error(
-                MITTENS_SYNC_BRIDGE_ERROR_BAD_BUDGET,
-                "initialization memory counters overflowed");
-            return;
-        }
-        ++s->memory_init_accesses;
-        if (write) {
-            s->memory_init_write_bytes += size;
-        } else {
-            s->memory_init_read_bytes += size;
-        }
-        return;
-    }
     if ((!scratchpad && s->memory_access_batching) ||
         (scratchpad && s->scratchpad_access_batching) || vector_transaction) {
         MittensSyncMemoryAccess *access;
@@ -1288,7 +1368,7 @@ void helper_mittens_sync_memory_fence(void)
     MittensSyncDeviceState *s = mittens_sync_instance;
 
     if (s == NULL || s->bridge == NULL || s->terminal_event_published ||
-        (!s->memory_timing && !s->scratchpad_access_batching)) {
+        (!s->memory_timing && !s->scratchpad_access_batching && !s->program_timing)) {
         return;
     }
     mittens_sync_publish_event(
@@ -1312,10 +1392,12 @@ enum {
     MITTENS_DMA_MAX_JOBS = 8,
     MITTENS_DMA_COMMAND_SUBMIT = 1,
     MITTENS_DMA_COMMAND_WAIT = 2,
-    MITTENS_DMA_COMMAND_INITIALIZE_GLOBAL_RAM = 3,
     MITTENS_DMA_COMMAND_WAIT_BATCH = 4,
     MITTENS_DMA_COMMAND_MACRO_BEGIN = 5,
     MITTENS_DMA_COMMAND_MACRO_END = 6,
+    MITTENS_DMA_COMMAND_QUERY = 7,
+    MITTENS_DMA_COMMAND_ACK = 8,
+    MITTENS_DMA_COMMAND_WAIT_ANY = 9,
     MITTENS_DMA_STATUS_READY = 1U << 0,
     MITTENS_DMA_STATUS_COMPLETE = 1U << 1,
     MITTENS_DMA_STATUS_ERROR = 1U << 2,
@@ -1461,6 +1543,66 @@ static void mittens_sync_dma_command(
     uint32_t command)
 {
     MemTxResult result;
+
+    if (command == MITTENS_DMA_COMMAND_QUERY || command == MITTENS_DMA_COMMAND_ACK ||
+        command == MITTENS_DMA_COMMAND_WAIT_ANY) {
+        guint index = 0;
+        MittensScratchpadDMAJob *job = mittens_sync_find_dma_job(
+            s, s->dma_execution_id, s->dma_token_id, &index);
+        uint32_t status;
+        s->dma_error = 0;
+        if (job == NULL || s->global_dma_macro_active) {
+            s->dma_error = 3;
+            s->dma_status = MITTENS_DMA_STATUS_ERROR |
+                (s->dma_jobs == NULL || s->dma_jobs->len < MITTENS_DMA_MAX_JOBS ?
+                    MITTENS_DMA_STATUS_READY : 0);
+            return;
+        }
+        /* Publishing deferred submits is required for independent progress. */
+        (void)mittens_sync_flush_global_dma_batch(MITTENS_SYNC_EVENT_FLAG_NONE, true);
+        if (command == MITTENS_DMA_COMMAND_ACK && !job->completion_visible &&
+            !job->completion_failed) {
+            s->dma_error = 3;
+            s->dma_status = MITTENS_DMA_STATUS_ERROR |
+                (s->dma_jobs->len < MITTENS_DMA_MAX_JOBS ? MITTENS_DMA_STATUS_READY : 0);
+            return;
+        }
+        mittens_sync_yield_scratchpad_dma(s,
+            command == MITTENS_DMA_COMMAND_WAIT_ANY ? MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY :
+            command == MITTENS_DMA_COMMAND_QUERY ? MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY :
+                                                  MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK, job);
+        status = s->bridge->global_dma_request_flags;
+        if (status == 1 && command != MITTENS_DMA_COMMAND_ACK &&
+            !job->completion_visible && !job->completion_failed) {
+            if (job->request_flags & MITTENS_DMA_EXACT_EXECUTION_TEARDOWN) {
+                result = MEMTX_OK;
+            } else if (job->direction == 0) {
+                __atomic_thread_fence(__ATOMIC_ACQUIRE);
+                result = address_space_write(&address_space_memory,
+                    s->scratchpad_base + job->scratchpad_offset, MEMTXATTRS_UNSPECIFIED,
+                    s->global_ram + job->global_offset, job->byte_count);
+            } else if (!job->write_staged) {
+                result = address_space_read(&address_space_memory,
+                    s->scratchpad_base + job->scratchpad_offset, MEMTXATTRS_UNSPECIFIED,
+                    s->global_ram + job->global_offset, job->byte_count);
+                __atomic_thread_fence(__ATOMIC_RELEASE);
+            } else {
+                result = MEMTX_OK;
+            }
+            job->completion_visible = result == MEMTX_OK;
+            job->completion_failed = result != MEMTX_OK;
+        }
+        if (command != MITTENS_DMA_COMMAND_ACK && job->completion_failed)
+            status = 2;
+        if (command == MITTENS_DMA_COMMAND_ACK && status == 1)
+            g_ptr_array_remove_index(s->dma_jobs, index);
+        s->dma_error = status == 2 ? 4 : 0;
+        s->dma_status = (s->dma_jobs->len < MITTENS_DMA_MAX_JOBS ? MITTENS_DMA_STATUS_READY : 0) |
+            (s->dma_jobs->len ? MITTENS_DMA_STATUS_BUSY : 0) |
+            (status == 1 ? MITTENS_DMA_STATUS_COMPLETE : 0) |
+            (status == 2 ? MITTENS_DMA_STATUS_ERROR : 0);
+        return;
+    }
 
     if (command == MITTENS_DMA_COMMAND_MACRO_BEGIN) {
         const uint32_t count = s->dma_byte_count;
@@ -1693,7 +1835,11 @@ static void mittens_sync_dma_command(
             MittensScratchpadDMAJob *job = jobs[index];
             guint job_index = 0;
 
-            if ((job->request_flags &
+            if (job->completion_failed) {
+                result = MEMTX_ERROR;
+            } else if (job->completion_visible) {
+                result = MEMTX_OK;
+            } else if ((job->request_flags &
                  MITTENS_DMA_EXACT_EXECUTION_TEARDOWN) != 0) {
                 result = MEMTX_OK;
             } else if (job->direction == 0) {
@@ -1809,7 +1955,11 @@ static void mittens_sync_dma_command(
             MITTENS_SYNC_EVENT_FLAG_NONE, true);
         mittens_sync_yield_scratchpad_dma(
             s, MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT, job);
-        if ((job->request_flags &
+        if (job->completion_failed) {
+            result = MEMTX_ERROR;
+        } else if (job->completion_visible) {
+            result = MEMTX_OK;
+        } else if ((job->request_flags &
              MITTENS_DMA_EXACT_EXECUTION_TEARDOWN) != 0) {
             result = MEMTX_OK;
         } else if (job->direction == 0) {
@@ -1974,43 +2124,6 @@ static void mittens_sync_dma_command(
                         MITTENS_DMA_STATUS_COMPLETE;
         return;
     }
-    if (command == MITTENS_DMA_COMMAND_INITIALIZE_GLOBAL_RAM) {
-        /*
-         * Model input bytes are deployment state, not an inference-time DMA
-         * request. Populate the shared backing immediately and account the
-         * transfer in the existing aggregate initialization phase. Later
-         * global-RAM reads still use submit/wait and remain fully timed.
-         */
-        if (s->global_dma_macro_active ||
-            !s->memory_init_active || s->dma_direction != 1 ||
-            (s->dma_jobs != NULL && s->dma_jobs->len != 0) ||
-            !mittens_sync_dma_addresses_valid(s) ||
-            s->memory_init_accesses == UINT64_MAX ||
-            s->memory_init_write_bytes >
-                UINT64_MAX - s->dma_byte_count) {
-            s->dma_error = 6;
-            s->dma_status = MITTENS_DMA_STATUS_READY |
-                            MITTENS_DMA_STATUS_ERROR;
-            return;
-        }
-        result = address_space_read(
-            &address_space_memory,
-            s->scratchpad_base + s->dma_destination,
-            MEMTXATTRS_UNSPECIFIED,
-            s->global_ram + s->dma_source,
-            s->dma_byte_count);
-        if (result != MEMTX_OK) {
-            s->dma_error = 4;
-            s->dma_status = MITTENS_DMA_STATUS_READY |
-                            MITTENS_DMA_STATUS_ERROR;
-            return;
-        }
-        ++s->memory_init_accesses;
-        s->memory_init_write_bytes += s->dma_byte_count;
-        s->dma_status = MITTENS_DMA_STATUS_READY |
-                        MITTENS_DMA_STATUS_COMPLETE;
-        return;
-    }
     s->dma_error = 5;
     s->dma_status = MITTENS_DMA_STATUS_READY |
                     MITTENS_DMA_STATUS_ERROR;
@@ -2090,6 +2203,7 @@ static void mittens_sync_realize(DeviceState *device, Error **errp)
         return;
     }
     mittens_sync_instance = s;
+    s->program_timing = getenv("MITTENS_TIMING_DIRECTORY") != NULL;
 
     if (s->global_ram_fd >= 0) {
         if (s->global_ram_size == 0) {
@@ -2204,10 +2318,6 @@ static void mittens_sync_realize(DeviceState *device, Error **errp)
     s->global_dma_batch_count = 0;
     s->analog_batch = mittens_sync_analog_batch(s->bridge);
     s->analog_batch_count = 0;
-    s->memory_init_active =
-        s->memory_init_batching &&
-        (s->memory_timing ||
-         (s->scratchpad_enabled && s->global_ram != NULL));
 }
 
 static void mittens_sync_unrealize(DeviceState *device)
@@ -2273,11 +2383,6 @@ static Property mittens_sync_properties[] = {
         "instruction-fetch-timing",
         MittensSyncDeviceState,
         instruction_fetch_timing,
-        false),
-    DEFINE_PROP_BOOL(
-        "memory-init-batching",
-        MittensSyncDeviceState,
-        memory_init_batching,
         false),
     DEFINE_PROP_BOOL(
         "memory-access-batching",

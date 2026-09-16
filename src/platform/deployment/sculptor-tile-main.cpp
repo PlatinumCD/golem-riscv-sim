@@ -499,11 +499,16 @@ bool seedGlobalModelInputs(const TileABI &abi) {
   return golem::platform::forEachMaterializedModelInputTransfer(
       abi, [scratchpad](const Resource &resource, uint64_t global_offset,
                         uint32_t byte_count) {
-        return initializeResourceBuffer(resource, scratchpad, byte_count) &&
-               golem::platform::globalRAMInitialize(global_offset,
-                                                    kStagingOffset, byte_count);
+        if (!initializeResourceBuffer(resource, scratchpad, byte_count))
+          return false;
+        __asm__ volatile("fence iorw, iorw" ::: "memory");
+        return golem::platform::globalDMASubmit(
+                   global_offset, kStagingOffset, byte_count, 0, 0, 0,
+                   golem::platform::ScratchpadDMADirection::ScratchpadToGlobalRAM) &&
+               golem::platform::globalDMAWait(0, 0);
       });
 }
+
 
 #if defined(GOLEM_ENABLE_TASK_TRACE)
 void emitTaskTrace(void *, TaskTraceEvent event, uint32_t task_id,
@@ -702,6 +707,7 @@ extern "C" int tile_main() {
     printStartupProfile(abi.core_id, *initialization_profile);
   }
 #endif
+  // Guest-seeded inputs use timed DMA and retire before the boot epoch barrier.
   if (global_ram_dma && !seedGlobalModelInputs(abi)) {
     uart_puts("SCULPTOR_RA_SIM_ERROR seed global inputs\n");
     return 3;
@@ -739,7 +745,6 @@ extern "C" int tile_main() {
     uart_puts("SCULPTOR_RA_SIM_ERROR boot\n");
     return 7;
   }
-  mesh_nic::complete_memory_initialization();
 
   uart_puts("SCULPTOR_RA_INIT_PASS tile=");
   printUnsigned(abi.core_id);

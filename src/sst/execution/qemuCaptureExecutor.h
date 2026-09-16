@@ -24,10 +24,10 @@
 namespace SST {
 namespace Mittens {
 
-class QemuReadySetExecutionError : public std::runtime_error
+class QemuCaptureExecutionError : public std::runtime_error
 {
   public:
-    QemuReadySetExecutionError(
+    QemuCaptureExecutionError(
         std::uint32_t tileId,
         const std::string& message);
 
@@ -44,7 +44,7 @@ class QemuReadySetExecutionError : public std::runtime_error
  * capture callbacks only; validation, modeled-time calculation, ordering, and
  * commit are deliberately kept out of worker threads.
  */
-class QemuReadySetExecutor final
+class QemuCaptureExecutor final
 {
   public:
     using Capture = std::function<QemuSyncEvent()>;
@@ -73,19 +73,22 @@ class QemuReadySetExecutor final
         Commit commit;
     };
 
-    explicit QemuReadySetExecutor(std::size_t workerCount);
-    ~QemuReadySetExecutor();
+    explicit QemuCaptureExecutor(std::size_t workerCount);
+    ~QemuCaptureExecutor();
 
-    QemuReadySetExecutor(const QemuReadySetExecutor&) = delete;
-    QemuReadySetExecutor& operator=(
-        const QemuReadySetExecutor&) = delete;
-    QemuReadySetExecutor(QemuReadySetExecutor&&) = delete;
-    QemuReadySetExecutor& operator=(QemuReadySetExecutor&&) = delete;
+    QemuCaptureExecutor(const QemuCaptureExecutor&) = delete;
+    QemuCaptureExecutor& operator=(
+        const QemuCaptureExecutor&) = delete;
+    QemuCaptureExecutor(QemuCaptureExecutor&&) = delete;
+    QemuCaptureExecutor& operator=(QemuCaptureExecutor&&) = delete;
 
     void begin(
         std::uint64_t frontierTick,
         std::size_t expectedTasks);
     void submit(Task task);
+    // Publish exactly the declared batch into an empty begin() session.
+    // Failure leaves the session empty and reusable (or safe to discard).
+    void submitBatch(std::vector<Task> tasks);
     std::vector<Completion> collect();
     void discard();
 
@@ -108,6 +111,7 @@ class QemuReadySetExecutor final
     static std::string describeException(
         const std::exception_ptr& error);
     void workerLoop();
+    void validateTaskLocked(const Task& task) const;
     void clearBatchLocked();
 
     mutable std::mutex mutex_;
@@ -126,7 +130,7 @@ class QemuReadySetExecutor final
 };
 
 /*
- * Bounded host executor for causal QEMU lookahead. Unlike a ready set, each
+ * Bounded host executor for causal QEMU lookahead. Unlike a capture batch, each
  * capture has an independent modeled commit frontier, so submission returns a
  * future and never asks a worker to validate or commit simulator state.
  */

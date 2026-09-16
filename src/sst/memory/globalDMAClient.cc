@@ -16,6 +16,35 @@ CpuDeviceResult GlobalDMAClient::executeCpuGlobalDMA(const CpuGlobalDMAAction& a
     { result.delay = Timing::Cycles<Timing::Cpu>{cycles}; };
     switch (action.reason)
     {
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY:
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY:
+    case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK:
+    {
+        result.dmaCompletionStatus = 2;
+        auto execution = globalDMACompletions_.find(action.execution);
+        if (execution == globalDMACompletions_.end())
+            return finish(true);
+        auto token = execution->second.find(action.token);
+        if (token == execution->second.end())
+            return finish(true);
+        const bool ready = token->second.controllerComplete &&
+                           token->second.localCompletionTick <= host_.now().value;
+        result.dmaCompletionStatus = ready ? 1 : 0;
+        if (!ready && action.reason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY)
+        {
+            if (token->second.controllerComplete)
+                scheduleDelay(cpuDomain().ceil(Timing::Ticks{
+                    token->second.localCompletionTick - host_.now().value}).value);
+            return finish(false);
+        }
+        if (ready && action.reason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK)
+        {
+            execution->second.erase(token);
+            if (execution->second.empty())
+                globalDMACompletions_.erase(execution);
+        }
+        return finish(true);
+    }
     case MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT:
     {
         const std::uint32_t requestFlags = action.requestFlags;
@@ -260,6 +289,7 @@ void GlobalDMAClient::onCompletion(const GlobalDMAMessage& message)
     token->second.controllerComplete = true;
     if (host_.pending().has_value() &&
         (host_.pending()->stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT ||
+         host_.pending()->stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY ||
          host_.pending()->stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_BATCH))
     {
         host_.wake();

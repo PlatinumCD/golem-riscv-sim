@@ -34,7 +34,6 @@ extern "C" int tile_main() {
 
     // All execution after the first captured event is ordinary synchronized
     // QEMU work.
-    mesh_nic::complete_memory_initialization();
 
     volatile uint64_t checksum = 0;
     for (uint64_t iteration = 1; iteration <= 32768; ++iteration) {

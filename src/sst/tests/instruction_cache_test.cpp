@@ -1,4 +1,5 @@
 #include "../memory/instructionCache.h"
+#include "mittens/FetchSegment.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,15 @@ void require(bool condition, const char* message)
 
 int main()
 {
+    for (const auto word : {0x00128293u, 0x000002b7u, 0x00000297u,
+                           0x005303b3u, 0x405303b3u, 0x0012829bu})
+        require(mittens_fetch_segment_instruction(word), "safe integer instruction rejected");
+    for (const auto word : {0x00000001u, 0x00002283u, 0x00502023u,
+                           0x0000006fu, 0x00000063u, 0x00000073u,
+                           0x0000100fu, 0x025303b3u, 0x005303d3u,
+                           0x00000457u, 0x00006407u, 0x02000033u,
+                           0x04001013u, 0x0200101bu, 0x0000203bu})
+        require(!mittens_fetch_segment_instruction(word), "unsafe instruction accepted");
     ScratchpadTimingModel timing({4096, 2, 1, 1, 32, 1, 8, 32});
     InstructionCache cache(0x1000, {}, timing);
     const auto first = cache.fetch(0x1000, 4, 0);
@@ -35,6 +45,15 @@ int main()
     const auto second = cache.fetch(0x1004, 4, first.readyCycle);
     require(!first.hit && first.fillBytes == 64 && second.hit,
             "cold miss or post-ready hit result was incorrect");
+    const auto beforeProbe = cache.statistics();
+    require(cache.resident(0x1000, 4) && !cache.resident(0x103e, 4) &&
+            !cache.resident(0x1001, 4) && !cache.resident(0x2000, 4),
+            "residency probe accepted a missing or invalid instruction");
+    require(cache.statistics().fetches == beforeProbe.fetches &&
+            cache.statistics().misses == beforeProbe.misses &&
+            cache.statistics().hits == beforeProbe.hits &&
+            cache.statistics().fillBytes == beforeProbe.fillBytes,
+            "residency probe changed cache accounting");
     require(timing.statistics().dmaTransfers == 0 && timing.statistics().readRequests != 0,
             "instruction fill changed DMA counters or made no read request");
     const auto hit = cache.fetch(0x1008, 4, second.readyCycle);

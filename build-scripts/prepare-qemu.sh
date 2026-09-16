@@ -66,6 +66,8 @@ install -D -m 0644 "${ANALOG_BRIDGE_HEADER}" \
     "${SOURCE}/include/mittens/AnalogTileBridge.h"
 install -D -m 0644 "${SYNC_BRIDGE_HEADER}" \
     "${SOURCE}/include/mittens/SyncTileBridge.h"
+install -D -m 0644 "${HARDWARE_ROOT}/bridge/include/mittens/FetchSegment.h" \
+    "${SOURCE}/include/mittens/FetchSegment.h"
 if [[ "${HARDWARE_TREE}" == src ]]; then
     install -D -m 0644 "${HARDWARE_ROOT}/bridge/include/mittens/MemoryMap.h" \
         "${SOURCE}/include/mittens/MemoryMap.h"
@@ -131,6 +133,9 @@ apply_qemu_patch_once \
 apply_qemu_patch_once \
     "${PATCH_DIR}/0021-instruction-local-vector-transactions.patch" \
     "gen_helper_mittens_sync_vector_memory_end();"
+apply_qemu_patch_once \
+    "${PATCH_DIR}/0022-cache-hit-register-segments.patch" \
+    "tcg_constant_i32(instruction_length == 4"
 
 git -C "${SOURCE}" diff --check
 echo "prepared QEMU source: ${SOURCE}"

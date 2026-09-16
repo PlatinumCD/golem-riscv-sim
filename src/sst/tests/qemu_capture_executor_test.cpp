@@ -1,4 +1,4 @@
-#include "../execution/qemuReadySetExecutor.h"
+#include "../execution/qemuCaptureExecutor.h"
 
 #include <algorithm>
 #include <atomic>
@@ -24,8 +24,8 @@
 
 namespace {
 
-using SST::Mittens::QemuReadySetExecutionError;
-using SST::Mittens::QemuReadySetExecutor;
+using SST::Mittens::QemuCaptureExecutionError;
+using SST::Mittens::QemuCaptureExecutor;
 using SST::Mittens::QemuAsyncCaptureExecutor;
 using SST::Mittens::QemuSyncEvent;
 using SST::Mittens::SharedSyncMemoryBridge;
@@ -85,17 +85,18 @@ struct TaskSpec {
     std::chrono::milliseconds hostDelay;
 };
 
-std::vector<QemuReadySetExecutor::Completion> runBatch(
+std::vector<QemuCaptureExecutor::Completion> runBatch(
     std::size_t workers,
     const std::vector<TaskSpec>& specs,
     std::vector<std::uint32_t>* commits)
 {
     constexpr std::uint64_t frontier = 1000;
     const std::thread::id owner = std::this_thread::get_id();
-    QemuReadySetExecutor executor(workers);
+    QemuCaptureExecutor executor(workers);
     executor.begin(frontier, specs.size());
+    std::vector<QemuCaptureExecutor::Task> tasks;
     for (const TaskSpec& spec : specs) {
-        executor.submit({
+        tasks.push_back({
             frontier,
             spec.tile,
             1,
@@ -122,6 +123,12 @@ std::vector<QemuReadySetExecutor::Completion> runBatch(
                 commits->push_back(tile);
             },
         });
+    }
+    if (workers == 1) {
+        for (auto& task : tasks)
+            executor.submit(std::move(task));
+    } else {
+        executor.submitBatch(std::move(tasks));
     }
 
     auto completions = executor.collect();
@@ -206,7 +213,7 @@ void testMultiWorkerConcurrency()
         bool release = false;
     } gate;
 
-    QemuReadySetExecutor executor(2);
+    QemuCaptureExecutor executor(2);
     executor.begin(0, 6);
     for (std::uint32_t tile = 0; tile < 6; ++tile) {
         executor.submit({
@@ -246,7 +253,7 @@ void testMultiWorkerConcurrency()
 
 void testRepeatedDeterministicOrdering()
 {
-    QemuReadySetExecutor executor(4);
+    QemuCaptureExecutor executor(4);
     std::vector<std::tuple<std::uint64_t, std::uint32_t,
                            std::uint64_t, std::uint64_t>> reference;
 
@@ -292,7 +299,7 @@ void testRepeatedDeterministicOrdering()
 
 void testFailClosedAndRecover()
 {
-    QemuReadySetExecutor executor(3);
+    QemuCaptureExecutor executor(3);
     std::vector<std::uint32_t> commits;
     executor.begin(10, 3);
     for (const std::uint32_t tile : {9U, 2U, 5U}) {
@@ -319,7 +326,7 @@ void testFailClosedAndRecover()
     try {
         const auto ignored = executor.collect();
         (void)ignored;
-    } catch (const QemuReadySetExecutionError& error) {
+    } catch (const QemuCaptureExecutionError& error) {
         failed = true;
         require(error.tileId() == 2,
                 "capture errors were not reported deterministically");
@@ -350,7 +357,7 @@ void testFailClosedAndRecover()
 
 void testAmbiguityRejection()
 {
-    QemuReadySetExecutor executor(1);
+    QemuCaptureExecutor executor(1);
     executor.begin(100, 1);
     bool failed = false;
     try {
@@ -363,7 +370,7 @@ void testAmbiguityRejection()
             [](const QemuSyncEvent&) { return UINT64_C(102); },
             [](const QemuSyncEvent&) {},
         });
-    } catch (const QemuReadySetExecutionError&) {
+    } catch (const QemuCaptureExecutionError&) {
         failed = true;
     }
     require(failed, "mixed modeled-time frontiers were accepted");
@@ -386,7 +393,7 @@ void testAmbiguityRejection()
 
 void testValidationFailureDoesNotCommit()
 {
-    QemuReadySetExecutor executor(2);
+    QemuCaptureExecutor executor(2);
     std::vector<std::uint32_t> commits;
     executor.begin(50, 2);
     for (std::uint32_t tile = 0; tile < 2; ++tile) {
@@ -412,7 +419,7 @@ void testValidationFailureDoesNotCommit()
     try {
         const auto ignored = executor.collect();
         (void)ignored;
-    } catch (const QemuReadySetExecutionError& error) {
+    } catch (const QemuCaptureExecutionError& error) {
         failed = true;
         require(error.tileId() == 1,
                 "validation error identified the wrong tile");
@@ -498,7 +505,7 @@ void testRealBridgeCaptureOnWorkers()
     }
 
     std::vector<std::uint32_t> commits;
-    QemuReadySetExecutor executor(2);
+    QemuCaptureExecutor executor(2);
     executor.begin(500, tileCount);
     for (std::uint32_t tile = 0; tile < tileCount; ++tile) {
         executor.submit({
@@ -607,7 +614,7 @@ void testAsyncCaptureExecutor()
 
 void testOwnerThreadEnforcement()
 {
-    QemuReadySetExecutor executor(1);
+    QemuCaptureExecutor executor(1);
     executor.begin(0, 1);
     std::atomic<bool> rejected{false};
     std::thread intruder([&]() {
@@ -632,7 +639,7 @@ void testOwnerThreadEnforcement()
 
 void testDiscardDrainsInFlightCapture()
 {
-    QemuReadySetExecutor executor(2);
+    QemuCaptureExecutor executor(2);
     std::atomic<bool> captureFinished{false};
     std::atomic<bool> committed{false};
     executor.begin(0, 2);
@@ -658,12 +665,166 @@ void testDiscardDrainsInFlightCapture()
     require(!executor.active(), "discard left the drained batch active");
 }
 
+// The first capture cannot finish until the second one has run. This proves
+// independent capture progress without relying on a noisy wall-time speedup.
+void testSlowCaptureDoesNotBlockReadyPeer()
+{
+    QemuCaptureExecutor executor(2);
+    executor.begin(100, 2);
+    std::promise<void> fastDone;
+    auto ready = fastDone.get_future();
+    std::vector<unsigned> committed;
+    std::vector<QemuCaptureExecutor::Task> tasks;
+    for (unsigned tile = 0; tile < 2; ++tile) {
+        tasks.push_back({100, tile, 1,
+            [tile, &ready, &fastDone]() {
+                if (tile == 0)
+                    require(ready.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+                            "slow capture prevented the ready peer from running");
+                else
+                    fastDone.set_value();
+                return makeEvent(1, 1, 0);
+            },
+            [](const auto&) {}, [](const auto&) { return UINT64_C(100); },
+            [tile, &committed](const auto&) { committed.push_back(tile); }});
+    }
+    executor.submitBatch(std::move(tasks));
+    auto completions = executor.collect();
+    require(committed.empty(), "worker committed simulated state");
+    for (const auto& completion : completions)
+        completion.commit(completion.event);
+    require(committed == std::vector<unsigned>({0, 1}),
+            "host completion order changed the modeled tie order");
+}
+
+QemuCaptureExecutor::Task batchTask(std::uint32_t tile, std::atomic<unsigned>& captures)
+{
+    return {100, tile, 1,
+        [tile, &captures]() {
+            ++captures;
+            auto event = makeEvent(1, tile + 1, 4);
+            event.memoryBatch.resize(1);
+            return event;
+        },
+        [](const QemuSyncEvent& event) {
+            require(event.memoryBatch.size() == 1, "validation lost captured payload");
+        },
+        [](const QemuSyncEvent&) { return UINT64_C(101); },
+        [](const QemuSyncEvent&) {}};
+}
+
+void testAtomicBatchRejectionAndReuse()
+{
+    std::atomic<unsigned> captures{0};
+    QemuCaptureExecutor executor(2);
+    for (unsigned invalid = 0; invalid < 8; ++invalid) {
+        executor.begin(100, 2);
+        std::vector<QemuCaptureExecutor::Task> tasks;
+        tasks.push_back(batchTask(0, captures));
+        tasks.push_back(batchTask(1, captures));
+        switch (invalid) {
+        case 0: tasks[1].frontierTick = 101; break;
+        case 1: tasks[1].tileId = 0; break;
+        case 2: tasks[1].grantEpoch = 0; break;
+        case 3: tasks[1].capture = {}; break;
+        case 4: tasks[1].validate = {}; break;
+        case 5: tasks[1].modeledDeliveryTick = {}; break;
+        case 6: tasks[1].commit = {}; break;
+        case 7: tasks.pop_back(); break;
+        }
+        bool rejected = false;
+        try {
+            executor.submitBatch(std::move(tasks));
+        } catch (const std::logic_error&) {
+            rejected = true;
+        } catch (const QemuCaptureExecutionError&) {
+            rejected = true;
+        }
+        require(rejected, "invalid atomic batch was accepted");
+        require(executor.submittedTaskCount() == 0, "invalid batch published a prefix");
+        executor.discard();
+        require(captures.load() == 0, "rejected batch ran hidden capture work");
+    }
+    executor.begin(100, 2);
+    executor.submitBatch({batchTask(3, captures), batchTask(2, captures)});
+    auto completed = executor.collect();
+    require(captures.load() == 2 && completed.size() == 2,
+            "executor did not recover after atomic rejection");
+    require(completed[0].tileId == 3 && completed[1].tileId == 2,
+            "atomic batch lost submission tie order");
+    require(completed[0].event.memoryBatch.size() == 1 &&
+            completed[1].event.memoryBatch.size() == 1,
+            "successful batch lost moved payloads");
+}
+
+void testBatchFailureDiagnosticsAndReuse()
+{
+    std::atomic<unsigned> captures{0};
+    QemuCaptureExecutor executor(2);
+    for (const bool captureFailure : {true, false}) {
+        executor.begin(100, 2);
+        auto first = batchTask(0, captures);
+        auto second = batchTask(1, captures);
+        if (captureFailure)
+            second.capture = []() -> QemuSyncEvent { throw std::runtime_error("capture failure"); };
+        else
+            second.validate = [](const QemuSyncEvent&) { throw std::runtime_error("validation failure"); };
+        executor.submitBatch({std::move(first), std::move(second)});
+        bool failed = false;
+        try {
+            (void)executor.collect();
+        } catch (const QemuCaptureExecutionError& error) {
+            failed = true;
+            require(error.tileId() == 1, "batch failure selected wrong tile");
+            if (!captureFailure)
+                require(std::string(error.what()).find("captured_batched_events=2") != std::string::npos,
+                        "earlier payload was moved before later validation failed");
+        }
+        require(failed && !executor.active(), "failed batch retained active work");
+    }
+    executor.begin(100, 1);
+    executor.submitBatch({batchTask(0, captures)});
+    require(executor.collect().size() == 1, "failed batch prevented executor reuse");
+}
+
+void testBatchRejectedAfterPartialSubmission()
+{
+    std::atomic<unsigned> captures{0};
+    QemuCaptureExecutor executor(2);
+    executor.begin(100, 3);
+    auto first = batchTask(0, captures);
+    auto capture = std::move(first.capture);
+    first.capture = [capture = std::move(capture)]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        return capture();
+    };
+    executor.submit(std::move(first));
+    bool rejected = false;
+    try {
+        executor.submitBatch({batchTask(1, captures), batchTask(2, captures)});
+    } catch (const std::logic_error&) {
+        rejected = true;
+    }
+    require(rejected && executor.submittedTaskCount() == 1,
+            "atomic batch altered an existing partial submission");
+    executor.discard();
+    require(captures.load() == 1 && !executor.active(),
+            "partial discard missed a wake or ran rejected tasks");
+    executor.begin(100, 1);
+    executor.submitBatch({batchTask(0, captures)});
+    require(executor.collect().size() == 1, "partial discard prevented reuse");
+}
+
 } // namespace
 
 int main()
 {
     try {
         testOneWorkerIdentity();
+        testAtomicBatchRejectionAndReuse();
+        testBatchFailureDiagnosticsAndReuse();
+        testBatchRejectedAfterPartialSubmission();
+        testSlowCaptureDoesNotBlockReadyPeer();
         testSerialTieOrderPreserved();
         testMultiWorkerConcurrency();
         testRepeatedDeterministicOrdering();
@@ -675,11 +836,11 @@ int main()
         testOwnerThreadEnforcement();
         testDiscardDrainsInFlightCapture();
     } catch (const std::exception& error) {
-        std::cerr << "qemu ready-set executor test failed: "
+        std::cerr << "qemu capture executor test failed: "
                   << error.what() << '\n';
         return EXIT_FAILURE;
     }
 
-    std::cout << "qemu ready-set executor test passed\n";
+    std::cout << "qemu capture executor test passed\n";
     return EXIT_SUCCESS;
 }

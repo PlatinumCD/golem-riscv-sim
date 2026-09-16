@@ -17,7 +17,7 @@ readonly RECEIVE_DMA_ENGINE_TEST="${HOST_TEST_DIR}/receive-dma-engine-test"
 readonly SCRATCHPAD_TIMING_MODEL_TEST="${HOST_TEST_DIR}/scratchpad-timing-model-test"
 readonly PERFORMANCE_PROFILE_TEST="${HOST_TEST_DIR}/performance-profile-test"
 readonly SYNC_BRIDGE_TEST="${HOST_TEST_DIR}/sync-bridge-test"
-readonly QEMU_READY_SET_EXECUTOR_TEST="${HOST_TEST_DIR}/qemu-ready-set-executor-test"
+readonly QEMU_CAPTURE_EXECUTOR_TEST="${HOST_TEST_DIR}/qemu-capture-executor-test"
 readonly MEMORY_ACCESS_COALESCER_TEST="${HOST_TEST_DIR}/memory-access-coalescer-test"
 readonly GLOBAL_RAM_READINESS_TEST="${HOST_TEST_DIR}/global-ram-readiness-test"
 readonly CROSSSIM_TEST="${HOST_TEST_DIR}/crosssim-backend-test"
@@ -174,10 +174,10 @@ mkdir -p -- "${HOST_TEST_DIR}"
     -I"${PROJECT_ROOT}/src/bridge/include" \
     -I"${PROJECT_ROOT}/src/sst" -I"${PROJECT_ROOT}/src/bridge/include" \
     "${PROJECT_ROOT}/src/sst/bridge/sharedSyncMemoryBridge.cc" \
-    "${PROJECT_ROOT}/src/sst/execution/qemuReadySetExecutor.cc" \
-    "${TEST_DIR}/qemu_ready_set_executor_test.cpp" \
-    -o "${QEMU_READY_SET_EXECUTOR_TEST}"
-"${QEMU_READY_SET_EXECUTOR_TEST}"
+    "${PROJECT_ROOT}/src/sst/execution/qemuCaptureExecutor.cc" \
+    "${TEST_DIR}/qemu_capture_executor_test.cpp" \
+    -o "${QEMU_CAPTURE_EXECUTOR_TEST}"
+"${QEMU_CAPTURE_EXECUTOR_TEST}"
 
 "${HOST_CXX}" \
     -std=c++17 \

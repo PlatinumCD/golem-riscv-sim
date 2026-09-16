@@ -18,7 +18,7 @@
 #include "../memory/memoryAccessController.h"
 #include "../memory/globalDMAClient.h"
 #include "../memory/scratchpadBootImage.h"
-#include "../synchronization/initializationBarrierClient.h"
+#include "../synchronization/epochBarrierClient.h"
 #include "../execution/uniqueFileDescriptor.h"
 #include "../configuration/tileConfiguration.h"
 #include "../memory/addressRegion.h"
@@ -26,7 +26,6 @@
 #include "../execution/cpuExecutionController.h"
 #include <mittens/MemoryMap.h>
 #include "../synchronization/epochBarrierEvent.h"
-#include "../synchronization/memoryInitializationBarrierEvent.h"
 #include "../network/packetEvent.h"
 #include "../profiling/performanceProfile.h"
 #include "../profiling/taskTrace.h"
@@ -59,9 +58,6 @@ class Tile : public SST::Component
     SST_ELI_DOCUMENT_PORTS({"globalDMA",
                             "Bidirectional global RAM DMA controller link",
                             {"mittens.GlobalDMAEvent"}},
-                           {"memoryInitBarrier",
-                            "Bidirectional modeled memory-initialization barrier link",
-                            {"mittens.MemoryInitializationBarrierEvent"}},
                            {"epochBarrier",
                             "Bidirectional modeled deployment epoch barrier link",
                             {"mittens.EpochBarrierEvent"}})
@@ -113,13 +109,12 @@ class Tile : public SST::Component
 
     bool managedLaunch() const;
     void handleCpuSyncEvent(SST::Event* event);
-    void handleRuntimeQemuReadySetDispatch(SST::Event* event);
+    void handleCaptureWorkerDispatch(SST::Event* event);
     void handleReceiveDMAEvent(SST::Event* event);
     void handleTransmitDMAEvent(SST::Event* event);
     void handleGlobalDMAEvent(SST::Event* event);
     void submitBootSegment();
     bool advanceScratchpadBoot();
-    void handleMemoryInitializationBarrierEvent(SST::Event* event);
     void handleEpochBarrierEvent(SST::Event* event);
     void handleNetworkCompletionEvent(SST::Event* event);
     void handleAnalogWakeEvent(SST::Event* event);
@@ -172,7 +167,7 @@ class Tile : public SST::Component
     SST::TimeConverter analogClockTimeBase_;
     SST::Link* analogWakeLink_ = nullptr;
     SST::Link* cpuSyncLink_ = nullptr;
-    SST::Link* runtimeQemuReadySetLink_ = nullptr;
+    SST::Link* captureWorkerLink_ = nullptr;
     SST::TimeConverter cpuClockTimeBase_;
     SST::TimeConverter networkClockTimeBase_;
     SST::Link* networkCompletionLink_ = nullptr;
@@ -180,7 +175,6 @@ class Tile : public SST::Component
     SST::Link* transmitDMALink_ = nullptr;
     std::vector<SST::Link*> transmitDMAStreamLinks_;
     SST::Link* globalDMALink_ = nullptr;
-    SST::Link* memoryInitializationBarrierLink_ = nullptr;
     SST::Link* epochBarrierLink_ = nullptr;
     UniqueFileDescriptor globalRAMFileDescriptor_;
     // QEMU has the functional image, but receives no execution grant until
@@ -192,12 +186,11 @@ class Tile : public SST::Component
     bool bootReadPending_ = false;
     std::unique_ptr<AnalogController> analog_;
     std::unique_ptr<GlobalDMAClient> globalDMA_;
-    std::unique_ptr<InitializationBarrierClient> barriers_;
+    std::unique_ptr<EpochBarrierClient> barriers_;
     std::chrono::steady_clock::time_point lastProgressWallTime_{};
     std::chrono::steady_clock::time_point lastRetirementWallTime_{};
     std::chrono::steady_clock::time_point lastProgressSnapshotWallTime_{};
     std::uint64_t observedDeploymentProgressEpoch_ = 0;
-    std::uint64_t observedMemoryInitializationExecutionProgressEpoch_ = 0;
     bool progressWatchdogInitialized_ = false;
     bool progressWatchdogReported_ = false;
     bool primaryEndSignaled_ = false;

@@ -6,46 +6,37 @@
 #include <system_error>
 namespace SST::Mittens
 {
-struct InitialQemuReadySetCoordinator
+struct CaptureWorkerCoordinator
 {
     std::mutex mutex;
     std::uint32_t workerCount = 0;
-    std::uint32_t expectedTiles = 0;
-    std::string independenceProof;
-    std::unordered_set<std::uint32_t> registeredTiles;
-    std::unique_ptr<QemuReadySetExecutor> executor;
-    std::optional<std::thread::id> ownerThread;
-    bool started = false;
-    bool completed = false;
-};
-
-struct InitialQemuReadySetRegistry
-{
-    std::mutex mutex;
-    std::uint32_t workerBudget = 0;
-    std::uint32_t expectedTiles = 0;
-    std::string independenceProof;
-    std::unordered_set<std::uint32_t> registeredTiles;
-    std::unordered_map<std::uint64_t, std::unique_ptr<InitialQemuReadySetCoordinator>> partitions;
-};
-
-struct RuntimeQemuReadySetCoordinator
-{
-    std::mutex mutex;
-    std::uint32_t workerCount = 0;
-    std::uint32_t expectedTiles = 0;
-    std::string independenceProof;
     std::unordered_set<std::uint32_t> registeredTiles;
     std::unordered_set<std::uint32_t> pendingTiles;
-    std::vector<QemuReadySetExecutor::Task> pendingTasks;
-    std::unique_ptr<QemuReadySetExecutor> executor;
+    std::vector<QemuCaptureExecutor::Task> pendingTasks;
+    std::unique_ptr<QemuCaptureExecutor> executor;
     std::optional<std::thread::id> ownerThread;
     std::optional<std::uint64_t> frontierTick;
     std::uint64_t dispatchCount = 0;
     std::uint64_t capturedTaskCount = 0;
     std::uint64_t parallelDispatchCount = 0;
     std::size_t maximumBatchSize = 0;
+    std::uint64_t hostDispatchNanoseconds = 0;
+    std::uint64_t hostSubmitNanoseconds = 0;
+    std::uint64_t hostCollectNanoseconds = 0;
 };
+
+namespace {
+class HostElapsed final {
+    std::uint64_t& total_;
+    const std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
+  public:
+    explicit HostElapsed(std::uint64_t& total) : total_(total) {}
+    ~HostElapsed() {
+        total_ += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - start_).count();
+    }
+};
+}
 
 QemuCaptureHostStatistics& QemuCaptureCoordinator::qemuCaptureHostStatistics()
 {
@@ -187,19 +178,19 @@ LocalQemuLookaheadStatistics QemuCaptureCoordinator::localQemuLookaheadStatistic
     return statistics;
 }
 
-RuntimeQemuReadySetCoordinator& runtimeQemuReadySetCoordinator()
+CaptureWorkerCoordinator& captureWorkerCoordinator()
 {
-    static RuntimeQemuReadySetCoordinator coordinator;
+    static CaptureWorkerCoordinator coordinator;
     return coordinator;
 }
 
-RuntimeQemuReadySetStatistics QemuCaptureCoordinator::runtimeQemuReadySetStatistics()
+CaptureWorkerStatistics QemuCaptureCoordinator::captureWorkerStatistics()
 {
-    RuntimeQemuReadySetCoordinator& coordinator = runtimeQemuReadySetCoordinator();
+    CaptureWorkerCoordinator& coordinator = captureWorkerCoordinator();
     const std::lock_guard<std::mutex> lock(coordinator.mutex);
     if (coordinator.registeredTiles.empty())
     {
-        throw std::logic_error("runtime QEMU ready-set statistics have no registered tiles");
+        throw std::logic_error("parallel QEMU capture statistics have no registered tiles");
     }
     return {
         *std::min_element(coordinator.registeredTiles.begin(), coordinator.registeredTiles.end()),
@@ -207,47 +198,43 @@ RuntimeQemuReadySetStatistics QemuCaptureCoordinator::runtimeQemuReadySetStatist
         coordinator.capturedTaskCount,
         coordinator.parallelDispatchCount,
         coordinator.maximumBatchSize,
+        coordinator.hostDispatchNanoseconds,
+        coordinator.hostSubmitNanoseconds,
+        coordinator.hostCollectNanoseconds,
     };
 }
 
-void QemuCaptureCoordinator::registerRuntimeQemuReadySetTile(std::uint32_t tileId,
-                                                             std::uint32_t workerCount,
-                                                             std::uint32_t expectedTiles,
-                                                             const std::string& independenceProof)
+void QemuCaptureCoordinator::registerCaptureWorkerTile(std::uint32_t tileId,
+                                                       std::uint32_t workerCount)
 {
-    RuntimeQemuReadySetCoordinator& coordinator = runtimeQemuReadySetCoordinator();
+    CaptureWorkerCoordinator& coordinator = captureWorkerCoordinator();
     const std::lock_guard<std::mutex> lock(coordinator.mutex);
     if (!coordinator.pendingTasks.empty())
     {
-        throw std::logic_error("runtime QEMU ready-set registration began after execution");
+        throw std::logic_error("parallel QEMU capture registration began after execution");
     }
     if (coordinator.registeredTiles.empty())
     {
         coordinator.workerCount = workerCount;
-        coordinator.expectedTiles = expectedTiles;
-        coordinator.independenceProof = independenceProof;
     }
-    else if (coordinator.workerCount != workerCount || coordinator.expectedTiles != expectedTiles ||
-             coordinator.independenceProof != independenceProof)
+    else if (coordinator.workerCount != workerCount)
     {
-        throw std::logic_error("runtime QEMU ready-set configuration differs across tiles");
+        throw std::logic_error("parallel QEMU capture configuration differs across tiles");
     }
-    if (!coordinator.registeredTiles.insert(tileId).second ||
-        coordinator.registeredTiles.size() > expectedTiles)
+    if (!coordinator.registeredTiles.insert(tileId).second)
     {
-        throw std::logic_error("invalid tile registration in runtime QEMU ready set");
+        throw std::logic_error("invalid tile registration in parallel QEMU capture");
     }
 }
 
-void QemuCaptureCoordinator::enqueueRuntimeQemuReadySetTask(QemuReadySetExecutor::Task task)
+bool QemuCaptureCoordinator::enqueueCaptureWorkerTask(QemuCaptureExecutor::Task task)
 {
-    RuntimeQemuReadySetCoordinator& coordinator = runtimeQemuReadySetCoordinator();
+    CaptureWorkerCoordinator& coordinator = captureWorkerCoordinator();
     const std::lock_guard<std::mutex> lock(coordinator.mutex);
     const std::thread::id caller = std::this_thread::get_id();
-    if (coordinator.registeredTiles.size() != coordinator.expectedTiles ||
-        coordinator.registeredTiles.count(task.tileId) == 0)
+    if (coordinator.registeredTiles.count(task.tileId) == 0)
     {
-        throw std::logic_error("runtime QEMU ready set is incomplete or unregistered");
+        throw std::logic_error("parallel QEMU capture is incomplete or unregistered");
     }
     if (!coordinator.ownerThread.has_value())
     {
@@ -255,7 +242,7 @@ void QemuCaptureCoordinator::enqueueRuntimeQemuReadySetTask(QemuReadySetExecutor
     }
     else if (*coordinator.ownerThread != caller)
     {
-        throw std::logic_error("runtime QEMU ready set crossed SST event threads");
+        throw std::logic_error("parallel QEMU capture crossed SST event threads");
     }
     if (!coordinator.frontierTick.has_value())
     {
@@ -263,20 +250,22 @@ void QemuCaptureCoordinator::enqueueRuntimeQemuReadySetTask(QemuReadySetExecutor
     }
     else if (*coordinator.frontierTick != task.frontierTick)
     {
-        throw std::logic_error("runtime QEMU ready set retained an earlier frontier");
+        throw std::logic_error("parallel QEMU capture retained an earlier frontier");
     }
     if (!coordinator.pendingTiles.insert(task.tileId).second)
     {
-        throw std::logic_error("tile entered one runtime QEMU ready set twice");
+        throw std::logic_error("tile entered one parallel QEMU capture twice");
     }
+    const bool needsDispatch = coordinator.pendingTasks.empty();
     coordinator.pendingTasks.push_back(std::move(task));
+    return needsDispatch;
 }
 
-std::vector<QemuReadySetExecutor::Completion>
-QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(std::uint64_t frontierTick)
+std::vector<QemuCaptureExecutor::Completion>
+QemuCaptureCoordinator::dispatchCaptureWorker(std::uint64_t frontierTick)
 {
-    RuntimeQemuReadySetCoordinator& coordinator = runtimeQemuReadySetCoordinator();
-    std::vector<QemuReadySetExecutor::Task> tasks;
+    CaptureWorkerCoordinator& coordinator = captureWorkerCoordinator();
+    std::vector<QemuCaptureExecutor::Task> tasks;
     {
         const std::lock_guard<std::mutex> lock(coordinator.mutex);
         if (coordinator.pendingTasks.empty())
@@ -288,7 +277,7 @@ QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(std::uint64_t frontierTick)
             *coordinator.ownerThread != std::this_thread::get_id())
         {
             throw std::logic_error(
-                "runtime QEMU ready-set dispatch has an invalid frontier or owner");
+                "parallel QEMU capture dispatch has an invalid frontier or owner");
         }
         tasks = std::move(coordinator.pendingTasks);
         coordinator.pendingTasks.clear();
@@ -303,27 +292,28 @@ QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(std::uint64_t frontierTick)
         coordinator.maximumBatchSize = std::max(coordinator.maximumBatchSize, tasks.size());
     }
 
+    const HostElapsed dispatchTime(coordinator.hostDispatchNanoseconds);
     if (tasks.size() == 1)
     {
-        QemuReadySetExecutor::Task& task = tasks.front();
+        QemuCaptureExecutor::Task& task = tasks.front();
         QemuSyncEvent event = task.capture();
         if (event.grantEpoch != task.grantEpoch)
         {
-            throw QemuReadySetExecutionError(task.tileId,
+            throw QemuCaptureExecutionError(task.tileId,
                                              "event grant epoch does not match the runtime task");
         }
         if (event.eventSequence == 0)
         {
-            throw QemuReadySetExecutionError(task.tileId, "event sequence must be nonzero");
+            throw QemuCaptureExecutionError(task.tileId, "event sequence must be nonzero");
         }
         task.validate(event);
         const std::uint64_t delivery = task.modeledDeliveryTick(event);
         if (delivery < frontierTick)
         {
-            throw QemuReadySetExecutionError(task.tileId,
+            throw QemuCaptureExecutionError(task.tileId,
                                              "modeled delivery tick precedes the runtime frontier");
         }
-        std::vector<QemuReadySetExecutor::Completion> result;
+        std::vector<QemuCaptureExecutor::Completion> result;
         result.push_back({
             delivery,
             0,
@@ -338,15 +328,16 @@ QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(std::uint64_t frontierTick)
 
     if (coordinator.executor == nullptr)
     {
-        coordinator.executor = std::make_unique<QemuReadySetExecutor>(coordinator.workerCount);
+        coordinator.executor = std::make_unique<QemuCaptureExecutor>(coordinator.workerCount);
     }
-    coordinator.executor->begin(frontierTick, tasks.size());
     try
     {
-        for (QemuReadySetExecutor::Task& task : tasks)
         {
-            coordinator.executor->submit(std::move(task));
+            const HostElapsed submitTime(coordinator.hostSubmitNanoseconds);
+            coordinator.executor->begin(frontierTick, tasks.size());
+            coordinator.executor->submitBatch(std::move(tasks));
         }
+        const HostElapsed collectTime(coordinator.hostCollectNanoseconds);
         return coordinator.executor->collect();
     }
     catch (...)
@@ -357,153 +348,6 @@ QemuCaptureCoordinator::dispatchRuntimeQemuReadySet(std::uint64_t frontierTick)
         }
         throw;
     }
-}
-
-InitialQemuReadySetRegistry& initialQemuReadySetRegistry()
-{
-    static InitialQemuReadySetRegistry registry;
-    return registry;
-}
-
-void QemuCaptureCoordinator::registerInitialQemuReadySetTile(std::uint64_t partitionKey,
-                                                             std::uint32_t tileId,
-                                                             std::uint32_t workerBudget,
-                                                             std::uint32_t partitionWorkerCount,
-                                                             std::uint32_t expectedTiles,
-                                                             const std::string& independenceProof)
-{
-    InitialQemuReadySetRegistry& registry = initialQemuReadySetRegistry();
-    const std::lock_guard<std::mutex> registryLock(registry.mutex);
-    if (registry.registeredTiles.empty())
-    {
-        registry.workerBudget = workerBudget;
-        registry.expectedTiles = expectedTiles;
-        registry.independenceProof = independenceProof;
-    }
-    else if (registry.workerBudget != workerBudget || registry.expectedTiles != expectedTiles ||
-             registry.independenceProof != independenceProof)
-    {
-        throw std::logic_error("initial QEMU ready-set configuration differs across partitions");
-    }
-    if (!registry.registeredTiles.insert(tileId).second ||
-        registry.registeredTiles.size() > expectedTiles)
-    {
-        throw std::logic_error("invalid global tile registration in initial QEMU ready set");
-    }
-
-    auto& partition = registry.partitions[partitionKey];
-    if (partition == nullptr)
-    {
-        partition = std::make_unique<InitialQemuReadySetCoordinator>();
-    }
-    InitialQemuReadySetCoordinator& coordinator = *partition;
-    if (coordinator.started || coordinator.completed)
-    {
-        throw std::logic_error("initial QEMU ready-set registration began after execution");
-    }
-    if (coordinator.registeredTiles.empty())
-    {
-        coordinator.workerCount = partitionWorkerCount;
-        coordinator.independenceProof = independenceProof;
-    }
-    else if (coordinator.workerCount != partitionWorkerCount ||
-             coordinator.independenceProof != independenceProof)
-    {
-        throw std::logic_error(
-            "initial QEMU ready-set partition configuration differs across tiles");
-    }
-    if (!coordinator.registeredTiles.insert(tileId).second)
-    {
-        throw std::logic_error("duplicate tile ID in initial QEMU ready set");
-    }
-    coordinator.expectedTiles = coordinator.registeredTiles.size();
-}
-
-std::optional<std::vector<QemuReadySetExecutor::Completion>>
-QemuCaptureCoordinator::submitInitialQemuReadySetTask(std::uint64_t partitionKey,
-                                                      std::uint32_t workerBudget,
-                                                      std::uint32_t partitionWorkerCount,
-                                                      std::uint32_t expectedTiles,
-                                                      QemuReadySetExecutor::Task task)
-{
-    InitialQemuReadySetRegistry& registry = initialQemuReadySetRegistry();
-    InitialQemuReadySetCoordinator* coordinatorPointer = nullptr;
-    {
-        const std::lock_guard<std::mutex> registryLock(registry.mutex);
-        const auto partition = registry.partitions.find(partitionKey);
-        if (registry.workerBudget != workerBudget || registry.expectedTiles != expectedTiles ||
-            registry.registeredTiles.size() != expectedTiles ||
-            partition == registry.partitions.end())
-        {
-            throw std::logic_error(
-                "initial QEMU ready set is incompletely registered across SST partitions");
-        }
-        coordinatorPointer = partition->second.get();
-    }
-    InitialQemuReadySetCoordinator& coordinator = *coordinatorPointer;
-    const std::lock_guard<std::mutex> lock(coordinator.mutex);
-    const std::thread::id caller = std::this_thread::get_id();
-    const auto discardActiveBatch = [&coordinator, caller]()
-    {
-        if (coordinator.executor != nullptr &&
-            (!coordinator.ownerThread.has_value() || *coordinator.ownerThread == caller) &&
-            coordinator.executor->active())
-        {
-            coordinator.executor->discard();
-        }
-    };
-
-    if (coordinator.completed)
-    {
-        discardActiveBatch();
-        throw std::logic_error("initial QEMU ready set received a task after completion");
-    }
-    if (coordinator.workerCount != partitionWorkerCount ||
-        coordinator.expectedTiles != coordinator.registeredTiles.size() ||
-        coordinator.expectedTiles == 0)
-    {
-        discardActiveBatch();
-        throw std::logic_error(
-            "initial QEMU ready set is incomplete or inconsistent on this SST rank");
-    }
-    if (coordinator.registeredTiles.count(task.tileId) == 0)
-    {
-        discardActiveBatch();
-        throw std::logic_error("unregistered tile submitted to initial QEMU ready set");
-    }
-    if (!coordinator.ownerThread.has_value())
-    {
-        coordinator.ownerThread = caller;
-    }
-    else if (*coordinator.ownerThread != caller)
-    {
-        discardActiveBatch();
-        throw std::logic_error("initial QEMU ready set crossed SST event threads");
-    }
-
-    if (!coordinator.started)
-    {
-        coordinator.executor = std::make_unique<QemuReadySetExecutor>(partitionWorkerCount);
-        coordinator.executor->begin(task.frontierTick, coordinator.expectedTiles);
-        coordinator.started = true;
-    }
-    try
-    {
-        coordinator.executor->submit(std::move(task));
-    }
-    catch (...)
-    {
-        discardActiveBatch();
-        throw;
-    }
-    if (coordinator.executor->submittedTaskCount() != coordinator.expectedTiles)
-    {
-        return std::nullopt;
-    }
-
-    auto completions = coordinator.executor->collect();
-    coordinator.completed = true;
-    return completions;
 }
 
 namespace
@@ -522,7 +366,7 @@ void QemuCaptureCoordinator::attach(std::uint32_t tile, std::shared_ptr<std::ato
 void QemuCaptureCoordinator::cancel(std::uint32_t tile)
 {
     {
-        auto& c = runtimeQemuReadySetCoordinator();
+        auto& c = captureWorkerCoordinator();
         const std::lock_guard<std::mutex> lock(c.mutex);
         c.pendingTasks.erase(std::remove_if(c.pendingTasks.begin(), c.pendingTasks.end(),
                                             [tile](const auto& task)
@@ -531,26 +375,6 @@ void QemuCaptureCoordinator::cancel(std::uint32_t tile)
         c.pendingTiles.erase(tile);
         if (c.pendingTasks.empty())
             c.frontierTick.reset();
-    }
-    // Initial work may already be running before the partition is complete.
-    // Aborting one participant aborts that initial partition; revoke every
-    // participant before discard waits for its already-submitted workers.
-    auto& registry = initialQemuReadySetRegistry();
-    const std::lock_guard<std::mutex> registryLock(registry.mutex);
-    for (auto& entry : registry.partitions)
-    {
-        auto& c = *entry.second;
-        const std::lock_guard<std::mutex> lock(c.mutex);
-        if (!c.registeredTiles.count(tile) || !c.executor || !c.executor->active())
-            continue;
-        {
-            const std::lock_guard<std::mutex> leasesLock(leaseMutex);
-            for (auto id : c.registeredTiles)
-                if (auto lease = leases[id].lock())
-                    lease->store(false);
-        }
-        c.executor->discard();
-        c.completed = true;
     }
     const std::lock_guard<std::mutex> lock(leaseMutex);
     leases.erase(tile);

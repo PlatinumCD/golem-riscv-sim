@@ -1,6 +1,7 @@
 #include "sharedSyncMemoryBridge.h"
 
 #include <cerrno>
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -211,6 +212,8 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             {},
             {},
         };
+        event.fetchInstructionCount = event.stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH
+            ? std::max(UINT32_C(1), mapping_->fetch_segment_proposed) : 1;
         const bool carriesMemoryBatch =
             event.stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH ||
             (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0;
@@ -319,6 +322,8 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         {},
         {},
     };
+    event.fetchInstructionCount = event.stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH
+        ? std::max(UINT32_C(1), mapping_->fetch_segment_proposed) : 1;
     const bool carriesMemoryBatch =
         event.stopReason == MITTENS_SYNC_STOP_MEMORY_BATCH ||
         (event.flags & MITTENS_SYNC_EVENT_FLAG_MEMORY_BATCH) != 0;
@@ -388,6 +393,22 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
     return event;
 }
 
+void SharedSyncMemoryBridge::configureInstructionSegments(std::uint32_t limit)
+{
+    if (!mapping_ || limit == 0 || limit > MITTENS_SYNC_FETCH_SEGMENT_CAPACITY)
+        throw std::invalid_argument("invalid instruction segment limit");
+    mapping_->fetch_segment_limit = limit;
+}
+
+void SharedSyncMemoryBridge::approveInstructionSegment(std::uint32_t count)
+{
+    if (!mapping_ || mapping_->state != MITTENS_SYNC_STATE_EVENT ||
+        mapping_->stop_reason != MITTENS_SYNC_STOP_INSTRUCTION_FETCH || count == 0 ||
+        count > std::max(UINT32_C(1), mapping_->fetch_segment_proposed))
+        throw std::logic_error("invalid instruction segment approval");
+    mapping_->fetch_segment_approved = count;
+}
+
 void SharedSyncMemoryBridge::resume(const QemuSyncEvent& event)
 {
     if (!open()) {
@@ -405,6 +426,12 @@ void SharedSyncMemoryBridge::resume(const QemuSyncEvent& event)
             "cannot resume a stale QEMU synchronization event");
     }
 
+    // Query/ack reuse the request-flags word as a response only after SST has
+    // consumed the request. The release publication makes it visible to QEMU.
+    if (event.stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY ||
+        event.stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY ||
+        event.stopReason == MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK)
+        mapping_->global_dma_request_flags = event.dmaCompletionStatus;
     mittens_sync_store_release(
         &mapping_->state, MITTENS_SYNC_STATE_RESUME);
     wake(&mapping_->state);

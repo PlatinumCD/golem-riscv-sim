@@ -17,7 +17,7 @@ def main():
         'cpu_execution_ledger': [],
         'cpu_execution_controller': ['execution/cpuExecutionController.cc',
                                      'execution/qemuCaptureCoordinator.cc',
-                                     'execution/qemuReadySetExecutor.cc',
+                                     'execution/qemuCaptureExecutor.cc',
                                      'bridge/sharedSyncMemoryBridge.cc'],
         'memory_address_map': [],
         'clock_domain': [],
@@ -54,9 +54,9 @@ def main():
         subprocess.run(command + ['-o', str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
         if name == 'cpu_execution_controller':
-            for mode in ('runtime-cancel', 'runtime-success', 'late-commit', 'local-cancel',
-                         'local-success', 'initial-cancel', 'initial-success',
-                         'initial-invalid', 'initial-epoch-mismatch'):
+            for mode in ('stopped-dispatch-owner', 'cancelled-dispatch-replacement',
+                         'runtime-cancel', 'runtime-success', 'late-commit', 'local-cancel',
+                         'local-success'):
                 subprocess.run([str(executable), mode], check=True, timeout=15)
         print(f'{name}: PASS', flush=True)
     subprocess.run(['python3', str(COPY / 'sst/tests/device_owners.py')], check=True)

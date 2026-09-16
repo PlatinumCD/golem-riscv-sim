@@ -8,7 +8,7 @@
 #include "../memory/memoryAccessController.h"
 #include "../network/rx/rxSnapshot.h"
 #include "../network/tx/txSnapshot.h"
-#include "../synchronization/initializationBarrierClient.h"
+#include "../synchronization/epochBarrierClient.h"
 
 namespace SST::Mittens
 {
@@ -23,7 +23,7 @@ struct TileMeasurementSnapshot
     MemoryAccessController::Statistics memory{};
     GlobalDMAClient::Statistics globalDMA{};
     AnalogController::Statistics analog{};
-    InitializationBarrierClient::Snapshot barriers{};
+    EpochBarrierClient::Snapshot barriers{};
     TxCounters tx{};
     RxCounters rx{};
     ScratchpadTimingStatistics scratchpad{};

@@ -8,7 +8,8 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(27)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(31)
+#define MITTENS_SYNC_FETCH_SEGMENT_CAPACITY UINT32_C(16)
 #define MITTENS_SYNC_MEMORY_BATCH_CAPACITY UINT32_C(1024)
 #define MITTENS_SYNC_GLOBAL_DMA_BATCH_CAPACITY UINT32_C(8)
 #define MITTENS_SYNC_ANALOG_BATCH_CAPACITY UINT32_C(1024)
@@ -33,7 +34,6 @@ enum MittensSyncStopReason {
     MITTENS_SYNC_STOP_TASK_FINISH = 8,
     MITTENS_SYNC_STOP_NIC_RX_DMA_SUBMIT = 9,
     MITTENS_SYNC_STOP_MEMORY_ACCESS = 10,
-    MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE = 11,
     MITTENS_SYNC_STOP_NIC_TRANSMIT_WAIT = 12,
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_SUBMIT = 13,
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT = 14,
@@ -51,7 +51,10 @@ enum MittensSyncStopReason {
     MITTENS_SYNC_STOP_SCRATCHPAD_DMA_MACRO = 22,
     MITTENS_SYNC_STOP_INSTRUCTION_FETCH = 23,
     MITTENS_SYNC_STOP_INSTRUCTION_FENCE = 24,
-    MITTENS_SYNC_STOP_COUNT = 25,
+    MITTENS_SYNC_STOP_SCRATCHPAD_DMA_QUERY = 25,
+    MITTENS_SYNC_STOP_SCRATCHPAD_DMA_ACK = 26,
+    MITTENS_SYNC_STOP_SCRATCHPAD_DMA_WAIT_ANY = 27,
+    MITTENS_SYNC_STOP_COUNT = 28,
 };
 
 enum MittensSyncEpochContribution {
@@ -120,7 +123,6 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
 
     union {
         uint64_t analog_sequence;
-        uint64_t memory_init_accesses;
         uint64_t memory_program_counter;
         uint64_t rx_dma_logical_iteration;
     };
@@ -128,7 +130,6 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t rx_dma_route_id;
     union {
         uint64_t execution_id;
-        uint64_t memory_init_write_bytes;
         uint64_t memory_return_address;
     };
     uint32_t rx_dma_word_count;
@@ -136,7 +137,6 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint64_t vector_instructions_executed;
     union {
         uint64_t memory_address;
-        uint64_t memory_init_read_bytes;
     };
     uint32_t memory_size;
     uint32_t memory_flags;
@@ -151,7 +151,11 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t global_dma_request_flags;
     uint32_t global_dma_batch_count;
     uint32_t analog_batch_count;
-    uint64_t reserved3[2];
+    /* Host-only fetch grouping. Published with EVENT/RESUME release stores. */
+    uint32_t fetch_segment_limit;
+    uint32_t fetch_segment_proposed;
+    uint32_t fetch_segment_approved;
+    uint32_t fetch_segment_reserved;
 } MittensSyncBridge;
 
 typedef struct MittensSyncMemoryAccess {

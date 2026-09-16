@@ -356,7 +356,6 @@ void printProfile(const DeploymentProfile& profile)
 
 int runSoftwarePayload()
 {
-    mesh_nic::complete_memory_initialization();
     if constexpr (MITTENS_TILE_ID == 0) {
         alignas(64) uint32_t payload[kSoftwarePayloadWords];
         for (uint32_t frame = 0;
@@ -527,7 +526,6 @@ int runSoftwarePayload()
         uart_puts("FANOUT_SOURCE_FAIL\n");
         return 1;
     }
-    mesh_nic::complete_memory_initialization();
     delaySource();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
@@ -651,7 +649,6 @@ int runSoftwarePayload()
         uart_puts("FANOUT_SOURCE_FAIL\n");
         return 1;
     }
-    mesh_nic::complete_memory_initialization();
     delaySource();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
@@ -746,7 +743,6 @@ int runSoftwarePayload()
         uart_puts("FANOUT_DESTINATION_FAIL\n");
         return 3;
     }
-    mesh_nic::complete_memory_initialization();
     delayReceiver();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
@@ -944,7 +940,6 @@ int runBidirectional()
     if (!runtime.bindModelInput(0, modelInput)) {
         return 1;
     }
-    mesh_nic::complete_memory_initialization();
     while (!runtime.complete() && !runtime.failed()) {
         const DeploymentStep step = runtime.step();
         if (step == DeploymentStep::WaitForReceive) {

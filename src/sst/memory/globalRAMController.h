@@ -35,6 +35,8 @@ class GlobalRAMController final : public SST::Component
 
     SST_ELI_DOCUMENT_PARAMS(
         {"capacity_bytes", "Sparse global RAM capacity", "34359738368"},
+        {"image_file", "Optional host-loaded RAM image, loaded before tile startup (upload time excluded)", ""},
+        {"image_offset", "Global RAM byte offset for image_file", "0"},
         {"clock", "Controller arbitration clock", "1GHz"},
         {"tile_count", "Number of addressable tile IDs", "1"},
         {"active_tiles", "Array of active tile IDs; omitted means every tile", ""},
@@ -43,6 +45,7 @@ class GlobalRAMController final : public SST::Component
         {"per_tile_queue_depth", "Finite queue depth per tile", "8"},
         {"setup_cycles", "Setup cycles per request", "8"},
         {"bytes_per_cycle", "Transfer bandwidth per channel", "32"},
+        {"shared_bytes_per_cycle", "Optional aggregate payload bus limit; 0 means independent channels. Request-granular FIFO bus reservations after channel latency.", "0"},
         {"burst_bytes", "RAM burst size", "64"},
         {"fixed_latency_cycles", "Latency charged per burst", "2"},
         {"maximum_request_bytes", "Maximum bytes in one physical DMA request", "4294967295"},
@@ -168,6 +171,7 @@ class GlobalRAMController final : public SST::Component
     std::uint32_t perTileQueueDepth_;
     std::uint64_t setupCycles_;
     std::uint32_t bytesPerCycle_;
+    std::uint64_t sharedPayloadAvailableCycle_ = 0;
     std::uint32_t burstBytes_;
     std::uint64_t fixedLatencyCycles_;
     std::uint32_t maximumRequestBytes_ = UINT32_MAX;

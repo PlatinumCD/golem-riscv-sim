@@ -201,7 +201,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                wormhole_pipeline_cycles=3,
                memory_backend="streaming",
                memory_hierarchy=None, active_tiles=None,
-               global_memory=None, initialization_barrier=None,
+               global_memory=None,
                epoch_barrier=None,
                partition_global_dma=False, sst_work_partition=None):
     """Build a mesh whose physical links carry fixed 32-bit words.
@@ -322,8 +322,6 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
     if rx_streams > 1 and mesh_router_backend != "mittens":
         raise ValueError("multiple RX streams require the mittens router and NIC")
     streaming_memory = memory_backend == "streaming"
-    if initialization_barrier is not None or tile_params.get("memory_init_barrier_tiles", 0):
-        raise ValueError("SPM boot uses timed DMA, not an initialization barrier")
     epoch_configuration = None
     if epoch_barrier is not None:
         if not streaming_memory:
@@ -334,7 +332,7 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
             raise ValueError("epoch_barrier must be a configuration mapping")
         unsupported = set(epoch_barrier) - {
             "epoch_count", "clock", "release_cycles", "stop_after_releases",
-            "verbose"
+            "verbose", "local_boot_release"
         }
         if unsupported:
             raise ValueError(
@@ -374,7 +372,17 @@ def build_mesh(*, width, height, qemu_path, images, statistics_path,
                 "epoch_barrier stop_after_releases must be between zero and "
                 "epoch_count"
             )
+        local_boot_release = epoch_barrier.get("local_boot_release", False)
+        if not isinstance(local_boot_release, bool):
+            raise ValueError("local_boot_release must be boolean")
+        if local_boot_release:
+            if not global_memory or not global_memory.get("image_file"):
+                raise ValueError("local_boot_release requires a preloaded shared RAM image")
+            if epoch_count < 2 or stop_after_releases == 1:
+                raise ValueError("local_boot_release requires a subsequent global epoch")
+            tile_params["epoch_barrier_drain_analog"] = True
         epoch_configuration = {
+            "local_boot_release": local_boot_release,
             "tile_count": network_size,
             "active_tiles": sorted(active_tile_set),
             "epoch_count": epoch_count,

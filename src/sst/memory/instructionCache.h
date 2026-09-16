@@ -40,6 +40,7 @@ class InstructionCache final
     InstructionFetchResult fetch(std::uint64_t address, std::uint32_t bytes,
                                  std::uint64_t currentCycle);
     void invalidate() noexcept;
+    bool resident(std::uint64_t address, std::uint32_t bytes) const noexcept;
     const InstructionCacheStatistics& statistics() const noexcept
     {
         return statistics_;

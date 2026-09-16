@@ -1,8 +1,8 @@
-#include "initializationBarrierClient.h"
+#include "epochBarrierClient.h"
 
 namespace SST::Mittens
 {
-CpuDeviceResult InitializationBarrierClient::executeCpuBarrier(const CpuBarrierAction& action)
+CpuDeviceResult EpochBarrierClient::executeCpuBarrier(const CpuBarrierAction& action)
 {
     CpuDeviceResult result;
     if (config_.epochBarrierEpochs == 0 || !host_.sendEpoch ||
@@ -37,6 +37,15 @@ CpuDeviceResult InitializationBarrierClient::executeCpuBarrier(const CpuBarrierA
                           static_cast<unsigned>(state_.expectedEpochBarrier_));
         }
 
+        if (config_.epochBarrierDrainAnalog) {
+            if (!host_.analogDrained)
+                output_.fatal(-1, "%s", "analog-draining barrier has no completion source\n");
+            if (!host_.analogDrained()) {
+                waitingForAnalog_ = true;
+                return result;
+            }
+        }
+        waitingForAnalog_ = false;
         const EpochBarrierContribution contribution =
             action.contribution == MITTENS_SYNC_EPOCH_WORK_COMPLETE
                 ? EpochBarrierContribution::WorkComplete
@@ -67,115 +76,15 @@ CpuDeviceResult InitializationBarrierClient::executeCpuBarrier(const CpuBarrierA
     return result;
 }
 
-CpuDeviceResult
-InitializationBarrierClient::executeCpuInitialization(const CpuInitializationAction& action)
+void EpochBarrierClient::onAnalogProgress()
 {
-    CpuDeviceResult result;
-    if (!config_.memoryInitializationBatching || action.size != 0 ||
-        action.memoryFlags != MITTENS_SYNC_MEMORY_FLAG_NONE)
-    {
-        output_.fatal(
-
-            -1,
-            "tile %u received an invalid aggregate memory "
-            "initialization event\n",
-            static_cast<unsigned>(config_.tileId));
+    if (waitingForAnalog_ && host_.analogDrained && host_.analogDrained()) {
+        waitingForAnalog_ = false;
+        host_.wakeEpoch();
     }
-    if (!state_.memoryInitializationDelayScheduled_ && !state_.memoryInitializationBarrierArrived_)
-    {
-        const std::uint64_t reads = action.reads;
-        const std::uint64_t writes = action.writes;
-        if (reads > UINT64_MAX - writes)
-        {
-            output_.fatal(
-
-                -1,
-                "tile %u initialization memory byte count "
-                "overflowed\n",
-                static_cast<unsigned>(config_.tileId));
-        }
-        const std::uint64_t bytes = reads + writes;
-        const std::uint64_t transferCycles =
-            divideRoundUp(bytes, config_.memoryInitializationBytesPerCycle);
-        if (transferCycles > UINT64_MAX - config_.memoryInitializationLatencyCycles)
-        {
-            output_.fatal(
-
-                -1,
-                "tile %u initialization memory cycle count "
-                "overflowed\n",
-                static_cast<unsigned>(config_.tileId));
-        }
-        const std::uint64_t cycles = config_.memoryInitializationLatencyCycles + transferCycles;
-
-        ++state_.memoryInitializationHandshakes_;
-        state_.memoryInitializationAccesses_ += action.accesses;
-        state_.memoryInitializationReadBytes_ += reads;
-        state_.memoryInitializationWriteBytes_ += writes;
-        state_.memoryInitializationCycles_ += cycles;
-        state_.memoryInitializationDelayScheduled_ = true;
-        result.delay = Timing::Cycles<Timing::Cpu>{cycles};
-        return result;
-    }
-    state_.memoryInitializationDelayScheduled_ = false;
-    if (config_.memoryInitializationBarrierTiles != 0 &&
-        !state_.memoryInitializationBarrierArrived_)
-    {
-        if (!host_.sendInitialization)
-        {
-            output_.fatal(
-
-                -1, "tile %u has no modeled memory initialization barrier endpoint\n",
-                static_cast<unsigned>(config_.tileId));
-        }
-        state_.memoryInitializationBarrierArrived_ = true;
-        host_.sendInitialization();
-        output_.verbose(
-
-            2, 0, "tile %u sent its memory initialization barrier arrival\n",
-            static_cast<unsigned>(config_.tileId));
-        return result;
-    }
-    if (config_.memoryInitializationBarrierTiles != 0 &&
-        !state_.memoryInitializationBarrierReleaseReady_)
-    {
-        return result;
-    }
-    state_.memoryInitializationBarrierReleaseReady_ = false;
-    state_.memoryInitializationPhase_ = false;
-    result.complete = true;
-    return result;
 }
 
-void InitializationBarrierClient::onInitializationRelease(
-    std::uint32_t tile, MemoryInitializationBarrierMessage message)
-{
-    if (config_.memoryInitializationBarrierTiles == 0 || !host_.sendInitialization ||
-        !host_.running() || !state_.memoryInitializationPhase_ ||
-        !state_.memoryInitializationBarrierArrived_ ||
-        state_.memoryInitializationBarrierReleaseReady_ || tile != config_.tileId ||
-        message != MemoryInitializationBarrierMessage::Release || !host_.pending().has_value() ||
-        host_.pending()->stopReason != MITTENS_SYNC_STOP_MEMORY_INIT_COMPLETE)
-    {
-        output_.fatal(
-
-            -1,
-            "tile %u received an impossible memory initialization barrier release: tile=%u "
-            "message=%u phase=%u arrived=%u release_ready=%u pending_reason=%u\n",
-            static_cast<unsigned>(config_.tileId), static_cast<unsigned>(tile),
-            static_cast<unsigned>(message), state_.memoryInitializationPhase_ ? 1U : 0U,
-            state_.memoryInitializationBarrierArrived_ ? 1U : 0U,
-            state_.memoryInitializationBarrierReleaseReady_ ? 1U : 0U,
-            static_cast<unsigned>(host_.pending().has_value()
-                                      ? host_.pending()->stopReason
-                                      : static_cast<std::uint32_t>(MITTENS_SYNC_STOP_NONE)));
-    }
-
-    state_.memoryInitializationBarrierReleaseReady_ = true;
-    host_.wakeInitialization();
-}
-
-bool InitializationBarrierClient::onEpochRelease(std::uint32_t tile, std::uint32_t completedEpoch,
+bool EpochBarrierClient::onEpochRelease(std::uint32_t tile, std::uint32_t completedEpoch,
                                                  EpochBarrierMessage message,
                                                  EpochBarrierContribution contribution)
 {
@@ -223,22 +132,8 @@ bool InitializationBarrierClient::onEpochRelease(std::uint32_t tile, std::uint32
     return false;
 }
 
-void InitializationBarrierClient::validateExit() const
+void EpochBarrierClient::validateExit() const
 {
-    if (config_.memoryInitializationBarrierTiles != 0 &&
-        (!state_.memoryInitializationBarrierArrived_ || state_.memoryInitializationPhase_ ||
-         state_.memoryInitializationBarrierReleaseReady_))
-    {
-        output_.fatal(
-
-            -1,
-            "QEMU tile %u exited before completing the modeled memory initialization barrier: "
-            "arrived=%u phase=%u release_ready=%u\n",
-            static_cast<unsigned>(config_.tileId),
-            state_.memoryInitializationBarrierArrived_ ? 1U : 0U,
-            state_.memoryInitializationPhase_ ? 1U : 0U,
-            state_.memoryInitializationBarrierReleaseReady_ ? 1U : 0U);
-    }
     if (config_.epochBarrierEpochs != 0 &&
         (state_.expectedEpochBarrier_ != config_.epochBarrierEpochs ||
          state_.epochBarrierArrivalSent_ || state_.epochBarrierReleaseReady_))

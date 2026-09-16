@@ -21,7 +21,6 @@ int main(int, char**)
     data.analog.submitted = 12;
     data.analog.completed = 11;
     data.barriers.expectedEpochBarrier_ = 2;
-    data.barriers.memoryInitializationPhase_ = false;
     data.memory.outstandingMemoryWrites_ = 3;
     data.memory.outstandingMemoryReads_ = 4;
     data.tx.networkTransmitPackets = 11;
@@ -54,7 +53,7 @@ int main(int, char**)
     assert(p.wallTimeMilliseconds == 200 && p.simulationTick == 100);
     assert(p.instructions == 123 && p.cpuCycles == 80 && p.taskFinishEvents == 7);
     assert(p.taskFinishEventsAvailable == 1 && p.localEpochAvailable == 1 && p.localEpoch == 2);
-    assert(p.memoryInitializationComplete == 1 && p.waitTicks == 30);
+    assert(p.waitTicks == 30);
     assert(p.physicalGlobalDMASubmitted == 10 && p.physicalGlobalDMACompleted == 8);
     assert(p.analogCommandsSubmitted == 12 && p.analogCommandsCompleted == 11);
     assert(p.networkPackets == 23 && p.networkWords == 27);
@@ -74,13 +73,13 @@ int main(int, char**)
         "instructions=123 task_finishes=7 task_finishes_available=1 "
         "physical_global_dma_submitted=10 physical_global_dma_completed=8 "
         "analog_commands_submitted=12 analog_commands_completed=11 local_epoch=2 "
-        "local_epoch_available=1 memory_initialization_complete=1 wait_reason=" +
+        "local_epoch_available=1 wait_reason=" +
         std::to_string(MITTENS_SYNC_STOP_NIC_RECEIVE_WAIT) +
         " wait_ticks=30 pending_network=23 pending_rx_dma=21 pending_global_dma=2 pending_memory=12\n";
     assert(formatTileProgress(3, p) == expected);
-    assert(formatProgressWatchdog(3, 4, 5, 6, 7) ==
+    assert(formatProgressWatchdog(3, 4, 5, 6) ==
         "MITTENS_PROGRESS_WATCHDOG tile=3 timeout_ms=4 progress_elapsed_ms=5 "
-        "deployment_epoch=6 initialization_execution_epoch=7\n");
+        "deployment_epoch=6\n");
 
     data.configuration.epochBarrierEpochs = 0;
     data.cpu.synchronizationStopCounts_.fill(0);

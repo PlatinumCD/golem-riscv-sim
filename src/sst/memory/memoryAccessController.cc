@@ -24,16 +24,27 @@ CpuDeviceResult MemoryAccessController::executeInstruction(const CpuInstructionA
         return {true, {}, {}};
     }
     const auto start = std::max(action.cursor.value, cpuDomain().ceil(host_.now()).value);
-    const auto fetch = instructionCache_->fetch(action.address, action.bytes, start);
+    if (action.count == 0 || action.count > config_.instructionFetchSegmentSize ||
+        (action.count > 1 && action.bytes != 4))
+        throw std::invalid_argument("invalid fetch segment proposal");
+    auto fetch = instructionCache_->fetch(action.address, action.bytes, start);
+    std::uint32_t count = 1;
+    if (fetch.hit && action.count > 1 && host_.instructionSegmentSafe && host_.instructionSegmentSafe()) {
+        for (; count < action.count; ++count) {
+            const auto address = action.address + 4 * count;
+            if (!instructionCache_->resident(address, 4)) break;
+            fetch = instructionCache_->fetch(address, 4, fetch.readyCycle);
+        }
+    }
     const auto cycles = fetch.readyCycle - start;
-    // A blocking fetch includes one issue cycle. Only the remainder is a
-    // fetch stall; CpuExecutionController reconciles the overlapped cycle.
-    instructionStallCycles_ = Timing::add(instructionStallCycles_, cycles - 1);
+    // Each lookup includes one issue cycle. Only the remainder is a fetch
+    // stall; CpuExecutionController reconciles all approved issue cycles.
+    instructionStallCycles_ = Timing::add(instructionStallCycles_, cycles - count);
     instructionDeadline_ = ScratchpadAccessDeadline{
         action.step, cpuDomain().ticks({fetch.readyCycle})};
     return {false, Timing::Cycles<Timing::Cpu>{
                 fetch.readyCycle - cpuDomain().floor(host_.now()).value},
-            Timing::Cycles<Timing::Cpu>{fetch.readyCycle}};
+            Timing::Cycles<Timing::Cpu>{fetch.readyCycle}, false, count};
 }
 
 CpuDeviceResult MemoryAccessController::executeCpuMemory(const CpuMemoryAction& action)

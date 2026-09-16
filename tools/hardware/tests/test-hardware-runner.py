@@ -17,7 +17,9 @@ from hardware_suite import Case, GROUPS, HARDWARE, ROOT, selected_cases, runtime
 class HardwareRunnerTests(unittest.TestCase):
     def test_hardware_default_is_an_allowlist(self):
         cases = selected_cases()
-        self.assertEqual(len(cases), 32)
+        self.assertEqual(len(cases), 34)
+        self.assertIn('concurrent-capture', [case.name for case in cases])
+        self.assertIn('fetch-segments', [case.name for case in cases])
         self.assertFalse(any(case.requires_runtime for case in cases))
         self.assertFalse(set(case.name for case in cases) & set(case.name for case in runtime_cases()))
         self.assertTrue(all(case.script.is_file() for case in cases))
@@ -65,7 +67,7 @@ class HardwareRunnerTests(unittest.TestCase):
                 self.assertTrue(all(line.startswith(group + '/') for line in result.stdout.splitlines()))
 
     def test_runtime_integrations_are_explicit_and_retained(self):
-        expected = {'runtime/rx-controller', 'runtime/library', 'runtime/deployment-pair', 'runtime/epoch-barrier',
+        expected = {'runtime/rx-controller', 'runtime/library', 'runtime/epoch-barrier',
                     'network/transmit-fanout', 'analog/distributed-matvec'}
         self.assertEqual({case.name for case in selected_cases(group='runtime')}, expected)
         self.assertEqual({case.name for case in selected_cases('runtime')}, expected)

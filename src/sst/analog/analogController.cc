@@ -423,34 +423,6 @@ CpuDeviceResult AnalogController::executeCpuAnalog(const CpuAnalogAction& action
     return result;
 }
 
-void AnalogController::validateInitialCpuDevice(const QemuSyncEvent& event) const
-{
-    // Analog queues and bridges are private to one tile.  Capturing a submit
-    // records the already-published private slot but does not accept, time, or
-    // execute it; serviceAnalogBridge() remains on the SST owner thread after
-    // deterministic commit.  Validate the token and slot here so a malformed
-    // submission cannot partially commit the ready set.
-    if (event.stopReason == MITTENS_SYNC_STOP_ANALOG_SUBMIT)
-    {
-        std::uint32_t allowedFlags = MITTENS_SYNC_EVENT_FLAG_WAIT_FOR_COMPLETION;
-        if (!event.analogSubmitBatch.empty())
-        {
-            allowedFlags |= MITTENS_SYNC_EVENT_FLAG_ANALOG_BATCH;
-        }
-        if (analogDevice_ == nullptr || !analogBridge_.open() ||
-            event.analogArrayId >= analogBridge_.arrayCount() ||
-            event.analogSequence > UINT32_MAX || (event.flags & ~allowedFlags) != 0 ||
-            event.memoryAddress != 0 || event.memorySize != 0 ||
-            event.memoryFlags != MITTENS_SYNC_MEMORY_FLAG_NONE ||
-            analogBridge_.slotState(AnalogBridgeToken{
-                event.analogArrayId,
-                static_cast<std::uint32_t>(event.analogSequence),
-            }) != MITTENS_ANALOG_SLOT_SUBMITTED)
-        {
-            throw std::runtime_error("initial parallel analog-submit event is malformed");
-        }
-    }
-}
 
 void AnalogController::onWake(std::uint64_t generation)
 {

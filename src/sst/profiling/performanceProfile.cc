@@ -198,7 +198,6 @@ void PerformanceProfile::recordProgressSnapshot(const ProgressSnapshot& snapshot
         throw std::logic_error("tile progress completion counters exceed submissions");
     }
     if (snapshot.taskFinishEventsAvailable > 1 || snapshot.localEpochAvailable > 1 ||
-        snapshot.memoryInitializationComplete > 1 ||
         (snapshot.taskFinishEventsAvailable == 0 && snapshot.taskFinishEvents != 0) ||
         (snapshot.localEpochAvailable == 0 && snapshot.localEpoch != UINT32_MAX))
     {
@@ -211,7 +210,7 @@ void PerformanceProfile::recordProgressSnapshot(const ProgressSnapshot& snapshot
              "physical_global_dma_submitted,"
              "physical_global_dma_completed,analog_commands_submitted,"
              "analog_commands_completed,local_epoch,local_epoch_available,"
-             "memory_initialization_complete,wait_reason,wait_ticks,"
+             "wait_reason,wait_ticks,"
              "network_packets,"
              "network_words,network_word_hops,network_queue_ticks,"
              "receive_dma_transfers,receive_dma_words,receive_dma_active_cycles,"
@@ -235,7 +234,7 @@ void PerformanceProfile::recordProgressSnapshot(const ProgressSnapshot& snapshot
            << snapshot.physicalGlobalDMASubmitted << ',' << snapshot.physicalGlobalDMACompleted
            << ',' << snapshot.analogCommandsSubmitted << ',' << snapshot.analogCommandsCompleted
            << ',' << snapshot.localEpoch << ',' << snapshot.localEpochAvailable << ','
-           << snapshot.memoryInitializationComplete << ',' << snapshot.waitReason << ','
+           << snapshot.waitReason << ','
            << snapshot.waitTicks << ',' << snapshot.networkPackets << ',' << snapshot.networkWords
            << ',' << snapshot.networkWordHops << ',' << snapshot.networkQueueTicks << ','
            << snapshot.receiveDMATransfers << ',' << snapshot.receiveDMAWords << ','
@@ -493,78 +492,6 @@ bool GlobalRAMPerformanceProfile::teardownTotalsReconcile(
 std::string GlobalRAMPerformanceProfile::path(const char* suffix) const
 {
     return outputDirectory_ + "/global-ram-" + suffix + ".csv";
-}
-
-bool MemoryInitializationBarrierTimeline::reconciles() const noexcept
-{
-    return arrivalCycle <= releaseCycle;
-}
-
-void MemoryInitializationBarrierPerformanceProfile::configure(const std::string& outputDirectory)
-{
-    outputDirectory_ = outputDirectory;
-    enabled_ = !outputDirectory_.empty();
-    if (!enabled_)
-    {
-        return;
-    }
-    std::error_code error;
-    std::filesystem::create_directories(outputDirectory_, error);
-    if (error)
-    {
-        throw std::runtime_error(
-            "could not create memory initialization barrier profile directory '" +
-            outputDirectory_ + "': " + error.message());
-    }
-}
-
-void MemoryInitializationBarrierPerformanceProfile::record(
-    const MemoryInitializationBarrierTimeline& timeline)
-{
-    if (!enabled_)
-    {
-        return;
-    }
-    if (!timeline.reconciles())
-    {
-        throw std::logic_error("memory initialization barrier timeline does not reconcile");
-    }
-    const std::uint64_t waitCycles = timeline.releaseCycle - timeline.arrivalCycle;
-    accumulateOrThrow(tileCount_, 1, "memory initialization barrier timeline count overflowed");
-    accumulateOrThrow(tileWaitCycles_, waitCycles,
-                      "memory initialization barrier wait timeline overflowed");
-    firstArrivalCycle_ = std::min(firstArrivalCycle_, timeline.arrivalCycle);
-    lastReleaseCycle_ = std::max(lastReleaseCycle_, timeline.releaseCycle);
-    if (!stream_.is_open())
-    {
-        stream_.open(path(), std::ios::out | std::ios::trunc);
-        if (!stream_.is_open())
-        {
-            throw std::runtime_error("could not open memory initialization barrier timeline");
-        }
-        stream_ << "tile_id,arrival_cycle,release_cycle,wait_cycles\n";
-    }
-    stream_ << timeline.tileId << ',' << timeline.arrivalCycle << ',' << timeline.releaseCycle
-            << ',' << waitCycles << '\n';
-}
-
-bool MemoryInitializationBarrierPerformanceProfile::totalsReconcile(
-    std::uint64_t tileCount, std::uint64_t tileWaitCycles,
-    std::uint64_t barrierWaitCycles) const noexcept
-{
-    if (!enabled_)
-    {
-        return true;
-    }
-    return tileCount_ == tileCount && tileWaitCycles_ == tileWaitCycles &&
-           firstArrivalCycle_ != std::numeric_limits<std::uint64_t>::max() &&
-           lastReleaseCycle_ >= firstArrivalCycle_ &&
-           lastReleaseCycle_ - firstArrivalCycle_ == barrierWaitCycles;
-}
-
-std::string MemoryInitializationBarrierPerformanceProfile::path() const
-{
-    return outputDirectory_ + "/memory-init-barrier.csv";
 }
 
 } // namespace Mittens

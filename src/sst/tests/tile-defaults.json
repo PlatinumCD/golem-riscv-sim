@@ -38,6 +38,10 @@
       "category": "workload",
       "value": ""
     },
+    "instruction_fetch_segment_size": {
+      "category": "execution",
+      "value": 1
+    },
     "instruction_cache_bytes": {
       "category": "hardware",
       "value": 8192
@@ -94,6 +98,10 @@
       "category": "hardware",
       "value": 0
     },
+    "epoch_barrier_drain_analog": {
+      "category": "hardware",
+      "value": false
+    },
     "launch_mode": {
       "category": "workload",
       "value": "disabled"
@@ -113,6 +121,10 @@
     "qemu_capture_spin_us": {
       "category": "execution",
       "value": 0
+    },
+    "qemu_capture_workers": {
+      "category": "execution",
+      "value": 1
     },
     "riscv_vector_enabled": {
       "category": "hardware",
