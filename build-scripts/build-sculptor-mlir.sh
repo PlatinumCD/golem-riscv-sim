@@ -30,25 +30,19 @@ cmake -S "${SOURCE}" -B "${BUILD}" -G Ninja \
     -DCMAKE_CXX_COMPILER="${HOST_CXX}" \
     -DLLVM_DIR="${LLVM}/lib/cmake/llvm" \
     -DMLIR_DIR="${LLVM}/lib/cmake/mlir" \
-    -DMLIR_TABLEGEN_EXE="${LLVM}/bin/mlir-tblgen" \
-    -DSCULPTOR_MLIR_BUILD_RUNTIME=ON
+    -DMLIR_TABLEGEN_EXE="${LLVM}/bin/mlir-tblgen"
 
 cmake --build "${BUILD}" --parallel "${BUILD_JOBS}"
 cmake --install "${BUILD}"
 
 require_executable "${INSTALL}/bin/sculptor-mlir-opt"
-require_file "${INSTALL}/lib/libgolem-runtime.a"
 for pass in \
-    --sculptor-configure-streaming-architecture \
-    --sculptor-fold-attention-layouts \
-    --sculptor-fold-conv-sequence-layouts \
-    --sculptor-fold-inference-parameters \
-    --sculptor-build-ra-tree \
-    --sculptor-build-shard-residency-plan \
-    --sculptor-plan-mapping \
-    --sculptor-place-logical-tiles \
-    --sculptor-outline-tile-routines \
-    --sculptor-materialize-tile-runtime-graph; do
+    --sculptor-canonicalize-layers \
+    --sculptor-convert-layers \
+    --sculptor-expand-mvm-to-golem \
+    --sculptor-tag-layers \
+    --sculptor-construct-ra-tree \
+    --sculptor-ra-order-setups; do
     if ! "${INSTALL}/bin/sculptor-mlir-opt" --help | grep -- "${pass}" >/dev/null; then
         echo "installed Sculptor-MLIR tool does not expose ${pass}" >&2
         exit 1

@@ -1,18 +1,17 @@
 # Architecture documentation
 
-Start with the [project overview](../README.md), then choose the question you
-need answered. The default machine executes code from SPM through an instruction
-cache; shared main memory is reached by explicit DMA.
+The maintained machine is composed in [`src/configuration.py`](../src/configuration.py)
+and [`src/components/mordred/tiles.py`](../src/components/mordred/tiles.py).
 
 | Question | Read |
 |---|---|
-| What is in a tile, and how are tiles connected? | [System architecture](architecture.md) |
-| How does a program boot, use memory, and send data? | [Programming interface](platform.md) |
-| How are execution and transfer cycles calculated? | [Timing model](timing-model.md) |
-| What does RVV support, and what timing is modeled? | [Vector architecture](vector-architecture.md) |
-| How do the analog instructions work? | [Analog ISA](analog-isa.md) |
-| What are the exact tile parameter names and defaults? | [Parameter reference](parameters.md) |
+| What is in a tile? | [Architecture](architecture.md) and [diagram](diagrams/single-tile.svg) |
+| How do guests access memory and arrays? | [Programming interface](platform.md) |
+| How is time modeled? | [Timing](timing-model.md) |
+| How do I turn cycle profiling on or off? | [Profiling](profiling.md) |
+| What RVV behavior is supported? | [Vector architecture](vector-architecture.md) |
+| What do the analog instructions do? | [Analog ISA](analog-isa.md) |
+| What are the supported defaults? | [Parameters](parameters.md) |
+| What changed during source replacement? | [Migration and recovery](migration.md) |
 
-For implementation work, use the [source map](../src/README.md).
-For validation, use the [test guide](../tests/README.md).
-[Diagram sources](diagrams/README.md) are the same drawings used by the overview.
+See the [source map](../src/README.md) and [test guide](../tests/README.md) for implementation and validation.

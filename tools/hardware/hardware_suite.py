@@ -1,84 +1,65 @@
-"""Explicit hardware coverage shared by the normal runner and baseline comparisons."""
+"""Explicit correctness coverage for the current component model."""
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SOURCE = ROOT / 'src'
+GROUPS = ('platform', 'memory', 'analog', 'network', 'compiler')
 
 
 @dataclass(frozen=True)
 class Case:
     name: str
     script: Path
-    measurements_required: bool = False
-    requires_runtime: bool = False
-
-    def command(self):
-        return (['python3', '-B'] if self.script.suffix == '.py' else ['bash']) + [str(self.script)]
-
-
-HARDWARE = {
-    'platform': ('hello', 'riscv-vector', 'cpu-timing', 'register-only-accounting', 'rvv-only-accounting', 'rvv-memory-accounting', 'scratchpad-icache', 'icache-working-set'),
-    'memory': ('global-ram', 'global-ram-exact', 'scratchpad-dma', 'global-dma-contention', 'spm-chunking', 'spm-code-capacity'),
-    'network': ('pair', 'mesh-3x3', 'timing', 'pipeline', 'communication-envelope'),
-    'analog': ('instructions', 'ops', 'timing', 'mesh-2x2', 'route-2x2',
-               'mesh-2x2-dual-array', 'producer-mvm-recombine-distance'),
-}
-GROUPS = (*HARDWARE, 'runtime', 'compiler', 'models', 'validation')
-
-
-def runtime_cases():
-    """Explicit integration coverage, preserving original case names and scripts."""
-    return [Case('runtime/rx-controller', ROOT / 'src/sst/tests/rx_runtime_regression.sh', True, True)] + [Case(name, ROOT / 'tests' / name / entry, requires_runtime=required)
-            for name, entry, required in (
-                ('runtime/library', 'run-test.sh', True),
-                ('runtime/epoch-barrier', 'run-test.sh', False),
-                ('network/transmit-fanout', 'run-test.sh', True),
-                ('analog/distributed-matvec', 'run-test.sh', True))]
+    group: str
+    build_info: bool = False
+    qemu: bool = False
+    arguments: tuple = ()
 
 
 def hardware_cases():
-    cases = [Case('host', ROOT / 'tools/hardware/verify.py'),
-             Case('configuration', ROOT / 'src/sst/tests/run-configuration-test.py'),
-             Case('concurrent-capture', ROOT / 'src/sst/tests/concurrent_capture.py'),
-             Case('fetch-segments', ROOT / 'src/sst/tests/fetch_segments.py'),
-             Case('component', ROOT / 'src/sst/tests/run-test.sh', True),
-             Case('tx-controller', ROOT / 'src/sst/tests/tx_controller_regression.py', True),
-             Case('rx-controller', ROOT / 'src/sst/tests/rx_controller_regression.sh', True)]
-    for group, names in HARDWARE.items():
-        for name in names:
-            directory = ROOT / 'tests' / group / name
-            script = directory / 'run-test.sh'
-            cases.append(Case(f'{group}/{name}', script))
-    cases.append(Case('validation/performance-profile', ROOT / 'tests/validation/performance-profile/run-test.sh'))
-    return cases
+    def case(name, folder, group, build_info=True, qemu=False, arguments=()):
+        return Case(name, SOURCE / 'tests' / folder / 'run.py', group, build_info, qemu, arguments)
+    return [
+        Case('host', ROOT / 'tools/hardware/verify.py', 'platform'),
+        Case('component', SOURCE / 'tests/run.py', 'memory', True),
+        case('platform/riscv-qemu', 'riscv-qemu', 'platform', qemu=True),
+        case('platform/instruction-cache', 'instruction-cache', 'platform', qemu=True),
+        case('platform/vector-memory', 'vector-memory', 'platform', qemu=True),
+        case('platform/load-store-queue', 'load-store-queue', 'platform', qemu=True),
+        case('platform/compressed-scalar', 'compressed-scalar', 'platform', arguments=('--variants', 'after')),
+        case('platform/llvm-rvv', 'llvm-rvv', 'platform', qemu=True),
+        case('platform/profiling', 'profiling', 'platform', qemu=True),
+        case('memory/range-ordering', 'range-ordering', 'memory'),
+        case('memory/bank-connections', 'bank-connections', 'memory'),
+        case('analog/vector-analog', 'vector-analog', 'analog', qemu=True),
+        case('analog/array-pipeline', 'array-pipeline', 'analog', qemu=True),
+        case('analog/programming-delay', 'programming-delay', 'analog', qemu=True, arguments=('--skip-legacy',)),
+        case('analog/register-dependencies', 'analog-register-dependencies', 'analog', qemu=True),
+        case('analog/command-queue', 'analog-command-queue', 'analog', qemu=True, arguments=('--candidate-only',)),
+        case('analog/command-admission', 'analog-command-queue', 'analog', qemu=True, arguments=()),
+        case('analog/command-backend', 'analog-command-queue-backend', 'analog', build_info=False),
+        case('network/mesh-2x2', 'mordred', 'network', build_info=False),
+        case('network/mordred-spm', 'mordred-spm', 'network', qemu=True),
+        case('network/local-spm', 'mordred-local', 'network'),
+        case('network/posted-transfers', 'mordred-posted', 'network'),
+    ]
 
 
 def selected_cases(suite='hardware', names=None, group=None):
-    if group is not None:
-        if group not in GROUPS or suite != 'hardware':
-            raise ValueError('select one known group or one suite, not both')
-        # Hardware groups use the full suite's allowlist. Other discovery is opt-in.
-        cases = runtime_cases() if group == 'runtime' else [case for case in hardware_cases() if case.name.startswith(group + '/')]
-        groups = () if group in (*HARDWARE, 'runtime') else (group,)
-    else:
-        cases = hardware_cases() if suite in ('hardware', 'all') else []
-        if suite in ('runtime', 'all'):
-            cases += runtime_cases()
-        groups = ('compiler', 'models', 'validation') if suite == 'all' else ((suite,) if suite not in ('hardware', 'runtime') else ())
-    existing = {case.name for case in cases}
-    for discovered_group in groups:
-        for directory in sorted((ROOT / 'tests' / discovered_group).iterdir()):
-            name = f'{discovered_group}/{directory.name}'
-            if not directory.is_dir() or name in existing:
-                continue
-            for entry in ('run-all.sh', 'run-test.sh'):
-                if (directory / entry).is_file():
-                    cases.append(Case(name, directory / entry))
-                    break
+    if suite not in ('hardware', 'compiler', 'all'):
+        raise ValueError('Supported suites: hardware, compiler, all. Legacy suites are retired; see docs/migration.md.')
+    cases = hardware_cases() if suite in ('hardware', 'all') else []
+    if suite in ('compiler', 'all'):
+        cases += [Case('compiler/sculptor', SOURCE / 'tests/sculptor/run.py', 'compiler', True, True)]
+    if group:
+        if group not in GROUPS:
+            raise ValueError(f'Unknown group: {group}')
+        cases = [c for c in cases if c.group == group]
     if names:
-        by_name = {case.name: case for case in cases}
+        by_name = {c.name: c for c in cases}
         unknown = set(names) - by_name.keys()
         if unknown:
-            raise ValueError(f'cases not in {group or suite} selection: {sorted(unknown)}')
+            raise ValueError(f'Unknown or retired cases: {sorted(unknown)}. Use --list; see docs/migration.md.')
         cases = [by_name[name] for name in dict.fromkeys(names)]
     return cases

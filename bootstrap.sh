@@ -9,7 +9,6 @@ source "${ROOT}/build-scripts/common.sh"
 
 required_submodules=(
     third_party/llvm-project
-    third_party/cross-sim
     third_party/qemu
     third_party/sst-core
     third_party/sst-elements
@@ -20,8 +19,8 @@ usage() {
 usage: ./bootstrap.sh [action]
 
 actions:
-  hardware       rebuild QEMU/Mittens and run hardware tests using existing dependencies (default)
-  build-hardware rebuild QEMU/Mittens using existing dependencies
+  hardware       rebuild QEMU/component simulator and run hardware tests using existing dependencies (default)
+  build-hardware rebuild QEMU/component simulator using existing dependencies
   test-hardware  run the hardware correctness suite only
   all            initialize/build hardware dependencies and hardware, then run hardware tests
   build          initialize/build hardware dependencies and hardware
@@ -34,14 +33,14 @@ actions:
   torch-mlir     initialize and build LLVM/MLIR and Torch-MLIR
   sculptor-mlir  alias for compiler; requires GOLEM_SCULPTOR_SOURCE
   crosssim       initialize and install the minimal CrossSim Python stack
-  qemu           initialize and build QEMU with the Mittens NIC and analog ISA
+  qemu           initialize and build QEMU with the current register-based analog ISA
   sst-core       initialize and build SST Core
-  sst            initialize and build SST Core, memHierarchy, Merlin, and Mittens
-  runtime        build optional Sculptor runtime; requires GOLEM_SCULPTOR_SOURCE
-  platform       build optional compiler test images; requires GOLEM_SCULPTOR_SOURCE
+  sst            initialize and build SST Core, memory dependencies, and current tile/Mordred components
+  runtime        retired legacy runtime builder; see docs/migration.md
+  platform       retired legacy image builder; see docs/migration.md
   test           run the hardware correctness suite (same as test-hardware)
-  test-runtime   run the optional runtime library proof
-  test-elements  run the complete Mittens element test directory
+  test-runtime   run the current single-tile compiler integration suite
+  test-elements  run the current component correctness fixtures
 EOF
 }
 
@@ -51,7 +50,7 @@ initialize_submodules() {
 }
 
 build_environment() {
-    for dependency in riscv-gnu-toolchain llvm sst-core cross-sim sst-elements; do
+    for dependency in riscv-gnu-toolchain llvm sst-core sst-elements; do
         shared_build "${dependency}"
     done
 }
@@ -116,7 +115,6 @@ case "${ACTION}" in
         ;;
     crosssim)
         initialize_submodules third_party/cross-sim
-        shared_build cross-sim
         ;;
     qemu)
         initialize_submodules third_party/qemu
@@ -128,17 +126,13 @@ case "${ACTION}" in
         ;;
     sst)
         initialize_submodules third_party/sst-core third_party/sst-elements \
-            third_party/cross-sim
-        shared_build sst-core
-        shared_build cross-sim
+                shared_build sst-core
         shared_build sst-elements
         "${ROOT}/build-scripts/build-sst-elements.sh"
         ;;
-    runtime)
-        "${ROOT}/build-scripts/build-runtime.sh"
-        ;;
-    platform)
-        "${ROOT}/build-scripts/build-platform.sh" all
+    runtime|platform)
+        echo 'Legacy runtime/platform entry points are retired. Use tests/run-all.sh --suite compiler for the supported single-tile compiler integration.' >&2
+        exit 2
         ;;
     test|test-hardware)
         bash "${ROOT}/tests/run-all.sh" --suite hardware
@@ -147,7 +141,7 @@ case "${ACTION}" in
         bash "${ROOT}/tests/run-all.sh" --suite hardware --case component
         ;;
     test-runtime)
-        "${ROOT}/tests/runtime/library/run-test.sh"
+        bash "${ROOT}/tests/run-all.sh" --suite compiler
         ;;
     -h|--help|help)
         usage

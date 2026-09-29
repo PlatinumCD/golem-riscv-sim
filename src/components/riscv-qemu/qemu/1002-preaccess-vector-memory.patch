@@ -1,0 +1,179 @@
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -1540,6 +1540,48 @@
+     return flags;
+ }
+ 
++#ifdef TARGET_RISCV
++/* Nonfaulting preflight only: unlike probe_access_flags, do not dirty RAM or
++ * invalidate translated code before the corresponding SST timing grant. */
++bool mittens_sync_vector_memory_probe(
++    void *cpu_env, uint64_t address, uint32_t size, uint32_t element_size,
++    bool write, uintptr_t retaddr)
++{
++    CPUArchState *env = cpu_env;
++    CPUState *cpu = env_cpu(env);
++    CPUTLBEntryFull *full;
++    void *host;
++    int flags;
++    const MMUAccessType access = write ? MMU_DATA_STORE : MMU_DATA_LOAD;
++
++    if (!mittens_sync_vector_memory_enabled() || !size || !element_size ||
++        address % element_size || size % element_size ||
++        size > TARGET_PAGE_SIZE - (address & ~TARGET_PAGE_MASK)) {
++        return false;
++    }
++    flags = probe_access_internal(cpu, address, size, access,
++                                  cpu_mmu_index(env, false), true,
++                                  &host, &full, retaddr, true);
++    /* Invalid/PMP subpage mappings, MMIO, watchpoints, byteswaps and discarded
++     * writes require the original architectural element path. */
++    if ((flags & ~TLB_NOTDIRTY) || !host || !full ||
++        full->lg_page_size < TARGET_PAGE_BITS) {
++        return false;
++    }
++    if (write && (flags & TLB_NOTDIRTY) &&
++        !cpu_physical_memory_get_dirty_flag(address + full->xlat_section,
++                                           DIRTY_MEMORY_CODE)) {
++        /* Self-modifying-code handling can exit the helper. Do not hold a
++         * multi-element authorization across that potentially faulting path. */
++        return false;
++    }
++    return mittens_sync_vector_memory_begin(
++        host, full->phys_addr + (address & ~TARGET_PAGE_MASK), size,
++        element_size, write, mittens_sync_guest_pc(cpu, retaddr),
++        mittens_sync_guest_return_address(cpu));
++}
++#endif
++
+ int probe_access_full(CPUArchState *env, vaddr addr, int size,
+                       MMUAccessType access_type, int mmu_idx,
+                       bool nonfault, void **phost, CPUTLBEntryFull **pfull,
+diff --git a/target/riscv/vector_helper.c b/target/riscv/vector_helper.c
+--- a/target/riscv/vector_helper.c
++++ b/target/riscv/vector_helper.c
+@@ -28,6 +28,9 @@
+ #include "tcg/tcg-gvec-desc.h"
+ #include "internals.h"
+ #include "vector_internals.h"
++#ifndef CONFIG_USER_ONLY
++#include "hw/misc/mittens_sync.h"
++#endif
+ #include <math.h>
+ 
+ target_ulong HELPER(vsetvl)(CPURISCVState *env, target_ulong s1,
+@@ -180,6 +183,47 @@
+     }
+ }
+ 
++/* Preauthorize one contiguous physical-SPM beat, before any element access.
++ * A beat is at most one architectural vector-register width, even with LMUL
++ * groups or whole-register instructions. Mask holes, pages, and VL bound it.
++ * Unsupported mappings retain QEMU's original per-element fault/vstart path. */
++static uint32_t vext_mittens_preaccess(CPURISCVState *env, void *v0, bool vm,
++                                     target_ulong base, uint32_t first,
++                                     uint32_t limit, vext_ldst_elem_fn *elem,
++                                     uint32_t log2_esz, uintptr_t ra)
++{
++#ifndef CONFIG_USER_ONLY
++    const uint32_t esz = 1u << log2_esz;
++    const target_ulong addr = adjust_addr(env, base + ((target_ulong)first << log2_esz));
++    const uint32_t vlenb = riscv_cpu_cfg(env)->vlen >> 3;
++    uint32_t count;
++    bool write;
++
++    if (!mittens_sync_vector_memory_enabled() || addr % esz || first >= limit) {
++        return first;
++    }
++    count = MIN(limit - first, vlenb >> log2_esz);
++    count = MIN(count, (TARGET_PAGE_SIZE - (addr & ~TARGET_PAGE_MASK)) >> log2_esz);
++    if (!vm) {
++        uint32_t active = 0;
++        while (active < count && vext_elem_mask(v0, first + active)) {
++            active++;
++        }
++        count = active;
++    }
++    if (!count || adjust_addr(env, base + (((target_ulong)first + count) << log2_esz) - 1)
++                  != addr + ((target_ulong)count << log2_esz) - 1) {
++        return first;
++    }
++    write = elem == ste_b || elem == ste_h || elem == ste_w || elem == ste_d;
++    if (mittens_sync_vector_memory_probe(env, addr, count << log2_esz,
++                                        esz, write, ra)) {
++        return first + count;
++    }
++#endif
++    return first;
++}
++
+ /*
+  * stride: access vector element from strided memory
+  */
+@@ -195,8 +239,15 @@
+     uint32_t max_elems = vext_max_elems(desc, log2_esz);
+     uint32_t esz = 1 << log2_esz;
+     uint32_t vma = vext_vma(desc);
++    uint32_t authorized_until = 0;
+ 
+     for (i = env->vstart; i < env->vl; i++, env->vstart++) {
++        if (nf == 1 && stride == esz && i >= authorized_until &&
++            (vm || vext_elem_mask(v0, i))) {
++            authorized_until = vext_mittens_preaccess(env, v0, vm, base, i,
++                                                     env->vl, ldst_elem,
++                                                     log2_esz, ra);
++        }
+         k = 0;
+         while (k < nf) {
+             if (!vm && !vext_elem_mask(v0, i)) {
+@@ -260,9 +311,15 @@
+     uint32_t nf = vext_nf(desc);
+     uint32_t max_elems = vext_max_elems(desc, log2_esz);
+     uint32_t esz = 1 << log2_esz;
++    uint32_t authorized_until = 0;
+ 
+     /* load bytes from guest memory */
+     for (i = env->vstart; i < evl; i++, env->vstart++) {
++        if (nf == 1 && i >= authorized_until) {
++            authorized_until = vext_mittens_preaccess(env, NULL, true, base,
++                                                     i, evl, ldst_elem,
++                                                     log2_esz, ra);
++        }
+         k = 0;
+         while (k < nf) {
+             target_ulong addr = base + ((i * nf + k) << log2_esz);
+@@ -560,6 +617,7 @@
+     uint32_t nf = vext_nf(desc);
+     uint32_t vlenb = riscv_cpu_cfg(env)->vlen >> 3;
+     uint32_t max_elems = vlenb >> log2_esz;
++    uint32_t authorized_until = 0;
+ 
+     k = env->vstart / max_elems;
+     off = env->vstart % max_elems;
+@@ -567,6 +625,12 @@
+     if (off) {
+         /* load/store rest of elements of current segment pointed by vstart */
+         for (pos = off; pos < max_elems; pos++, env->vstart++) {
++            const uint32_t index = pos + k * max_elems;
++            if (index >= authorized_until) {
++                authorized_until = vext_mittens_preaccess(env, NULL, true, base,
++                                                         index, nf * max_elems,
++                                                         ldst_elem, log2_esz, ra);
++            }
+             target_ulong addr = base + ((pos + k * max_elems) << log2_esz);
+             ldst_elem(env, adjust_addr(env, addr), pos + k * max_elems, vd,
+                       ra);
+@@ -577,6 +641,12 @@
+     /* load/store elements for rest of segments */
+     for (; k < nf; k++) {
+         for (i = 0; i < max_elems; i++, env->vstart++) {
++            const uint32_t index = i + k * max_elems;
++            if (index >= authorized_until) {
++                authorized_until = vext_mittens_preaccess(env, NULL, true, base,
++                                                         index, nf * max_elems,
++                                                         ldst_elem, log2_esz, ra);
++            }
+             target_ulong addr = base + ((i + k * max_elems) << log2_esz);
+             ldst_elem(env, adjust_addr(env, addr), i + k * max_elems, vd, ra);
+         }

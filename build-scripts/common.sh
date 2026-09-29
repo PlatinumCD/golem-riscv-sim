@@ -46,9 +46,9 @@ else
 fi
 
 readonly CONFIG_BUILD_ROOT="${HARDWARE_ROOT}/config/build"
-readonly QEMU_DEVICE_ROOT="${HARDWARE_ROOT}/qemu/devices"
-readonly QEMU_INSTRUCTION_ROOT="${HARDWARE_ROOT}/qemu/instructions"
-readonly SST_ELEMENT_ROOT="${HARDWARE_ROOT}/sst"
+readonly QEMU_DEVICE_ROOT="${HARDWARE_ROOT}/components/riscv-qemu/qemu"
+readonly QEMU_INSTRUCTION_ROOT="${HARDWARE_ROOT}/components/riscv-qemu/qemu"
+readonly SST_ELEMENT_ROOT="${HARDWARE_ROOT}/components"
 readonly PLATFORM_ROOT="${HARDWARE_ROOT}/platform/devices"
 readonly PLATFORM_STARTUP_ROOT="${HARDWARE_ROOT}/platform/startup"
 readonly PLATFORM_RUNTIME_ROOT="${HARDWARE_ROOT}/platform/runtime"

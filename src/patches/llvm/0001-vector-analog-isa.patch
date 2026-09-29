@@ -1,0 +1,57 @@
+diff --git a/llvm/lib/Target/RISCV/Disassembler/RISCVDisassembler.cpp b/llvm/lib/Target/RISCV/Disassembler/RISCVDisassembler.cpp
+index fa7bcfa0e..0165d7181 100644
+--- a/llvm/lib/Target/RISCV/Disassembler/RISCVDisassembler.cpp
++++ b/llvm/lib/Target/RISCV/Disassembler/RISCVDisassembler.cpp
+@@ -781,6 +781,9 @@ static constexpr FeatureBitset XAndesGroup = {
+ 
+ static constexpr DecoderListEntry DecoderList32[]{
+     // Vendor Extensions
++    {DecoderTableXGolem32,
++     {RISCV::FeatureVendorXGolemAnalog},
++     "Golem analog extensions"},
+     {DecoderTableXVentana32,
+      {RISCV::FeatureVendorXVentanaCondOps},
+      "XVentanaCondOps"},
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoXGolem.td b/llvm/lib/Target/RISCV/RISCVInstrInfoXGolem.td
+index 078204b02..2551a46e1 100644
+--- a/llvm/lib/Target/RISCV/RISCVInstrInfoXGolem.td
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfoXGolem.td
+@@ -28,6 +28,23 @@ class MVM_rr<bits<7> funct7, bits<3> funct3, string opcodestr>
+ 
+ class MVM_rrSched : Sched<[WriteIALU, ReadIALU, ReadIALU]>;
+ 
++// Unmasked transfers between an RVV register group and an analog array. The
++// vector operand occupies the rd encoding field for both transfer directions;
++// rs1 selects the array and rs2 contains an element offset within its buffer.
++// VL and VTYPE select the chunk length and register group. These instructions
++// require SEW=32 and vstart=0 at execution time. They do not access memory.
++// Initially these are exposed through assembly/inline assembly only: there are
++// no selection patterns or scheduler latency estimates for register transfers.
++class MVM_vrr<bits<7> funct7, dag outs, dag ins, string opcodestr>
++    : RVInstR<funct7, 0b111, OPC_CUSTOM_0, outs, ins, opcodestr,
++              "$rd, $rs1, $rs2"> {
++  let hasSideEffects = 1;
++  let mayLoad = 0;
++  let mayStore = 0;
++  let hasNoSchedulingInfo = 1;
++  let Uses = [VL, VTYPE];
++}
++
+ //===----------------------------------------------------------------------===//
+ // XGolemAnalog Instructions
+ //===----------------------------------------------------------------------===//
+@@ -40,6 +57,14 @@ let DecoderNamespace = "XGolem" in {
+         def MVMS   : MVM_rr<0b0000100, 0b111, "mvm.s"   >, MVM_rrSched { let mayStore = 1; }
+         def MVMMV  : MVM_rr<0b0000101, 0b111, "mvm.mv"  >, MVM_rrSched;
+     }
++    let Predicates = [HasVendorXGolemAnalog, HasVInstructions] in {
++        def MVMVSET : MVM_vrr<0b0000110, (outs),
++                             (ins VR:$rd, GPR:$rs1, GPR:$rs2), "mvm.vset">;
++        def MVMVL : MVM_vrr<0b0000111, (outs),
++                           (ins VR:$rd, GPR:$rs1, GPR:$rs2), "mvm.vl">;
++        def MVMVS : MVM_vrr<0b0001000, (outs VR:$rd),
++                           (ins GPR:$rs1, GPR:$rs2), "mvm.vs">;
++    }
+ }
+ 
+ //===----------------------------------------------------------------------===//

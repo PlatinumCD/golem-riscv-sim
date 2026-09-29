@@ -1,0 +1,111 @@
+diff --git a/target/riscv/meson.build b/target/riscv/meson.build
+--- a/target/riscv/meson.build
++++ b/target/riscv/meson.build
+@@ -13,6 +13,7 @@
+   'cpu_helper.c',
+   'csr.c',
+   'golem_analog_helper.c',
++  'golem_lsq_helper.c',
+   'fpu_helper.c',
+   'gdbstub.c',
+   'op_helper.c',
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -1543,6 +1543,41 @@
+ #ifdef TARGET_RISCV
+ /* Nonfaulting preflight only: unlike probe_access_flags, do not dirty RAM or
+  * invalidate translated code before the corresponding SST timing grant. */
++/* Pure translation preflight for a deferred LSQ instruction. No grant,
++ * functional access, dirtying, or instruction-cache invalidation occurs. */
++bool mittens_sync_lsq_memory_probe(
++    void *cpu_env, uint64_t address, uint32_t size, uint32_t element_size,
++    bool write, uintptr_t retaddr, uint64_t *physical_address)
++{
++    CPUArchState *env = cpu_env;
++    CPUState *cpu = env_cpu(env);
++    CPUTLBEntryFull *full;
++    void *host;
++    const MMUAccessType access = write ? MMU_DATA_STORE : MMU_DATA_LOAD;
++    if (!mittens_sync_lsq_enabled() || !size || !element_size ||
++        address % element_size || size % element_size ||
++        size > TARGET_PAGE_SIZE - (address & ~TARGET_PAGE_MASK)) {
++        return false;
++    }
++    const int flags = probe_access_internal(cpu, address, size, access,
++        cpu_mmu_index(env, false), true, &host, &full, retaddr, true);
++    if ((flags & ~TLB_NOTDIRTY) || !host || !full ||
++        full->lg_page_size < TARGET_PAGE_BITS) {
++        return false;
++    }
++    if (write && (flags & TLB_NOTDIRTY) &&
++        !cpu_physical_memory_get_dirty_flag(address + full->xlat_section,
++                                           DIRTY_MEMORY_CODE)) {
++        return false;
++    }
++    const uint64_t physical = full->phys_addr + (address & ~TARGET_PAGE_MASK);
++    if (!mittens_sync_scratchpad_host_matches(host, physical, size)) {
++        return false;
++    }
++    *physical_address = physical;
++    return true;
++}
++
+ bool mittens_sync_vector_memory_probe(
+     void *cpu_env, uint64_t address, uint32_t size, uint32_t element_size,
+     bool write, uintptr_t retaddr)
+diff --git a/target/riscv/vector_helper.c b/target/riscv/vector_helper.c
+--- a/target/riscv/vector_helper.c
++++ b/target/riscv/vector_helper.c
+@@ -313,6 +313,13 @@
+     uint32_t esz = 1 << log2_esz;
+     uint32_t authorized_until = 0;
+ 
++#ifndef CONFIG_USER_ONLY
++    const bool write = ldst_elem == ste_b || ldst_elem == ste_h ||
++                       ldst_elem == ste_w || ldst_elem == ste_d;
++    if (mittens_lsq_vector_memory(vd, base, env, desc, log2_esz, evl, write, false, ra)) {
++        return;
++    }
++#endif
+     /* load bytes from guest memory */
+     for (i = env->vstart; i < evl; i++, env->vstart++) {
+         if (nf == 1 && i >= authorized_until) {
+@@ -617,6 +624,14 @@
+     uint32_t max_elems = vlenb >> log2_esz;
+     uint32_t authorized_until = 0;
+ 
++#ifndef CONFIG_USER_ONLY
++    const bool write = ldst_elem == ste_b;
++    if (mittens_lsq_vector_memory(vd, base, env, desc, log2_esz,
++                                  nf * max_elems, write, true, ra)) {
++        return;
++    }
++#endif
++
+     k = env->vstart / max_elems;
+     off = env->vstart % max_elems;
+ 
+diff --git a/target/riscv/cpu_helper.c b/target/riscv/cpu_helper.c
+--- a/target/riscv/cpu_helper.c
++++ b/target/riscv/cpu_helper.c
+@@ -31,6 +31,9 @@
+ #include "sysemu/cpu-timers.h"
+ #include "cpu_bits.h"
+ #include "debug.h"
++#ifndef CONFIG_USER_ONLY
++#include "hw/misc/mittens_sync.h"
++#endif
+ #include "tcg/oversized-guest.h"
+ 
+ int riscv_cpu_mmu_index(CPURISCVState *env, bool ifetch)
+@@ -1634,6 +1637,9 @@
+ 
+     RISCVCPU *cpu = RISCV_CPU(cs);
+     CPURISCVState *env = &cpu->env;
++    /* Fetch faults can occur during translation, before the runtime fetch
++     * rendezvous. Retire older deferred memory before any trap state changes. */
++    mittens_lsq_drain();
+     bool write_gva = false;
+     uint64_t s;
+ 

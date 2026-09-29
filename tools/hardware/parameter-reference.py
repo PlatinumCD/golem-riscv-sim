@@ -1,77 +1,49 @@
 #!/usr/bin/env python3
-"""Print the tile parameter reference, or check the checked-in copy."""
+"""Generate the current composition defaults without loading SST."""
 import argparse
-import re
-import subprocess
-import tempfile
+from dataclasses import asdict
+import json
 from pathlib import Path
-
+import sys
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'src'))
+from configuration import DEFAULTS, CPU_DEFAULTS, resolve
+from components.mordred.configuration import MeshParameters
+from components.mordred.tiles import ROUTER_DEFAULTS
 REFERENCE = ROOT / 'docs/parameters.md'
 
 
 def render():
-    # Expand the production macro with the C++ preprocessor. This preserves
-    # expression defaults and adjacent string literals without parsing C++.
-    source = r'''
-#include <cstdint>
-#include <iostream>
-#include <string>
-#include "src/sst/configuration/tileParameters.h"
-int main() {
-    std::cout << std::boolalpha;
-#define ROW(type, field, key, value, category, help, documented) \
-    std::cout << "| `" << key << "` | `" << #type << "` | `" \
-              << type(value) << "` | " << category << " | " << help << " |\n";
-    MITTENS_TILE_PARAMETERS(ROW)
-#undef ROW
-}
-'''
-    with tempfile.TemporaryDirectory(prefix='golem-parameter-reference-') as temp:
-        executable = Path(temp) / 'reference'
-        subprocess.run(['c++', '-std=c++17', '-I', str(ROOT), '-x', 'c++', '-',
-                        '-o', str(executable)], input=source, text=True, check=True)
-        rows = subprocess.check_output([str(executable)], text=True).splitlines()
-    header = (ROOT / 'src/sst/configuration/tileParameters.h').read_text()
-    groups = re.findall(r'// ([^\n]+)\n#define MITTENS_TILE_\w+_PARAMETERS\(X\)', header)
-    counts = [len(re.findall(r'\bX\(', block)) for block in re.split(
-        r'#define MITTENS_TILE_\w+_PARAMETERS\(X\)', header)[1:]]
-    # The final public macro composes groups; it contains no entries.
-    counts = [count for count in counts if count]
-    if len(groups) != len(counts) or sum(counts) != len(rows):
-        raise RuntimeError('parameter groups and macro expansion disagree')
-    lines = ['# Tile parameters', '',
-             'Generated from [tileParameters.h](../src/sst/configuration/tileParameters.h).',
-             'Values below are defaults; a simulation may override them.', '',
-             'Set these keys on `mittens.tile` in the SST configuration. Invalid combinations',
-             'are rejected by `TileConfiguration::validate`.', '',
-             'Categories: **hardware** describes modeled resources, **execution** controls',
-             'host execution and replay, **workload** selects guest inputs, and',
-             '**measurement** controls output. `scratchpad_access_width_bits` is currently',
-             'exported as execution metadata but sets the modeled SPM port width.', '',
-             'Regenerate with `python3 tools/hardware/parameter-reference.py`;',
-             'use `--check` to detect stale documentation.', '']
-    offset = 0
-    for group, count in zip(groups, counts):
-        lines += ['## ' + group.rstrip('.'), '',
-                  '| Parameter | Type | Default | Category | Meaning |',
-                  '|---|---|---|---|---|'] + rows[offset:offset + count] + ['']
-        offset += count
+    lines = ['# Simulation parameters', '',
+        'Generated from [tile/CPU composition](../src/configuration.py),',
+        '[mesh settings](../src/components/mordred/configuration.py), and',
+        '[NIU settings](../src/components/mordred/tiles.py).', '',
+        'These are standalone defaults. The complete-tile mesh helper defaults to four',
+        'SPM banks with all banks accessible to the CPU and the highest two to the router.',
+        'Bank lists select physical addresses and shared resources; they are not bandwidth quotas.', '',
+        'Parameter meanings and constraints: [tile and array parameters](../src/README.md#architecture-parameters),',
+        '[CPU](../src/components/riscv-qemu/README.md), [mesh](../src/components/mordred/README.md),',
+        '[router-facing SPM service](../src/components/mordred/spm-interface.md).', '',
+        'Regenerate with `python3 tools/hardware/parameter-reference.py > docs/parameters.md`.', '']
+    for title, values in [('Tile, scratchpad and accelerator', DEFAULTS), ('CPU', CPU_DEFAULTS),
+                           ('Router-facing SPM interface', ROUTER_DEFAULTS), ('Mesh and NIC', asdict(MeshParameters()))]:
+        lines += ['## '+title, '', '| Parameter | Default |', '|---|---|']
+        lines += [f'| `{name}` | `{json.dumps(value)}` |' for name, value in values.items()]
+        lines += ['']
+    lines += ['`array_link_width` is derived as `riscv_vector_length_bits / 8`.',
+              f'The standalone default resolves to {resolve()["array_link_width"]} bytes/cycle.', '']
     return '\n'.join(lines)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
-    args = parser.parse_args()
-    document = render()
+    args=parser.parse_args(); text=render()
     if args.check:
-        if not REFERENCE.exists() or REFERENCE.read_text() != document:
-            parser.exit(1, 'docs/parameters.md is stale; regenerate the parameter reference\n')
+        if not REFERENCE.is_file() or REFERENCE.read_text()!=text:
+            parser.exit(1, 'docs/parameters.md is stale; regenerate it\n')
         print('Parameter reference: current')
-    else:
-        print(document, end='')
+    else: print(text, end='')
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == '__main__': main()

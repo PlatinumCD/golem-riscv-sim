@@ -1,0 +1,34 @@
+diff --git a/src/sst/elements/merlin/topology/mesh.cc b/src/sst/elements/merlin/topology/mesh.cc
+--- a/src/sst/elements/merlin/topology/mesh.cc
++++ b/src/sst/elements/merlin/topology/mesh.cc
+@@ -109,11 +109,8 @@
+ 
+                 tt_ev->setNextPort(p);
+ 
+-                if ( id_loc[dim] == 0 && port < local_port_start ) { // Crossing dateline
+-                    int new_vc = vc ^ 1;
+-                    tt_ev->setVC(new_vc); // Toggle VC
+-                    output.verbose(CALL_INFO, 1, 1, "Crossing dateline.  Changing from VC %d to %d\n", vc, new_vc);
+-                }
++                // A non-wrapping mesh has one VC per VN and no torus dateline.
++                tt_ev->setVC(vc);
+ 
+                 break;
+ 
+@@ -120,7 +117,6 @@
+             } else {
+                 // Time to change direction
+                 tt_ev->routing_dim++;
+-                tt_ev->setVC(vc & (~1)); // Reset the VC
+             }
+         }
+     }
+@@ -133,7 +129,7 @@
+ {
+     topo_mesh_event* tt_ev = new topo_mesh_event(dimensions);
+     tt_ev->setEncapsulatedEvent(ev);
+-    tt_ev->setVC(tt_ev->getVN() * 2);
++    tt_ev->setVC(tt_ev->getVN());
+ 
+     // Need to figure out what the mesh address is for easier
+     // routing.

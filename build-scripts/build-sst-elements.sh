@@ -24,5 +24,5 @@ if [[ "${GOLEM_BUILD_SCOPE:-hardware}" == shared ]]; then
     exit 0
 fi
 
-# The canonical builder installs Mittens without registering into shared SST Core.
+# The canonical builder installs the current components without registering into shared SST Core.
 exec python3 "${PROJECT_ROOT}/tools/hardware/build.py" sst -j "${BUILD_JOBS}"

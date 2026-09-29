@@ -5,7 +5,7 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-readonly SOURCE="${GOLEM_LLVM_SOURCE:-${PROJECT_ROOT}/third_party/llvm-project}"
+readonly SOURCE="${GOLEM_LLVM_SOURCE:-${PREPARED_SOURCE_ROOT}/llvm}"
 readonly BUILD="${BUILD_ROOT}/llvm"
 readonly INSTALL="${INSTALL_ROOT}/llvm"
 readonly RISCV_GNU_TOOLCHAIN="${GOLEM_RISCV_GNU_TOOLCHAIN_DIR:-${INSTALL_ROOT}/riscv-gnu-toolchain}"
@@ -16,9 +16,10 @@ for command in cmake ninja git; do
 require_command "${command}"
 done
 "${SCRIPT_DIR}/build-compiler-python.sh"
-require_git_commit "${SOURCE}" "${LLVM_COMMIT}" "LLVM"
-if [[ "${SOURCE}" == "${PROJECT_ROOT}/third_party/llvm-project" ]]; then
-    require_clean_submodule "${SOURCE}" "LLVM"
+if [[ -z "${GOLEM_LLVM_SOURCE:-}" ]]; then
+    python3 -B "${SCRIPT_DIR}/prepare-llvm.py" --output "${SOURCE}"
+else
+    require_git_commit "${SOURCE}" "${LLVM_COMMIT}" "LLVM"
 fi
 require_executable "${RISCV_GNU_TOOLCHAIN}/bin/${GOLEM_TARGET}-gcc"
 require_executable "${RISCV_GNU_TOOLCHAIN}/bin/${GOLEM_TARGET}-g++"

@@ -1,118 +1,206 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="732" viewBox="0 0 940 860" role="img" aria-labelledby="title desc">
-  <title id="title">Executable-scratchpad tile, instruction cache, and memory paths</title>
-  <desc id="desc">Code, constants, data and stack occupy a 256 KiB banked scratchpad. Instructions reach the processor through an 8 KiB instruction cache; scalar and vector data accesses go directly to the scratchpad. Cache fills share its banks with TX DMA, RX DMA and global-memory DMA. The NIC connects to an external mesh router. Shared main memory uses a separate DMA controller, bypassing the mesh. Shown capacities are configurable defaults.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1510" viewBox="0 0 1280 1510" role="img" aria-labelledby="title desc">
+  <title id="title">Tile architecture: RISC-V, shared banked scratchpad, analog accelerator and Mordred</title>
+  <desc id="desc">Module diagram of the current src architecture. The CPU contains instruction execution and control, an instruction cache, scalar and vector register files, a vector load/store queue and an analog command queue. Blocking scalar loads/stores bypass the vector queue. They join instruction fetches from SPM and queued vector accesses at one CPU memory port on the CPU boundary. That port and the network interface unit connect to the same SPM bus. The bus connects to the SPM controller, which contains bank/channel scheduling and serves the physical scratchpad banks and their read/write ports below it. The analog accelerator connects exclusively to the CPU vector-register command interface; each replicated unit has a command queue, register-transfer engine, input buffer, analog array and output buffers. The register-transfer engine connects directly to the analog array for programming and through the input buffer for input preparation. The network interface contains local scratchpad request fragments, queued requests, receive buffers, receive ordering and storage-credit control. Its Mordred NIC connects to the mesh router through its local port. The router contains input buffers and virtual channels, routing and arbitration, a router switch, output buffers and link-credit control. Solid arrows show functional data/request/response connections; dashed arrows show control. Repeated bank and array shapes indicate replication without specifying counts. The drawing uses module and connection names without parameter values.</desc>
   <defs>
-    <marker id="end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#526477"/>
-    </marker>
-    <marker id="start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M 9 1 L 1 5 L 9 9 Z" fill="#526477"/>
+    <marker id="arrow-end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#52677e"/>
     </marker>
     <style>
-      text { font-family: Arial, Helvetica, sans-serif; fill: #233446; font-size: 18px; text-anchor: middle; }
-      .small { font-size: 14px; fill: #526477; }
-      .wire { fill: none; stroke: #526477; stroke-width: 2; marker-end: url(#end); }
-      .both { marker-start: url(#start); }
-      .box { fill: #fff; stroke: #a3b1bf; stroke-width: 1.5; }
-      .queue { fill: #f0f4fa; stroke: #96abc4; stroke-width: 1.5; }
-      .compute { fill: #eaf0fb; stroke: #8da7cf; }
-      .tx { fill: #e6f4f2; stroke: #73a9a1; }
-      .rx { fill: #efebfa; stroke: #a394c3; }
-      .memory { fill: #fff3df; stroke: #c5a36a; }
-      .network { fill: #e6effb; stroke: #8da7cf; }
+      text { font-family: Arial, Helvetica, sans-serif; font-size: 21px; fill: #22364a; text-anchor: middle; }
+      .heading { font-size: 23px; font-weight: 700; text-anchor: start; letter-spacing: .6px; }
+      .subheading { font-size: 20px; font-weight: 700; text-anchor: start; }
+      .small { font-size: 18px; }
+      .block { fill: #fff; stroke: #9cabbc; stroke-width: 1.5; }
+      .cpu-block { stroke: #94aed1; }
+      .spm-block { stroke: #82aa9e; }
+      .array-block { stroke: #bd9c69; }
+      .niu-block { stroke: #ad9ec8; }
+      .wire { fill: none; stroke: #52677e; stroke-width: 2.4; stroke-linejoin: round; marker-end: url(#arrow-end); }
+      .both { marker-start: url(#arrow-end); }
+      .branch { fill: none; stroke: #52677e; stroke-width: 2.4; stroke-linejoin: round; marker-start: url(#arrow-end); }
+      .connection { fill: none; stroke: #52677e; stroke-width: 2.4; stroke-linejoin: round; }
+      .control { fill: none; stroke: #52677e; stroke-width: 1.8; stroke-dasharray: 6 5; stroke-linejoin: round; marker-end: url(#arrow-end); }
+      .junction { fill: #52677e; }
     </style>
   </defs>
-  <rect width="940" height="860" fill="#fff"/>
-  <rect x="24" y="20" width="610" height="591" rx="16" fill="#f8fafc" stroke="#c5ced8" stroke-width="1.5"/>
-  <text x="49" y="49" style="text-anchor:start;font-size:14px;font-weight:bold;letter-spacing:2px">TILE</text>
-  <text x="610" y="49" class="small" style="text-anchor:end">Default capacities</text>
+  <rect width="1280" height="1510" fill="#fff"/>
 
-  <rect class="box compute" x="85" y="62" width="325" height="143" rx="9"/>
-  <text x="247" y="86">RISC-V processor</text>
-  <rect x="99" y="96" width="297" height="25" rx="5" fill="#dbe6f7"/>
-  <text x="247" y="114" class="small">Instruction execution &amp; control</text>
-  <rect x="99" y="130" width="145" height="48" rx="5" fill="#fff"/>
-  <rect x="253" y="130" width="143" height="48" rx="5" fill="#fff"/>
-  <text x="171" y="149" class="small">Scalar arithmetic</text>
-  <text x="171" y="169" style="font-size:13px">Integer + FP registers</text>
-  <text x="324" y="149" class="small">RVV arithmetic</text>
-  <text x="324" y="169" style="font-size:13px">Vector registers</text>
-  <text x="247" y="195" class="small">Scalar + vector loads / stores</text>
-  <path class="wire both" d="M 413 127 H 450" stroke-dasharray="5 4"/>
-  <rect x="453" y="85" width="157" height="85" rx="9" fill="#faf7f1" stroke="#b6a888" stroke-width="1.5" stroke-dasharray="5 4"/>
-  <text x="531" y="118">Analog arrays</text>
-  <text x="531" y="145" class="small">Optional</text>
+  <!-- The local router is outside the compute-tile boundary, as in the mesh view. -->
+  <rect id="tile" x="24" y="20" width="1232" height="1134" rx="20" fill="#f8fafc" stroke="#c5cfda" stroke-width="1.6"/>
+  <text x="56" y="56" class="heading">TILE</text>
 
-  <rect class="box compute" x="453" y="179" width="157" height="30" rx="6"/>
-  <text x="531" y="200" style="font-size:16px">8 KiB I-cache</text>
-  <path class="wire" d="M 531 223 V 211"/>
-  <path class="wire" d="M 450 194 H 431 V 184 H 413"/>
+  <!-- Main module groups. -->
+  <rect id="cpu" x="56" y="78" width="684" height="500" rx="14" fill="#eaf1fc" stroke="#91acd0" stroke-width="1.6"/>
+  <text x="84" y="116" class="heading">RISC-V CPU</text>
+  <rect id="arrays" x="802" y="78" width="422" height="500" rx="14" fill="#fcf5e9" stroke="#c2a573" stroke-width="1.6"/>
+  <text x="830" y="116" class="heading">ANALOG ACCELERATOR</text>
+  <rect id="spm" x="56" y="626" width="684" height="496" rx="14" fill="#eaf4ef" stroke="#88ae9f" stroke-width="1.6"/>
+  <text x="84" y="664" class="heading">SHARED BANKED SPM</text>
+  <rect id="network-interface" x="802" y="626" width="422" height="496" rx="14" fill="#f1eef8" stroke="#aa9ac4" stroke-width="1.6"/>
+  <text x="830" y="664" class="heading">NETWORK INTERFACE</text>
 
-  <path class="wire both" d="M 247 207 V 222"/>
-  <rect x="85" y="225" width="525" height="105" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
-  <text x="347" y="250">Scratchpad · 256 KiB</text>
-  <text x="347" y="271" class="small">Code · constants · data · stack</text>
-  <rect class="box" x="105" y="284" width="126" height="30" rx="4"/>
-  <rect class="box" x="245" y="284" width="126" height="30" rx="4"/>
-  <rect class="box" x="463" y="284" width="126" height="30" rx="4"/>
-  <text x="168" y="305" class="small">Bank 0</text>
-  <text x="308" y="305" class="small">Bank 1</text>
-  <text x="416" y="305">…</text>
-  <text x="526" y="305" class="small">Bank 7</text>
+  <!-- CPU instruction and register paths. Control is distinct from payload. -->
+  <path class="wire" d="M 266 182 H 302"/>
+  <path class="wire both" d="M 354 218 L 354 248 H 184 V 294"/>
+  <path class="wire both" d="M 449 218 L 449 294"/>
+  <path class="control" d="M 648 218 V 288"/>
+  <path class="wire both" d="M 449 368 L 449 436"/>
+  <path class="wire both" d="M 548 331 H 582"/>
+  <rect id="instruction-cache" class="block cpu-block" x="84" y="146" width="182" height="72" rx="8"/>
+  <text x="175" y="176.5">Instruction</text>
+  <text x="175" y="201.5">cache</text>
+  <rect id="execution-control" class="block cpu-block" x="302" y="146" width="412" height="72" rx="8"/>
+  <text x="508" y="176.5">Instruction execution</text>
+  <text x="508" y="201.5">and control</text>
+  <rect id="scalar-registers" class="block cpu-block" x="84" y="294" width="200" height="74" rx="8"/>
+  <text x="184" y="324">Scalar registers</text>
+  <text x="184" y="350" class="small">Integer + FP</text>
+  <rect id="vector-registers" x="350" y="294" width="198" height="74" rx="8" fill="#dce8fb" stroke="#6b94c7" stroke-width="1.6"/>
+  <text x="449" y="324">Vector</text>
+  <text x="449" y="350">register file</text>
+  <rect id="lsq" class="block cpu-block" x="350" y="436" width="198" height="84" rx="8"/>
+  <text x="449" y="459">Vector</text>
+  <text x="449" y="484">load/store</text>
+  <text x="449" y="509">queue</text>
+  <rect id="analog-command-queue" class="block cpu-block" x="582" y="288" width="132" height="86" rx="8"/>
+  <text x="648" y="313">Analog</text>
+  <text x="648" y="338">command</text>
+  <text x="648" y="363">queue</text>
 
-  <path class="wire" d="M 162 331 V 368"/>
-  <path class="wire" d="M 362 368 V 332"/>
-  <rect class="box tx" x="85" y="371" width="155" height="65" rx="8"/>
-  <rect class="box rx" x="285" y="371" width="155" height="65" rx="8"/>
-  <text x="162" y="398">TX DMA</text>
-  <text x="162" y="420" class="small">1, 2, or 4 lanes</text>
-  <text x="362" y="398">RX DMA</text>
-  <text x="362" y="420" class="small">1, 2, or 4 lanes</text>
+  <!-- Cache fills, blocking scalar accesses and the vector LSQ share one CPU port. -->
+  <path id="cache-fill-path" class="branch" d="M 84 182 H 72 V 550 H 610 V 570"/>
+  <path id="scalar-memory-path" class="branch" d="M 184 368 L 184 550"/>
+  <path id="vector-memory-path" class="branch" d="M 449 520 L 449 550"/>
+  <text x="128" y="467" class="small">Fetch</text>
+  <text x="128" y="490" class="small">instructions</text>
+  <text x="128" y="513" class="small">from SPM</text>
+  <text x="204" y="443" class="small" style="text-anchor:start">Blocking</text>
+  <text x="204" y="466" class="small" style="text-anchor:start">loads/stores</text>
+  <circle class="junction" cx="184" cy="550" r="3.8"/>
+  <circle class="junction" cx="449" cy="550" r="3.8"/>
+  <rect id="cpu-memory-port" x="602" y="570" width="16" height="16" rx="2" fill="#fff" stroke="#52677e" stroke-width="2"/>
+  <text x="592" y="606" class="small" style="text-anchor:end">CPU memory port</text>
+  <path id="cpu-spm-interface" class="wire both" d="M 610 586 L 610 700"/>
 
-  <path class="wire" d="M 162 437 V 465"/>
-  <path class="wire" d="M 362 451 V 438"/>
-  <rect class="queue tx" x="85" y="468" width="155" height="55" rx="6"/>
-  <rect class="queue rx" x="285" y="453" width="155" height="82" rx="6"/>
-  <text x="162" y="491" style="font-size:16px">Send queues</text>
-  <text x="162" y="511" class="small">One per TX lane</text>
-  <text x="362" y="473" style="font-size:14px">Shared RX scheduling</text>
-  <text x="362" y="489" style="font-size:12px">Per-source ordering</text>
-  <path d="M 296 496 H 429" stroke="#c2b7da"/>
-  <text x="362" y="513" style="font-size:14px">Input buffers</text>
-  <text x="362" y="529" style="font-size:12px">Per incoming lane</text>
-  <path class="wire" d="M 162 524 V 547"/>
-  <path class="wire" d="M 362 547 V 537"/>
-  <rect class="box network" x="85" y="550" width="355" height="43" rx="8"/>
-  <text x="262" y="578">Network interface · NIC</text>
+  <!-- Stacked outlines indicate independently replicated arrays, with no count. -->
+  <rect x="844" y="158" width="364" height="408" rx="10" fill="#eee1c9" stroke="#c2a573" stroke-width="1.6"/>
+  <rect x="836" y="150" width="364" height="408" rx="10" fill="#f5ead6" stroke="#c2a573" stroke-width="1.6"/>
+  <rect id="analog-array" x="828" y="142" width="364" height="408" rx="10" fill="#fffbf3" stroke="#b59869" stroke-width="1.6"/>
 
-  <path class="wire both" d="M 540 333 V 368"/>
-  <rect class="box memory" x="475" y="371" width="135" height="65" rx="8"/>
-  <text x="542" y="398" style="font-size:16px">Global-memory</text>
-  <text x="542" y="422" style="font-size:16px">DMA</text>
-  <path class="wire both" d="M 613 403 H 706"/>
-  <text x="670" y="366" class="small">Separate</text>
-  <text x="670" y="385" class="small">DMA link</text>
+  <!-- Scalar compute launch bypasses the CPU vector-transfer command queue. -->
+  <path class="control" d="M 714 182 H 754 V 130 H 1030 V 190"/>
+  <path id="vector-array-interface" class="wire both" d="M 714 331 H 772 V 216 H 852"/>
+  <path class="control" d="M 852 228 H 840 V 508 H 852"/>
+  <path class="wire both" d="M 1012 242 L 1012 276"/>
+  <path class="wire" d="M 926 332 V 480"/>
+  <path class="wire" d="M 1098 332 V 370"/>
+  <path class="wire" d="M 1098 426 V 452 H 970 V 480"/>
+  <path class="wire" d="M 1000 508 H 1024"/>
+  <path class="wire" d="M 1172 508 H 1182 V 304 H 1172"/>
+  <rect id="array-command-queue" class="block array-block" x="852" y="190" width="320" height="52" rx="8"/>
+  <text x="1012" y="223">Command queue</text>
+  <rect id="array-transfer-engine" class="block array-block" x="852" y="276" width="320" height="56" rx="8"/>
+  <text x="1012" y="311">Register transfer engine</text>
+  <rect id="array-input" class="block array-block" x="1024" y="370" width="148" height="56" rx="8"/>
+  <text x="1098" y="392.5">Input</text>
+  <text x="1098" y="417.5">buffer</text>
+  <rect id="mvm-engine" class="block array-block" x="852" y="480" width="148" height="56" rx="8"/>
+  <text x="926" y="502.5">Analog</text>
+  <text x="926" y="527.5">Array</text>
+  <rect id="array-results" class="block array-block" x="1024" y="480" width="148" height="56" rx="8"/>
+  <text x="1098" y="502.5">Output</text>
+  <text x="1098" y="527.5">buffers</text>
 
-  <text x="809" y="326" style="font-size:14px;font-weight:bold;letter-spacing:1px">SHARED MAIN MEMORY</text>
-  <rect class="box memory" x="709" y="350" width="200" height="111" rx="9"/>
-  <text x="809" y="380">Memory controller</text>
-  <rect class="queue" x="726" y="398" width="166" height="43" rx="5"/>
-  <text x="809" y="425" style="font-size:16px">Request queues</text>
-  <path class="wire both" d="M 809 464 V 506"/>
-  <rect x="709" y="509" width="200" height="74" rx="9" fill="#eef6f3" stroke="#8aafa0" stroke-width="1.5"/>
-  <text x="809" y="540">Main memory</text>
-  <text x="809" y="563" class="small">Shared across tiles</text>
+  <!-- CPU and NIU share one bus and controller; bank scheduling is internal. -->
+  <path class="wire both" d="M 398 762 L 398 794"/>
+  <path class="connection" d="M 398 950 V 966 M 176 966 H 620"/>
+  <path class="wire both" d="M 176 966 L 176 1008"/>
+  <path class="wire both" d="M 398 966 L 398 1008"/>
+  <path class="wire both" d="M 620 966 L 620 1008"/>
+  <rect id="spm-bus" class="block spm-block" x="84" y="700" width="628" height="62" rx="8"/>
+  <text x="398" y="738">SPM bus</text>
+  <g id="spm-controller">
+  <rect id="spm-controller-outline" x="84" y="794" width="628" height="156" rx="10" fill="#f7fbf9" stroke="#82aa9e" stroke-width="1.5"/>
+  <text x="398" y="832">SPM controller</text>
+  <rect id="bank-channel-scheduling" class="block spm-block" x="112" y="864" width="572" height="62" rx="8"/>
+  <text x="398" y="902">Bank/channel scheduling</text>
+  </g>
+  <g id="spm-bank-left">
+  <rect class="block spm-block" x="84" y="1008" width="184" height="84" rx="8"/>
+  <path d="M 84 1044 H 268" stroke="#b2cbbf" stroke-width="1.3"/>
+  <text x="176" y="1033" class="small">Read / write ports</text>
+  <text x="176" y="1075">SPM bank</text>
+  </g>
+  <g id="spm-bank-middle">
+  <rect class="block spm-block" x="306" y="1008" width="184" height="84" rx="8"/>
+  <path d="M 306 1044 H 490" stroke="#b2cbbf" stroke-width="1.3"/>
+  <text x="398" y="1033" class="small">Read / write ports</text>
+  <text x="398" y="1075">SPM bank</text>
+  </g>
+  <g id="spm-bank-right">
+  <rect class="block spm-block" x="528" y="1008" width="184" height="84" rx="8"/>
+  <path d="M 528 1044 H 712" stroke="#b2cbbf" stroke-width="1.3"/>
+  <text x="620" y="1033" class="small">Read / write ports</text>
+  <text x="620" y="1075">SPM bank</text>
+  </g>
+  <text x="509" y="1075">…</text>
 
-  <path class="wire both" d="M 262 596 V 720 H 525 V 741"/>
-  <text x="365" y="710" class="small">Tile connection</text>
-  <rect class="box network" x="500" y="744" width="180" height="53" rx="8"/>
-  <text x="590" y="777">Mesh router</text>
-  <path class="wire both" d="M 497 771 H 410"/>
-  <text x="430" y="754" class="small">West</text>
-  <path class="wire both" d="M 683 771 H 770"/>
-  <text x="750" y="754" class="small">East</text>
-  <path class="wire both" d="M 590 741 V 703"/>
-  <text x="590" y="695" class="small">North</text>
-  <path class="wire both" d="M 590 800 V 833"/>
-  <text x="633" y="840" class="small">South</text>
+  <!-- NIU request and receive storage; NIC buffers are a separate module. -->
+  <rect id="niu" x="828" y="694" width="372" height="242" rx="10" fill="#faf8fd" stroke="#ad9ec8" stroke-width="1.6"/>
+  <text x="848" y="726" class="subheading">NIU</text>
+  <path id="niu-spm-interface" class="wire both" d="M 712 731 H 780 V 781 H 844"/>
+  <path class="wire both" d="M 994 781 H 1032"/>
+  <path class="wire" d="M 919 850 V 814"/>
+  <path class="control" d="M 1107 850 V 814"/>
+  <path class="control" d="M 963 814 V 832 H 1080 V 850"/>
+  <rect id="niu-fragments" class="block niu-block" x="844" y="748" width="150" height="66" rx="8"/>
+  <text x="919" y="775.5" class="small">SPM request</text>
+  <text x="919" y="800.5" class="small">queue</text>
+  <rect id="niu-requests" class="block niu-block" x="1032" y="748" width="150" height="66" rx="8"/>
+  <text x="1107" y="775.5" class="small">Transfer</text>
+  <text x="1107" y="800.5" class="small">request queue</text>
+  <rect id="niu-receive" class="block niu-block" x="844" y="850" width="150" height="66" rx="8"/>
+  <text x="919" y="877.5" class="small">Receive buffers</text>
+  <text x="919" y="902.5" class="small">and ordering</text>
+  <rect id="storage-credits" class="block niu-block" x="1032" y="850" width="150" height="66" rx="8"/>
+  <text x="1107" y="877.5" class="small">Storage-credit</text>
+  <text x="1107" y="902.5" class="small">control</text>
+  <path class="wire both" d="M 1014 936 L 1014 966"/>
+  <rect id="nic" x="828" y="966" width="372" height="140" rx="10" fill="#e9edf9" stroke="#99a7c6" stroke-width="1.6"/>
+  <text x="1014" y="998" style="font-size:20px;font-weight:700">Mordred NIC</text>
+  <rect id="nic-transmit" class="block" x="844" y="1016" width="150" height="68" rx="8"/>
+  <text x="919" y="1044.5">Transmit</text>
+  <text x="919" y="1069.5">buffers</text>
+  <rect id="nic-receive" class="block" x="1032" y="1016" width="150" height="68" rx="8"/>
+  <text x="1107" y="1044.5">Receive</text>
+  <text x="1107" y="1069.5">buffers</text>
+
+  <!-- Router internals aggregate all ports; cardinal links connect to peers. -->
+  <path id="nic-router-interface" class="wire both" d="M 1014 1106 L 1014 1190"/>
+  <text x="998" y="1181" class="small" style="text-anchor:end">Local port</text>
+  <rect id="router" x="220" y="1190" width="840" height="252" rx="14" fill="#eaf0f8" stroke="#91a9c5" stroke-width="1.6"/>
+  <text x="246" y="1228" class="heading">MORDRED MESH ROUTER</text>
+  <path class="wire" d="M 452 1302 H 528"/>
+  <path class="wire" d="M 752 1302 H 828"/>
+  <path class="control" d="M 493 1370 V 1352 H 640 V 1334"/>
+  <path class="control" d="M 791 1370 V 1352 H 931 V 1334"/>
+  <rect id="router-input" class="block" x="246" y="1270" width="206" height="64" rx="8"/>
+  <text x="349" y="1295">Input buffers</text>
+  <text x="349" y="1321" class="small">and virtual channels</text>
+  <rect id="router-switch" class="block" x="528" y="1270" width="224" height="64" rx="8"/>
+  <text x="640" y="1309">Router switch</text>
+  <rect id="router-output" class="block" x="828" y="1270" width="206" height="64" rx="8"/>
+  <text x="931" y="1309">Output buffers</text>
+  <rect id="router-arbitration" class="block" x="374" y="1370" width="238" height="52" rx="8"/>
+  <text x="493" y="1403" class="small">Routing and arbitration</text>
+  <rect id="router-credits" class="block" x="672" y="1370" width="238" height="52" rx="8"/>
+  <text x="791" y="1403">Link-credit control</text>
+  <path class="wire both" d="M 220 1302 H 112"/>
+  <text x="162" y="1286" class="small">West</text>
+  <path class="wire both" d="M 1060 1302 H 1168"/>
+  <text x="1118" y="1286" class="small">East</text>
+  <path class="wire both" d="M 640 1190 L 640 1164"/>
+  <text x="687" y="1181" class="small">North</text>
+  <path class="wire both" d="M 640 1442 L 640 1482"/>
+  <text x="687" y="1481" class="small">South</text>
 </svg>

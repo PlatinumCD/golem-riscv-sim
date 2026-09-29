@@ -1,0 +1,32 @@
+diff --git a/mlir/lib/Dialect/Bufferization/Transforms/BufferResultsToOutParams.cpp b/mlir/lib/Dialect/Bufferization/Transforms/BufferResultsToOutParams.cpp
+index 6924e88c5..081c14b25 100644
+--- a/mlir/lib/Dialect/Bufferization/Transforms/BufferResultsToOutParams.cpp
++++ b/mlir/lib/Dialect/Bufferization/Transforms/BufferResultsToOutParams.cpp
+@@ -13,6 +13,8 @@
+ #include "mlir/Dialect/MemRef/IR/MemRef.h"
+ #include "mlir/IR/Operation.h"
+ 
++#include "llvm/ADT/DenseMap.h"
++
+ namespace mlir {
+ namespace bufferization {
+ #define GEN_PASS_DEF_BUFFERRESULTSTOOUTPARAMSPASS
+@@ -119,9 +121,18 @@ updateReturnOps(func::FuncOp func, ArrayRef<BlockArgument> appendedEntryArgs,
+       else
+         keepAsReturnOperands.push_back(operand);
+     }
++    // A return may expose the same allocation through multiple results.  In
++    // that case, hoisting the first occurrence would erase the allocation and
++    // leave the remaining entries in `copyIntoOutParams` dangling.  Keep the
++    // shared allocation alive and copy it into each distinct out parameter.
++    // Unique allocation results retain the allocation-elision fast path.
++    llvm::DenseMap<Value, unsigned> resultOccurrences;
++    for (Value value : copyIntoOutParams)
++      ++resultOccurrences[value];
+     OpBuilder builder(op);
+     for (auto [orig, arg] : llvm::zip(copyIntoOutParams, appendedEntryArgs)) {
+       if (options.hoistStaticAllocs &&
++          resultOccurrences.lookup(orig) == 1 &&
+           isa_and_nonnull<bufferization::AllocationOpInterface>(
+               orig.getDefiningOp()) &&
+           mlir::cast<MemRefType>(orig.getType()).hasStaticShape()) {

@@ -1,0 +1,24 @@
+diff --git a/target/riscv/insn32.decode b/target/riscv/insn32.decode
+--- a/target/riscv/insn32.decode
++++ b/target/riscv/insn32.decode
+@@ -104,6 +104,9 @@ mvm_load     0000010 ..... ..... 111 ..... 0001011 @r
+ mvm_compute  0000011 ..... ..... 111 ..... 0001011 @r
+ mvm_store    0000100 ..... ..... 111 ..... 0001011 @r
+ mvm_move     0000101 ..... ..... 111 ..... 0001011 @r
++mvm_vset     0000110 ..... ..... 111 ..... 0001011 @r
++mvm_vl       0000111 ..... ..... 111 ..... 0001011 @r
++mvm_vs       0001000 ..... ..... 111 ..... 0001011 @r
+ 
+ # Formats 64:
+ @sh5     .......  ..... .....  ... ..... ....... &shift  shamt=%sh5      %rs1 %rd
+diff --git a/target/riscv/helper.h b/target/riscv/helper.h
+--- a/target/riscv/helper.h
++++ b/target/riscv/helper.h
+@@ -3,6 +3,7 @@ DEF_HELPER_2(raise_exception, noreturn, env, i32)
+ 
+ /* Golem analog custom instructions */
+ DEF_HELPER_4(golem_analog, tl, env, i32, tl, tl)
++DEF_HELPER_5(golem_vector_analog, void, env, i32, i32, tl, tl)
+ 
+ /* Mittens dynamic vector-instruction accounting */
+ DEF_HELPER_0(mittens_sync_vector_instruction, void)

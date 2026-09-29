@@ -1,0 +1,328 @@
+--- a/MordredNicBase.h
++++ b/MordredNicBase.h
+@@ -17,6 +17,7 @@
+ 
+ #include "sst_config.h"
+ #include "MordredEvents.h"
++#include "cycleProfile.h"
+ 
+ namespace SST::Mordred {
+ 
+@@ -123,6 +124,9 @@
+   Statistic<uint64_t>* statPacketsRecv{};
+   Statistic<double>*   statAvgNocLatency{};
+   Statistic<double>*   statAvgFlitsPerPacket{};
++  TileComponents::CycleProfile cycleProfile;
++  void profileState();
++  void profileFlit(const char* event, const MordredFlit* flit);
+ 
+ private:
+   void              resizeVectors();
+--- a/MordredNicBase.cc
++++ b/MordredNicBase.cc
+@@ -16,6 +16,7 @@
+ 
+ MordredNicBase::MordredNicBase( ComponentId_t cid, Params& params, int vns, const char* class_name )
+     : SimpleNetwork( cid ) {
++  cycleProfile.open(getName());
+   const auto verbosity = params.find<uint32_t>( "verbose", MORDRED_VERBOSE_MED );
+   output = new SST::Output( std::string( class_name ) + "[" + getName() + ":@p:@t]: ", verbosity, 0, Output::STDOUT );
+ 
+@@ -172,6 +173,7 @@
+ }
+ 
+ void MordredNicBase::finish() {
++  cycleProfile.flush();
+   const double avg_ticks = totalPackets > 0 ? (double) totalNocLatency / (double) totalPackets : -1.0;
+   statPacketsRecv->addData( totalPackets );
+   statAvgNocLatency->addData( avg_ticks );
+@@ -222,6 +224,9 @@
+   auto* tail              = new MordredFlit( req, MordredFlit::TAIL, packetId++, u_num_flits - 1 );
+   tail->pkt_created_cycle = created_cycle;
+   outBuf.at( u_vn ).push( tail );
++  cycleProfile.record(getCurrentSimTimeNano(), "event", "packet_enqueue", u_vn,
++                      req->size_in_bits, tail->packet_id, req->dest);
++  profileState();
+ 
+   if( req->getTraceType() != Request::NONE )
+     output->output(
+@@ -240,6 +245,9 @@
+ 
+   auto* req = inBuf.at( u_vn ).front();
+   inBuf.at( u_vn ).pop();
++  cycleProfile.record(getCurrentSimTimeNano(), "event", "packet_dequeue", u_vn,
++                      req->size_in_bits, 0, req->src);
++  profileState();
+ 
+   if( req->getTraceType() != Request::NONE )
+     output->output(
+@@ -309,6 +317,7 @@
+       // serializes and discards BODY/TAIL flits on-the-spot).
+       std::string flit_dbg = flit->pktIdStr();
+ 
++      profileFlit("flit_send", flit);
+       transportSendFlit( flit, vn );
+       sent = true;
+       rtrCredits.at( vn )--;
+@@ -322,13 +331,16 @@
+     }
+   }
+ 
++  profileState();
+   if( sent )
+     return false;
+ 
+   for( uint32_t vn = 0; vn < numVns; vn++ ) {
+     if( inReturnCredits.at( vn ) > 0 ) {
++      cycleProfile.record(getCurrentSimTimeNano(), "event", "credit_send", vn, inReturnCredits.at(vn));
+       transportSendCredit( new MordredCreditEvent( vn, 0, inReturnCredits.at( vn ) ), vn );
+       inReturnCredits.at( vn ) = 0;
++      profileState();
+       break;
+     }
+   }
+@@ -344,6 +356,7 @@
+     if( credit->vn >= numVns )
+       output->fatal( CALL_INFO, -1, "Unsupported vn=%u\n", credit->vn );
+     rtrCredits.at( credit->vn ) += credit->credits;
++    cycleProfile.record(getCurrentSimTimeNano(), "event", "credit_receive", credit->vn, credit->credits);
+     output->verbose(
+       CALL_INFO, MORDRED_VERBOSE_HIGH, 0,
+       "Received %" PRId32 " credits for vn=%" PRIu32 ", cur=%" PRId32 "\n",
+@@ -358,6 +371,7 @@
+     auto* req  = flit->getRequest();
+     if( !flit || !req )
+       output->fatal( CALL_INFO, -1, "Null flit or request\n" );
++    profileFlit("flit_receive", flit);
+ 
+     if( flit->ftype == MordredFlit::HEAD && req->getTraceType() == Request::FULL )
+       output->output(
+@@ -392,6 +406,26 @@
+ 
+   default:
+     output->fatal( CALL_INFO, -1, "processIncomingEvent: unknown event type=%d\n", (int) bev->getType() );
++  }
++  profileState();
++}
++
++void MordredNicBase::profileFlit(const char* event, const MordredFlit* flit) {
++  cycleProfile.record(getCurrentSimTimeNano(), "event", event, flit->vn,
++                      flit->flit_id, flit->packet_id, flit->req->src);
++}
++
++void MordredNicBase::profileState() {
++  if (!cycleProfile) return;
++  const auto now = getCurrentSimTimeNano();
++  for (uint32_t vn = 0; vn < numVns; ++vn) {
++    cycleProfile.record(now, "state", "tx_flits", vn, outBuf.at(vn).size());
++    cycleProfile.record(now, "state", "rx_packets", vn, inBuf.at(vn).size());
++    cycleProfile.record(now, "state", "router_credits", vn, rtrCredits.at(vn));
++    cycleProfile.record(now, "state", "tx_free_flits", vn, outbufCredits.at(vn));
++    cycleProfile.record(now, "state", "return_credits", vn, inReturnCredits.at(vn));
++    cycleProfile.record(now, "state", "tx_credit_blocked", vn,
++                        !outBuf.at(vn).empty() && rtrCredits.at(vn) == 0);
+   }
+ }
+ 
+--- a/MordredRouter.h
++++ b/MordredRouter.h
+@@ -28,6 +28,7 @@
+ 
+ // Local SST headers
+ #include "RtrPortControlAPI.h"
++#include "cycleProfile.h"
+ #ifdef MORDRED_ENABLE_PHYS_CHANNEL
+ #include "RtrPortControlPC.h"
+ #endif
+@@ -41,6 +42,7 @@
+ namespace SST::Mordred {
+ 
+ class MordredRouter : public SST::Component {
++  TileComponents::CycleProfile cycleProfile;
+ 
+ public:
+   SST_ELI_REGISTER_COMPONENT(
+--- a/MordredRouter.cc
++++ b/MordredRouter.cc
+@@ -20,6 +20,7 @@
+ using namespace SST::Mordred;
+ 
+ MordredRouter::MordredRouter( ComponentId_t cid, Params& params ) : Component( cid ) {
++  cycleProfile.open(getName());
+ 
+   auto Verbosity = params.find<uint32_t>( "verbose", MORDRED_VERBOSE_MED );
+   // Initialize the output handler
+@@ -235,6 +236,7 @@
+ }
+ 
+ void MordredRouter::finish() {
++  cycleProfile.flush();
+   output.verbose(CALL_INFO, MORDRED_VERBOSE_HIGH, 0, "MordredRouter::finish\n");
+   output.flush();
+   topology->finish();
+@@ -256,10 +258,12 @@
+ 
+     auto sending_port = portsVec.at( i )->getSendingPort();  //ensures we have a sender and a credit available
+     if( sending_port == UINT32_MAX ) {
++      cycleProfile.record(getCurrentSimTimeNano(), "state", "crossbar_state", i, 0);
+       statPerPortXbarIdle.at( i )->addData( 1 );
+       continue;
+     }
+     if( sending_port == ( UINT32_MAX - 1 ) ) {
++      cycleProfile.record(getCurrentSimTimeNano(), "state", "crossbar_state", i, 1);
+       statPerPortXbarBlocked.at( i )->addData( 1 );
+       continue;
+     }
+@@ -267,12 +271,14 @@
+     // Get the flit from the sender -- multiple checks there for invalid/null concerns
+     auto flit = portsVec.at( sending_port )->getInBufFlit();
+     if( flit == nullptr ) {
++      cycleProfile.record(getCurrentSimTimeNano(), "state", "crossbar_state", i, 2);
+       // can happen if there was a delay due to a lack of credits
+       statPerPortFlitUnavailable.at( sending_port )->addData( 1 );
+       continue;
+     }
+ 
+     // Give the flit to the receiver
++    cycleProfile.record(getCurrentSimTimeNano(), "state", "crossbar_state", i, 3);
+     portsVec.at( i )->recvOutBufFlit( flit );
+ 
+     // Do tracing
+--- a/RtrPortControlBase.h
++++ b/RtrPortControlBase.h
+@@ -14,6 +14,7 @@
+ #include "sst_config.h"
+ #include "MordredEvents.h"
+ #include "RtrPortControlAPI.h"
++#include "cycleProfile.h"
+ 
+ namespace SST::Mordred {
+ 
+@@ -44,7 +45,7 @@
+   void init( unsigned int phase ) override;
+   void setup() override;
+   void complete( unsigned int phase ) override;
+-  void finish() override { /* empty */ }
++  void finish() override { cycleProfile.flush(); }
+ 
+   // RtrPortControlAPI untimed interface
+   void   sendUntimedData( Event* ev ) override;
+@@ -224,6 +225,9 @@
+   std::vector<std::vector<Statistic<uint64_t>*>> statLinkSentFlitCnt;
+   std::vector<std::vector<Statistic<uint64_t>*>> statLinkSentPacketCnt;
+   Statistic<uint64_t>*                           statLinkOutputStalledCnt{};
++  TileComponents::CycleProfile cycleProfile;
++  void profileState();
++  void profileFlit(const char* event, const MordredFlit* flit);
+ 
+ private:
+   void              allocateBuffers();
+--- a/RtrPortControlBase.cc
++++ b/RtrPortControlBase.cc
+@@ -31,6 +31,7 @@
+     rtrId( rtr_num ),
+     portId( port_num ),
+     rtrSharedObjs( rtr_shared_objs ) {
++  cycleProfile.open(getName() + ".port" + std::to_string(portId));
+   const auto verbosity = params.find<uint32_t>( "verbose", MORDRED_VERBOSE_MED );
+   output               = new Output(
+     std::string( class_name ) + "[[" + std::to_string( rtrId ) + "." + std::to_string( portId ) + "]:@p:@t]: ",
+@@ -343,6 +344,7 @@
+         output->verbose( CALL_INFO, MORDRED_VERBOSE_HIGH, 0,
+                          "Flit %s going to transport layer\n",
+                          flit->pktIdStr().c_str() );
++        profileFlit("flit_send", flit);
+         transportSendFlit( flit, vn );
+         sent = true;
+         break;
+@@ -357,6 +359,7 @@
+   // the original !sent guard suppressed credit return whenever the output
+   // was active, causing credit starvation under load.
+   returnCredit();
++  profileState();
+ }
+ 
+ void RtrPortControlBase::processIncomingEvent( SST::Event* ev ) {
+@@ -369,6 +372,8 @@
+     auto* credit = static_cast<MordredCreditEvent*>( bev );
+     validateVnVc( credit->vn, credit->vc );
+     outStateVec.at( credit->vn ).at( credit->vc ).destCredits += credit->credits;
++    cycleProfile.record(getCurrentSimTimeNano(), "event", "credit_receive",
++                        credit->vn * numVcs + credit->vc, credit->credits);
+     delete bev;
+     break;
+   }
+@@ -376,6 +381,7 @@
+     auto* flit = static_cast<MordredFlit*>( bev );
+     validateVnVc( flit->vn, flit->cur_vc );
+     inStateVec.at( flit->vn ).at( flit->cur_vc ).inBuf.push( flit );
++    profileFlit("flit_receive", flit);
+     if( flit->ftype == MordredFlit::HEAD &&
+         flit->getRequest()->getTraceType() != Interfaces::SimpleNetwork::Request::NONE ) {
+       output->output(
+@@ -395,6 +401,7 @@
+   }
+   default: output->fatal( CALL_INFO, -1, "processIncomingEvent: unknown event type=%d\n", (int) bev->getType() );
+   }
++  profileState();
+ }
+ 
+ MordredFlit* RtrPortControlBase::getInBufFlit() {
+@@ -407,6 +414,8 @@
+   if( !flit )
+     output->fatal( CALL_INFO, -1, "Invalid flit in getInBufFlit\n" );
+   inStateVec.at( switch_alloc_sendfrom_vn ).at( switch_alloc_sendfrom_vc ).retCredits++;
++  profileFlit("switch_send", flit);
++  profileState();
+   return flit;
+ }
+ 
+@@ -416,6 +425,8 @@
+   auto& out    = outStateVec.at( switch_alloc_rcvto_vn ).at( switch_alloc_rcvto_vc );
+   out.outBuf.push( flit );
+   out.outBufCredits--;
++  profileFlit("switch_receive", flit);
++  profileState();
+   output->verbose( CALL_INFO, MORDRED_VERBOSE_HIGH, 0,
+                            "Flit %s pushed to output buffer\n",
+                            flit->pktIdStr().c_str() );
+@@ -441,6 +452,7 @@
+     for( uint32_t j = 0, vc = credit_ret_vc_rr; j < numVcs; j++, vc = ( vc != ( numVcs - 1 ) ) ? vc + 1 : 0 ) {
+       auto& in = inStateVec.at( vn ).at( vc );
+       if( in.retCredits != 0 ) {
++        cycleProfile.record(getCurrentSimTimeNano(), "event", "credit_send", vn * numVcs + vc, in.retCredits);
+         transportSendCredit( new MordredCreditEvent( vn, vc, in.retCredits ), vn );
+         in.retCredits = 0;
+         break;
+@@ -449,6 +461,31 @@
+   }
+   credit_ret_vc_rr = ( credit_ret_vc_rr + 1 ) % numVcs;
+   credit_ret_vn_rr = ( credit_ret_vn_rr + 1 ) % numVns;
++}
++
++void RtrPortControlBase::profileFlit(const char* event, const MordredFlit* flit) {
++  cycleProfile.record(getCurrentSimTimeNano(), "event", event, flit->vn * numVcs + flit->cur_vc,
++                      flit->flit_id, flit->packet_id, flit->req->src);
++}
++
++void RtrPortControlBase::profileState() {
++  if (!cycleProfile) return;
++  const auto now = getCurrentSimTimeNano();
++  for (uint32_t vn = 0; vn < numVns; ++vn) for (uint32_t vc = 0; vc < numVcs; ++vc) {
++    const auto index = vn * numVcs + vc;
++    const auto& in = inStateVec.at(vn).at(vc);
++    const auto& out = outStateVec.at(vn).at(vc);
++    cycleProfile.record(now, "state", "input_flits", index, in.inBuf.size());
++    cycleProfile.record(now, "state", "output_flits", index, out.outBuf.size());
++    cycleProfile.record(now, "state", "input_state", index, in.inVcState);
++    cycleProfile.record(now, "state", "output_state", index, out.outVcState);
++    cycleProfile.record(now, "state", "destination_credits", index, out.destCredits);
++    cycleProfile.record(now, "state", "output_free_flits", index, out.outBufCredits);
++    cycleProfile.record(now, "state", "return_credits", index, in.retCredits);
++    cycleProfile.record(now, "state", "vc_request", index, rtrSharedObjs->needVcAlloc.at(vn).at(vc) != nullptr);
++    cycleProfile.record(now, "state", "switch_request", index, rtrSharedObjs->needSwitchAlloc.at(vn).at(vc) != nullptr);
++    cycleProfile.record(now, "state", "tx_credit_blocked", index, !out.outBuf.empty() && out.destCredits == 0);
++  }
+ }
+ 
+ void RtrPortControlBase::serialize_order( SST::Core::Serialization::serializer& ser ) {
