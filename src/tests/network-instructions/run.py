@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import struct
@@ -181,8 +182,11 @@ def rows(path):
 
 
 def reports(text, label):
+    # Validation indexes these records by physical tile ID. Lexical ordering
+    # puts tile10 before tile2 and is incorrect for meshes larger than 3x3.
     return sorted([json.loads(line[len(label)+1:]) for line in text.splitlines()
-                   if line.startswith(label+' ')], key=lambda r: r['component'])
+                   if line.startswith(label+' ')],
+                  key=lambda r: int(re.search(r'(?:^|\.)tile(\d+)\.', r['component']).group(1)))
 
 
 def validate(trial, case):

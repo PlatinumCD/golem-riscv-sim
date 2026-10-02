@@ -1,3 +1,4 @@
+#include "../observations.h"
 #include <sst/core/sst_config.h>
 #include "dramTile.h"
 #include <algorithm>
@@ -71,6 +72,7 @@ void DramTile::finish() {
     if (!reads_.empty()) fail("simulation ended with live DRAM payload reads");
     dram_->finish(); trace_.flush(); profile_.flush();
     MordredSpmEndpoint::finish();
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "DRAM_TILE_STATS {\"component\":" << std::quoted(getName())
         << ",\"idle\":true,\"requests\":" << requests_ << ",\"bytes_read\":" << bytes_
         << ",\"max_pending_reads\":" << peak_ << ",\"read_latency_cycles_sum\":" << latency_

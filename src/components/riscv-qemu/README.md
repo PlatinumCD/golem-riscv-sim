@@ -84,7 +84,10 @@ SPM from offset zero. The test's [linker script](../../tests/riscv-qemu/scratchp
 is a complete example. Boot initialization is untimed. The CPU and SPM run at
 the existing fixed 1 GHz clock. SPM capacity defaults to 2 MiB; CPU composition
 accepts explicitly configured capacities up to 32 MiB, divisible by the request
-size and 4096 bytes. This composition runs with one SST rank and one thread.
+size and 4096 bytes. Standalone CPU composition uses one SST rank and one thread.
+Complete meshes support multiple SST workers through `connect_riscv_mesh`,
+which keeps every tile's local components together. See
+[threading](../../../docs/threading.md) for launch options and restrictions.
 
 CPU options use `cpu_parameters`; VLEN is shared with the architecture:
 

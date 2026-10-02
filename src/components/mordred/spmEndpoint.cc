@@ -113,6 +113,7 @@ void MordredSpmEndpoint::finish() {
         fail("simulation ended with live router SPM transactions");
     memory_->finish(); network_->finish(); trace_.flush(); cycleProfile_.flush();
     net_->finish();
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "MORDRED_SPM_STATS {\"component\":" << std::quoted(getName()) << ",\"tile_id\":" << tile_
         << ",\"idle\":true,\"bytes_read\":" << reads_ << ",\"bytes_written\":" << writes_
         << ",\"local_bank_completed\":" << localBankCompleted_ << ",\"local_bank_rejected\":" << localBankRejected_

@@ -1,3 +1,4 @@
+#include "../observations.h"
 #include <sst/core/sst_config.h>
 #include "networkEngine.h"
 #include "spmEndpoint.h"
@@ -476,6 +477,7 @@ void NetworkEngine::finish() {
         controlSent!=released_ || controlReceived!=submitted_)
         endpoint_.fail("simulation ended with live guest message ownership or credits");
     trace_.flush();
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "NETWORK_STATS {\"component\":" << std::quoted(endpoint_.getName())
         << ",\"configured_transfers\":" << transfers_.size() << ",\"receive_slots\":" << receiveSlots_.size()
         << ",\"submitted\":" << submitted_ << ",\"source_complete\":" << sourceComplete_

@@ -88,10 +88,13 @@ The network-only fixture has four test endpoints. The separate
 bounded router-facing SPM interfaces. Neither fixture adds a direct array-to-SPM or
 array-to-network path.
 
-Tests cover one SST rank/thread, one VN, one or two VCs, all 12 directed remote
-endpoint pairs (including diagonals), packet fragmentation, and finite
+The standalone router tests cover one SST rank/thread, one VN, one or two VCs,
+all 12 directed remote endpoint pairs (including diagonals), packet fragmentation, and finite
 transmit/router-buffer backpressure. Every payload is checked before the
 simulation is permitted to finish. End-to-end latency uses endpoint timestamps.
+
+Complete tile meshes also support multiple SST workers with whole-tile
+placement; see [threading controls and tests](../../../docs/threading.md).
 
 Two upstream limitations matter for later performance studies:
 

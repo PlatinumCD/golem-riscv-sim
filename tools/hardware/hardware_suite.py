@@ -43,6 +43,7 @@ def hardware_cases():
         case('network/mesh-2x2', 'mordred', 'network', build_info=False),
         case('network/guest-instructions', 'network-instructions', 'network', qemu=True),
         case('network/dram-tile', 'dram-tile', 'network', qemu=True),
+        case('network/sst-threads', 'sst-threads', 'network', qemu=True),
     ]
 
 

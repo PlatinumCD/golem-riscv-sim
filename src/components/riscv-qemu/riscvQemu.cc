@@ -42,8 +42,12 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
             RecordComponentObservations = false;
         }
         const auto ranks = getNumRanks();
-        if (ranks.rank != 1 || ranks.thread != 1)
-            throw std::invalid_argument("shared-SPM QEMU requires one SST rank and one thread");
+        if (ranks.rank != 1)
+            throw std::invalid_argument("shared-SPM QEMU requires one SST MPI rank");
+        if (ranks.thread > 1 && p.find<std::int64_t>("sst_tile_thread", -1) != getRank().thread)
+            throw std::invalid_argument("threaded shared-SPM QEMU requires whole-tile placement through connect_riscv_mesh");
+        if (ranks.thread > 1 && std::getenv("TILE_COMPONENT_TRACE_START_TASK"))
+            throw std::invalid_argument("threaded shared-SPM QEMU requires full-lifetime observation scope");
         if (!budget_ || budget_ > INT64_MAX || !timeoutSeconds_ || timeoutSeconds_ > 3600 ||
             !capacity_ || capacity_ > 32 * 1024 * 1024 || capacity_ % 4096 || requestBytes_ < 4 ||
             requestBytes_ > 2 * 1024 * 1024 || (requestBytes_ & (requestBytes_ - 1)) ||
@@ -620,6 +624,7 @@ void RiscvQemu::finish() {
     if (analogWaitTrace_) analogWaitTrace_.flush();
     const auto counts = ledger_.snapshot();
     const auto cache = instructionCache_ ? instructionCache_->statistics() : Riscv::InstructionCacheStatistics{};
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "RISCV_STATS {\"component\":" << std::quoted(getName())
         << ",\"instructions\":" << counts.total.instructions
         << ",\"vector_instructions\":" << counts.total.vectors

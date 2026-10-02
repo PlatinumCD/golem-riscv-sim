@@ -29,6 +29,8 @@ memory instructions and `mvm.vset`, `mvm.vl`, or `mvm.vs`.
   tiles with explicit CPU/router access to physical scratchpad banks.
 - [DRAM Tile](components/dram_tile/README.md): a control CPU and timed DRAM
   interface that dispatches weights to compute tiles over the same mesh.
+- [SST threading](../docs/threading.md): run a mesh across host workers while
+  keeping each complete tile together and preserving simulated timing.
 - [Instruction contract](components/riscv-qemu/vector-analog.md): assembly,
   chunk offsets/counts, compiler support, errors and timing.
 

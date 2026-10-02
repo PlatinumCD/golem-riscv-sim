@@ -11,6 +11,7 @@ import re
 
 from configuration import _cpu_options, connect_riscv_arrays, resolve
 from .configuration import MeshParameters, connect_mesh
+from .thread_placement import place_tiles, resolve_threads
 
 
 ROUTER_DEFAULTS = dict(request_window=4, max_request_bytes=256, memory_queue_depth=8,
@@ -172,7 +173,8 @@ def _file_inputs(elfs, qemu, memory_directory, count, *, extra_inputs=(), extra_
 
 def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
                        cpu_parameters=None, mesh_parameters=None,
-                       router_parameters=None, network_transfers=None, dram_tiles=None, name="tile_mesh"):
+                       router_parameters=None, network_transfers=None, dram_tiles=None,
+                       tile_threads=None, name="tile_mesh"):
     """Build one complete tile per mesh router; return ``mesh`` and ``tiles``.
 
     ``elfs`` is an explicit row-major sequence, one path per tile. The same ELF
@@ -210,6 +212,11 @@ def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
     Those endpoints have a control CPU/SPM and a DRAM-backed NIU instead of
     analog arrays. Their payload source addresses identify DRAM; descriptors
     and incoming messages still occupy local SPM. See components/dram_tile.
+
+    With multiple SST threads, complete tiles are assigned to spatial workers
+    using sst.self; only mesh links cross workers. ``tile_threads`` optionally
+    supplies one worker ID per row-major physical tile. One MPI rank is required.
+    The resolved assignment is returned in ``tile_threads``. See docs/threading.md.
     """
     if not isinstance(name, str) or not name or any(c.isspace() for c in name):
         raise ValueError("name must be a nonempty string without whitespace")
@@ -228,6 +235,7 @@ def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
         raise ValueError("complete tile meshes require exactly one local port per router")
     if not _one_ghz(mesh.clock):
         raise ValueError("complete tile meshes currently require a 1 GHz mesh clock")
+    threads, workers = resolve_threads(sst, mesh, tile_threads)
     if parameters is None:
         parameters = {}
     if not isinstance(parameters, Mapping):
@@ -278,5 +286,8 @@ def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
                           router_spm=router_spm, memory_file=memory_file))
         endpoints.append(router_spm)
     fabric = connect_mesh(sst, mesh, name=name, endpoints=endpoints)
+    if threads > 1:
+        place_tiles(sst, tiles, fabric["routers"], workers, name)
     return dict(parameters=architecture, cpu_parameters=cpu_options,
-                router_parameters=router_options, mesh=fabric, tiles=tuple(tiles))
+                router_parameters=router_options, mesh=fabric, tiles=tuple(tiles),
+                tile_threads=workers)

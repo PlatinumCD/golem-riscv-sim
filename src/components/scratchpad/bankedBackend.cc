@@ -132,6 +132,7 @@ void BankedBackend::finish() {
     finished_ = true;
     if (trace_) trace_.flush();
     if (!pending_.empty()) output->fatal(CALL_INFO, -1, "scratchpad finished with live requests\n");
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "SPM_STATS {\"component\":" << std::quoted(getName())
         << ",\"accepted\":" << accepted_ << ",\"completed\":" << completed_
         << ",\"queue_retries\":" << retries_ << ",\"peak_pending\":" << peakPending_

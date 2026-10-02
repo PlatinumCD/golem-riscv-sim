@@ -8,6 +8,7 @@ and [`src/components/mordred/tiles.py`](../src/components/mordred/tiles.py).
 | What is in a tile? | [Architecture](architecture.md) and [diagram](diagrams/single-tile.svg) |
 | How do guests access memory and arrays? | [Programming interface](platform.md) |
 | How is time modeled? | [Timing](timing-model.md) |
+| How do I run a mesh across SST workers? | [Threading](threading.md) |
 | How do I turn cycle profiling on or off? | [Profiling](profiling.md) |
 | What RVV behavior is supported? | [Vector architecture](vector-architecture.md) |
 | What do the analog instructions do? | [Analog ISA](analog-isa.md) |

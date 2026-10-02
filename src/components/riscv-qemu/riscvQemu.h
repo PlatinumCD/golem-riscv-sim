@@ -46,7 +46,8 @@ public:
         {"riscv_vector_length_bits", "RVV VLEN in bits", "256"},
         {"riscv_vector_element_bits", "RVV ELEN in bits", "64"},
         {"serial_output", "Optional absolute path for QEMU serial output", ""},
-        {"host_timeout_seconds", "Wall-time limit for one QEMU rendezvous", "30"})
+        {"host_timeout_seconds", "Wall-time limit for one QEMU rendezvous", "30"},
+        {"sst_tile_thread", "Internal whole-tile worker assignment from connect_riscv_mesh; required for SST threading", "-1"})
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
         {"qemu_memory", "Uncached SPM timing requests", "SST::Interfaces::StandardMem"})
     SST_ELI_DOCUMENT_PORTS(

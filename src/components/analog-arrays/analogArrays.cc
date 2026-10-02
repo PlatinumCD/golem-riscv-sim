@@ -632,6 +632,7 @@ void AnalogArrays::finish() {
     if (waits_) waits_.flush();
     if (programmingTrace_) programmingTrace_.flush();
     if (initialProgramTrace_) initialProgramTrace_.flush();
+    const std::lock_guard<std::mutex> outputLock(ObservationOutputMutex);
     std::cout << "ARRAY_STATS {\"component\":" << std::quoted(getName())
         << ",\"accepted\":" << accepted_ << ",\"completed\":" << completed_
         << ",\"busy\":" << rejected_ << ",\"errors\":" << errors_ << ",\"mvms\":" << mvms_
