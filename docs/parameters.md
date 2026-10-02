@@ -46,7 +46,8 @@ Regenerate with `python3 tools/hardware/parameter-reference.py > docs/parameters
 | `instruction_budget` | `256` |
 | `issue_width` | `1` |
 | `load_store_queue_depth` | `1` |
-| `analog_command_queue_depth` | `0` |
+| `scalar_load_store_queue_depth` | `8` |
+| `analog_command_queue_depth` | `4` |
 | `analog_command_queue_bytes` | `16384` |
 | `instruction_cache_enabled` | `true` |
 | `instruction_cache_bytes` | `8192` |
@@ -69,6 +70,8 @@ Regenerate with `python3 tools/hardware/parameter-reference.py > docs/parameters
 | `posted_receive_slots_per_source` | `16` |
 | `posted_credit_batch` | `4` |
 | `posted_credit_delay_cycles` | `4` |
+| `net_command_queue_depth` | `4` |
+| `net_ticket_capacity` | `16` |
 
 ## Mesh and NIC
 

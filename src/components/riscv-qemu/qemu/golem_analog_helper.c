@@ -15,18 +15,30 @@
 #include "qemu/bswap.h"
 #include "vector_internals.h"
 
+target_ulong HELPER(golem_network)(CPURISCVState *env, uint32_t operation,
+                                   target_ulong first, target_ulong second)
+{
+    if (!mittens_sync_vector_analog_enabled()) {
+        riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    return mittens_sync_network(operation, first, second);
+}
+
 target_ulong HELPER(golem_analog)(
     CPURISCVState *env,
     uint32_t operation,
     target_ulong rs1,
     target_ulong rs2)
 {
-    /* source_new moves array data only through architectural vector
-     * registers.  The scalar instruction starts computation and returns
-     * its completion status; it has no guest-memory transfer fallback. */
-    if (operation != MITTENS_SYNC_VECTOR_ANALOG_EXECUTE ||
+    /* Both scalar commands return status. Configure supplies packed active
+     * extents, not a memory address; data transfers remain RVV-only. */
+    if ((operation != MITTENS_SYNC_VECTOR_ANALOG_EXECUTE &&
+         operation != MITTENS_SYNC_VECTOR_ANALOG_CONFIGURE) ||
         !mittens_sync_vector_analog_enabled()) {
         riscv_raise_exception(env, RISCV_EXCP_ILLEGAL_INST, GETPC());
+    }
+    if (operation == MITTENS_SYNC_VECTOR_ANALOG_CONFIGURE) {
+        return mittens_sync_vector_analog(operation, rs1, rs2, 0, NULL);
     }
     return mittens_sync_vector_analog(
         MITTENS_SYNC_VECTOR_ANALOG_EXECUTE, (uint32_t)rs1, 0, 0, NULL);

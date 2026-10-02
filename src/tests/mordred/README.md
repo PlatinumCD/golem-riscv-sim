@@ -44,4 +44,4 @@ does not claim to validate backpressure from a stalled application receiver.
 
 The fixture contains network endpoints rather than RISC-V guests. See the
 [component README](../../components/mordred/README.md) for composition and the
-remaining CPU-facing interface work.
+[guest messaging tests](../network-instructions/README.md).

@@ -34,13 +34,17 @@ must match the current sources. Historical baseline source hashes may describe a
 older revision; its build manifest and actual binary hashes are retained in run
 metadata. The runners do not rebuild or replace either model.
 
-`run.py` runs eight candidate cases, or nine with the optional baseline. The
+`run.py` runs nine candidate cases, or ten with the optional baseline. The
 sixteen-phase guest covers source WAR pins; output RAW/WAW hazards against RVV
 ALU and LSQ operations; captured older stores; full/fractional LMUL and short-VL
 tails; completion after a SEW/LMUL change; queue and byte pressure; two-array
 result routing/FIFO order; high64-bit and backend-invalid array faults; VL0;
 and fence, marker and exit drains. Configurations include VLEN256/1024, queue
 depths0/1/4/8, LSQ depths1/16, and1024/16384-byte queue limits.
+
+The omitted-depth case must match explicit depth 4 in numerical outputs,
+modeled timing and all canonical traces. Depth 0 explicitly tests the off
+setting, including when the optional historical baseline is selected.
 
 Programming delay is256 cycles so the source-capture assertion proves that
 register reuse precedes whole-command completion. Exact numerical outputs and

@@ -15,8 +15,9 @@ from .configuration import MeshParameters, connect_mesh
 
 ROUTER_DEFAULTS = dict(request_window=4, max_request_bytes=256, memory_queue_depth=8,
                        posted_receive_slots_per_source=16, posted_credit_batch=4,
-                       posted_credit_delay_cycles=4)
-PACKET_HEADER_BYTES = 40
+                       posted_credit_delay_cycles=4, net_command_queue_depth=4,
+                       net_ticket_capacity=16)
+MESSAGE_HEADER_BYTES = 96
 
 
 def _one_ghz(clock):
@@ -56,14 +57,79 @@ def _router_options(parameters, architecture, mesh):
     slots = options["posted_receive_slots_per_source"]
     if type(slots) is not int or not 0 <= slots <= (1 << 32) - 1:
         raise ValueError("Router SPM posted_receive_slots_per_source must be an integer in [0, 4294967295]")
-    flit_bytes = mesh.flit_size_bits // 8
-    packet_flits = max(2, (PACKET_HEADER_BYTES + options["max_request_bytes"] + flit_bytes - 1) // flit_bytes)
-    if packet_flits * flit_bytes > mesh.nic_output_buffer_bytes:
-        raise ValueError("NIC output buffer must hold the complete rounded router SPM header and payload packet")
+    for key, maximum in (("net_command_queue_depth", 1024),
+                         ("net_ticket_capacity", 1024)):
+        if type(options[key]) is not int or not 1 <= options[key] <= maximum:
+            raise ValueError(f"Router SPM {key} must be an integer in [1, {maximum}]")
+    if options['net_ticket_capacity'] < options['net_command_queue_depth']:
+        raise ValueError('net_ticket_capacity must cover net_command_queue_depth')
     return options
 
 
-def _file_inputs(elfs, qemu, memory_directory, count):
+def _validate_packet_capacity(options, mesh):
+    # Every data packet uses the whole-message format, including endpoints with
+    # no active deployment records. There is no smaller compatibility format.
+    header_bytes = MESSAGE_HEADER_BYTES
+    flit_bytes = mesh.flit_size_bits // 8
+    packet_flits = max(2, (header_bytes + options["max_request_bytes"] + flit_bytes - 1) // flit_bytes)
+    if packet_flits * flit_bytes > mesh.nic_output_buffer_bytes:
+        raise ValueError("NIC output buffer must hold the complete rounded router SPM header and payload packet")
+
+
+def _transfer_options(records, architecture, router, mesh):
+    """Validate compiler deployment data before creating components or files.
+
+    Produce six-word SST records only for the producer and consumer. A transfer
+    ID has exactly one producer/consumer pair; destination reservations cannot
+    overlap, even across different producers. No guest connection setup exists.
+    """
+    if records is None:
+        records = []
+    if not isinstance(records, (tuple, list)) or len(records) > 1024:
+        raise ValueError('network_transfers must contain at most 1024 deployment records')
+    fields = ('transfer_id', 'source_tile', 'destination_tile', 'receive_base', 'slot_capacity', 'slot_count')
+    result = [[] for _ in range(mesh.endpoint_count)]
+    ranges = [[] for _ in result]
+    counts = [0 for _ in result]
+    identities = set()
+    capacity = architecture['spm_capacity_bytes']
+    width, banks = architecture['spm_bank_width'], architecture['spm_banks']
+    # net.info(POINTER) promises a directly usable CPU/RVV address.
+    allowed = set(architecture['router_spm_banks']) & set(architecture['cpu_spm_banks'])
+    for record in records:
+        if not isinstance(record, Mapping) or set(record) != set(fields):
+            raise ValueError(f'each network transfer requires exactly {fields}')
+        values = [record[key] for key in fields]
+        if any(type(value) is not int for value in values):
+            raise ValueError('network transfer fields must be integers')
+        identity, source, destination, base, size, slots = values
+        if not 0 <= identity <= (1 << 63) - 1 or identity in identities:
+            raise ValueError('transfer IDs must be unique nonnegative 63-bit values')
+        identities.add(identity)
+        if not (0 <= source < len(result) and 0 <= destination < len(result)) or source == destination:
+            raise ValueError('transfer source and destination must be distinct existing tiles')
+        if not 1 <= slots <= 256 or not 1 <= size <= (1 << 63) - 1:
+            raise ValueError('transfer slot count must be 1..256 and capacity must be positive')
+        span, offset = size * slots, base - 0x90000000
+        if not router['posted_receive_slots_per_source'] or base % 8 or not 0 <= offset < capacity or span > capacity - offset:
+            raise ValueError('transfer receive reservation needs aligned accessible SPM and posted storage')
+        end = offset + min(span, banks * width)
+        while offset < end:
+            if offset // width % banks not in allowed:
+                raise ValueError('receive reservation crosses a bank inaccessible to the CPU or router')
+            offset += min(end - offset, width - offset % width)
+        if any(base < b and a < base + span for a, b in ranges[destination]):
+            raise ValueError('transfer receive reservations on the same tile must not overlap')
+        ranges[destination].append((base, base + span))
+        counts[destination] += slots
+        if counts[destination] > 65536:
+            raise ValueError('destination receive slots exceed token capacity')
+        result[source].extend(values)
+        result[destination].extend(values)
+    return result
+
+
+def _file_inputs(elfs, qemu, memory_directory, count, *, extra_inputs=(), extra_outputs=()):
     """Validate all inputs/output aliases before any file is truncated."""
     if not isinstance(elfs, Sequence) or isinstance(elfs, (str, bytes)) or len(elfs) != count:
         raise ValueError(f"elfs must contain exactly {count} paths in row-major tile order")
@@ -78,10 +144,10 @@ def _file_inputs(elfs, qemu, memory_directory, count):
         if not path.is_file():
             raise ValueError(f"{label} does not exist or is not a regular file: {path}")
     files = tuple((directory / f"tile{i}-spm.bin").resolve() for i in range(count))
-    input_paths = {qemu, *elfs}
+    input_paths = {qemu, *elfs, *extra_inputs}
     input_inodes = {(path.stat().st_dev, path.stat().st_ino) for path in input_paths}
     output_paths, output_inodes = set(), set()
-    for path in files:
+    for path in (*files, *extra_outputs):
         for ancestor in path.parents:
             if ancestor.exists():
                 if not ancestor.is_dir():
@@ -106,7 +172,7 @@ def _file_inputs(elfs, qemu, memory_directory, count):
 
 def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
                        cpu_parameters=None, mesh_parameters=None,
-                       router_parameters=None, name="tile_mesh"):
+                       router_parameters=None, network_transfers=None, dram_tiles=None, name="tile_mesh"):
     """Build one complete tile per mesh router; return ``mesh`` and ``tiles``.
 
     ``elfs`` is an explicit row-major sequence, one path per tile. The same ELF
@@ -122,18 +188,28 @@ def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
     Resolved snapshots retain their explicit lists, including an empty router
     list, which this complete-mesh helper rejects.
 
-    Router interfaces expose optional SST ``requests`` and ``arrivals`` event
-    ports. Legacy requests complete after destination bank service. Posted
-    writes complete at the source after receiver storage is reserved and the
-    NIC owns the payload; the destination's ``arrivals`` port reports bank
-    completion locally. Interfaces do not poll guest memory or require a
-    software descriptor/control region. Guest CPU instructions are unchanged.
+    Each CPU connects to its NIU through the ``network_commands`` port for
+    whole-message instructions. The NIU captures descriptors on submission and
+    suspends pending receive/wait instructions without guest polling. It reads
+    only local source SPM and writes only deployed destination receive slots.
+    See ``network-instructions.md``.
+
+    ``network_transfers`` contains compiler deployment records with transfer_id,
+    source_tile, destination_tile, receive_base, slot_capacity and slot_count.
+    Only participating tiles reserve state; only destinations reserve SPM.
+    Transfers route through Mordred XY to the final tile, without intermediate
+    CPU or SPM service. ``net.recv()`` acquires any eligible completed transfer.
 
     File paths, all output aliases, and every parameter are checked before
     creating SST components or truncating any backing file. Component prefixes
     are ``<name>.tileN.``. ``tiles`` is a tuple of dictionaries containing
     ``cpu``, ``arrays``, ``scratchpad``, ``router_spm`` and ``memory_file``.
     ``mesh`` has the same graph collections as ``connect_mesh``.
+
+    ``dram_tiles`` maps selected endpoint IDs to an image and DRAM parameters.
+    Those endpoints have a control CPU/SPM and a DRAM-backed NIU instead of
+    analog arrays. Their payload source addresses identify DRAM; descriptors
+    and incoming messages still occupy local SPM. See components/dram_tile.
     """
     if not isinstance(name, str) or not name or any(c.isspace() for c in name):
         raise ValueError("name must be a nonempty string without whitespace")
@@ -165,18 +241,39 @@ def connect_riscv_mesh(sst, parameters, *, elfs, memory_directory, qemu=None,
         raise ValueError("router_spm_banks must be nonempty for a tile mesh")
     cpu_options = _cpu_options(architecture, cpu_parameters)
     router_options = _router_options(router_parameters, architecture, mesh)
-    elfs, qemu, files = _file_inputs(elfs, qemu, memory_directory, mesh.endpoint_count)
+    transfers = _transfer_options(network_transfers, architecture, router_options, mesh)
+    _validate_packet_capacity(router_options, mesh)
+    from components.dram_tile.configuration import resolve_dram_tiles, connect_dram_tile
+    dram_tiles = resolve_dram_tiles(dram_tiles, architecture, mesh)
+    try:
+        dram_outputs = {identity: (Path(memory_directory)/f'tile{identity}-dram.bin').resolve()
+                        for identity in dram_tiles}
+    except (TypeError, ValueError) as error:
+        raise ValueError('memory_directory must be a filesystem path') from error
+    elfs, qemu, files = _file_inputs(elfs, qemu, memory_directory, mesh.endpoint_count,
+        extra_inputs=tuple(image for _, image in dram_tiles.values()), extra_outputs=tuple(dram_outputs.values()))
 
     tiles, endpoints = [], []
     for identity, (elf, memory_file) in enumerate(zip(elfs, files)):
         prefix = f"{name}.tile{identity}."
+        if identity in dram_tiles:
+            dram, image = dram_tiles[identity]
+            tile = connect_dram_tile(sst, architecture, dram=dram, image=image,
+                endpoint_parameters=router_options | dict(tile_id=identity, net_transfers=transfers[identity]),
+                elf=elf, qemu=qemu, memory_file=memory_file, cpu_parameters=cpu_parameters,
+                dram_memory_file=dram_outputs[identity], name_prefix=prefix)
+            tiles.append(tile)
+            endpoints.append(tile['router_spm'])
+            continue
         router_spm = sst.Component(f"{prefix}router_spm", "tilecomponents.MordredSpmEndpoint")
-        router_spm.addParams(router_options | dict(tile_id=identity))
+        router_spm.addParams(router_options | dict(tile_id=identity, net_transfers=transfers[identity]))
         memory = router_spm.setSubComponent("memory", "memHierarchy.standardInterface")
         cpu, arrays, scratch = connect_riscv_arrays(sst, architecture, elf=elf,
             qemu=qemu, memory_file=memory_file, cpu_parameters=cpu_parameters,
             clients=(memory,), name_prefix=prefix,
             router_requestor=f"{prefix}router_spm:memory")
+        sst.Link(f"{prefix}network_commands").connect(
+            (cpu, "network_commands", "1ns"), (router_spm, "network_commands", "1ns"))
         tiles.append(dict(cpu=cpu, arrays=arrays, scratchpad=scratch,
                           router_spm=router_spm, memory_file=memory_file))
         endpoints.append(router_spm)

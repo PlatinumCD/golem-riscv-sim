@@ -21,4 +21,4 @@ python3 -B src/tests/bank-connections/run.py \
 ```
 
 The full four-tile QEMU and Mordred integration lives in
-[`../mordred-spm`](../mordred-spm/README.md).
+[guest network instructions](../network-instructions/README.md).

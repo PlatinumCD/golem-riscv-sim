@@ -1,5 +1,6 @@
 """Tile mesh wiring and input-preservation tests; no SST installation required."""
 from pathlib import Path
+import json
 import os
 import sys
 import tempfile
@@ -96,10 +97,31 @@ class TileMeshConfigurationTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertEqual({p: p.read_bytes() for p in self.inputs}, self.inputs)
 
+    def test_tile_profiles_have_exact_capacity_and_receive_bounds(self):
+        profiles = json.loads((Path(__file__).resolve().parents[2] / 'tile_profiles.json').read_text())
+        for name, capacity, banks in (('small', 1048576, 2), ('medium', 1572864, 4), ('large', 2097152, 8)):
+            with self.subTest(profile=name):
+                profile = profiles[name]
+                self.assertEqual(profile['parameters']['spm_capacity_bytes'], capacity)
+                self.assertEqual(profile['parameters']['spm_banks'], banks)
+                transfer = dict(transfer_id=7, source_tile=0, destination_tile=3,
+                                receive_base=0x90000000+capacity-512, slot_capacity=256, slot_count=2)
+                graph = Composition()
+                result = self.build(graph, **profile, network_transfers=[transfer])
+                for i, tile in enumerate(result['tiles']):
+                    self.assertEqual(tile['cpu'].params['spm_capacity_bytes'], capacity)
+                    self.assertEqual(tile['scratchpad'].params['size'], f'{capacity}B')
+                    self.assertEqual(tile['router_spm'].params['spm_capacity_bytes'], capacity)
+                    self.assertEqual((self.directory / f'tile{i}-spm.bin').stat().st_size, capacity)
+                    self.assertEqual(tile['scratchpad'].params['cpu_spm_banks'], list(range(banks)))
+                # A full final slot is valid; one more slot must fail before mutation.
+                self.assert_rejected_without_mutation(**profile,
+                    network_transfers=[transfer | dict(slot_count=3)])
+
     def test_four_complete_tiles_have_exact_local_wiring_and_separate_backing(self):
         graph = Composition()
         result = self.build(graph)
-        self.assertEqual((len(graph.nodes), len(graph.links)), (24, 28))
+        self.assertEqual((len(graph.nodes), len(graph.links)), (24, 32))
         self.assertEqual(len(result["tiles"]), 4)
         self.assertEqual(len(result["mesh"]["routers"]), 4)
         self.assertEqual(len(result["mesh"]["router_links"]), 4)
@@ -114,7 +136,10 @@ class TileMeshConfigurationTests(unittest.TestCase):
             self.assertEqual(router_spm.params, dict(tile_id=i, tile_count=4, spm_capacity_bytes=2097152,
                 spm_request_bytes=32, spm_banks=4, spm_bank_width=4, router_spm_banks=[2, 3],
                 request_window=4, max_request_bytes=256, memory_queue_depth=8, flit_size_bits=128, clock="1GHz",
-                posted_receive_slots_per_source=16, posted_credit_batch=4, posted_credit_delay_cycles=4))
+                posted_receive_slots_per_source=16, posted_credit_batch=4, posted_credit_delay_cycles=4,
+                net_command_queue_depth=4, net_ticket_capacity=16, net_transfers=[]))
+            self.assertEqual(graph.links[f"{prefix}network_commands"].ends,
+                ((cpu, "network_commands", "1ns"), (router_spm, "network_commands", "1ns")))
             self.assertEqual(graph.links[f"{prefix}spm_client_0"].ends,
                 ((cpu.subcomponents["qemu_memory"], "lowlink", "1ns"), (bus, "highlink0", "1ns")))
             self.assertEqual(graph.links[f"{prefix}spm_client_1"].ends,
@@ -173,12 +198,30 @@ class TileMeshConfigurationTests(unittest.TestCase):
             self.assertEqual(tile["scratchpad"].subcomponents["backendConvertor"].subcomponents["backend"].params["spm_banks"], 2)
 
     def test_packet_capacity_accounts_header_rounding_and_minimum_two_flits(self):
-        for payload, flit, capacity in ((1, 128, 48), (33, 128, 80), (1, 512, 128)):
+        for payload, flit, capacity in ((1, 128, 112), (33, 128, 144), (1, 512, 128), (256, 128, 352)):
             with self.subTest(payload=payload, flit=flit):
-                self.build(mesh_parameters=dict(flit_size_bits=flit, nic_output_buffer_bytes=capacity),
-                           router_parameters=dict(max_request_bytes=payload))
-        self.assert_rejected_without_mutation(mesh_parameters=dict(nic_output_buffer_bytes=64),
-                                             router_parameters=dict(max_request_bytes=33))
+                for transfers in (None, [], ()):
+                    self.build(mesh_parameters=dict(flit_size_bits=flit, nic_output_buffer_bytes=capacity),
+                               router_parameters=dict(max_request_bytes=payload), network_transfers=transfers)
+                self.assert_rejected_without_mutation(
+                    mesh_parameters=dict(flit_size_bits=flit, nic_output_buffer_bytes=capacity-flit//8),
+                    router_parameters=dict(max_request_bytes=payload))
+
+    def test_active_transfers_use_the_same_message_header(self):
+        transfer=dict(transfer_id=7,source_tile=0,destination_tile=3,
+                      receive_base=0x90080000,slot_capacity=4096,slot_count=1)
+        arguments=dict(parameters=dict(router_spm_banks=[0,1,2,3]),network_transfers=[transfer])
+        for payload, flit, capacity in ((1, 128, 112), (33, 128, 144), (1, 512, 128), (256, 128, 352)):
+            with self.subTest(payload=payload, flit=flit):
+                self.build(**arguments,
+                    mesh_parameters=dict(flit_size_bits=flit, nic_output_buffer_bytes=capacity),
+                    router_parameters=dict(max_request_bytes=payload))
+                self.assert_rejected_without_mutation(**arguments,
+                    mesh_parameters=dict(flit_size_bits=flit, nic_output_buffer_bytes=capacity-flit//8),
+                    router_parameters=dict(max_request_bytes=payload))
+        self.assert_rejected_without_mutation(**arguments,
+            mesh_parameters=dict(flit_size_bits=128,nic_output_buffer_bytes=304),
+            router_parameters=dict(max_request_bytes=256))
 
     def test_physical_bank_defaults_and_overrides_are_not_service_quotas(self):
         for count, expected in ((1, [0]), (2, [0, 1]), (4, [2, 3]), (8, [6, 7])):
@@ -208,10 +251,12 @@ class TileMeshConfigurationTests(unittest.TestCase):
         for explicit in (dict(router_spm_banks=[]), dict(cpu_spm_banks=[]), resolve()):
             self.assert_rejected_without_mutation(parameters=explicit)
 
-    def test_router_optional_request_port_has_no_guest_control_region(self):
+    def test_router_uses_only_guest_commands_without_a_control_region(self):
         graph = Composition()
         result = self.build(graph, parameters=dict(spm_capacity_bytes=4096))
         for tile in result["tiles"]:
+            connected = {port for name, port in graph.connected if name == tile["router_spm"].name}
+            self.assertEqual(connected, {"network_commands"})
             self.assertNotIn((tile["router_spm"].name, "requests"), graph.connected)
             self.assertNotIn((tile["router_spm"].name, "arrivals"), graph.connected)
             self.assertFalse({"control_offset", "poll_interval_cycles", "packet_payload_bytes"}
@@ -261,6 +306,43 @@ class TileMeshConfigurationTests(unittest.TestCase):
             for value in ([4], [-1], [0, 0], [True], [0.0], "0,1", {0, 1}, ["0"]):
                 with self.subTest(field=field, value=value):
                     self.assert_rejected_without_mutation(parameters={field: value})
+
+    def test_deployment_reserves_only_active_transfers_and_separates_producers(self):
+        a=dict(transfer_id=(1<<63)-1,source_tile=0,destination_tile=3,
+               receive_base=0x90080000,slot_capacity=4096,slot_count=2)
+        b=a|dict(transfer_id=0,source_tile=1,receive_base=0x90082000,slot_count=1)
+        result=self.build(parameters=dict(router_spm_banks=[0,1,2,3]),network_transfers=[a,b])
+        expected=[list(a.values()),list(b.values()),[],list(a.values())+list(b.values())]
+        self.assertEqual([tile['router_spm'].params['net_transfers'] for tile in result['tiles']],expected)
+        for tile in result['tiles']:
+            self.assertNotIn('net_receive_bases',tile['router_spm'].params)
+
+    def test_invalid_deployments_preserve_backing_and_topology(self):
+        a=dict(transfer_id=7,source_tile=0,destination_tile=3,
+               receive_base=0x90080000,slot_capacity=4096,slot_count=2)
+        invalid=[{}, {}, a|dict(unknown=1)]
+        for field,values in dict(transfer_id=[-1,1<<63,True,'7'], source_tile=[-1,4,3,True],
+                destination_tile=[-1,4,0],receive_base=[0,0x90000001,0x90200000,0x901ffff8],
+                slot_capacity=[0,-1,1<<63,1<<20],slot_count=[0,257,-1,True]).items():
+            invalid.extend(a|{field:value} for value in values)
+        for record in invalid:
+            with self.subTest(record=record):
+                self.assert_rejected_without_mutation(parameters=dict(router_spm_banks=[0,1,2,3]),
+                    network_transfers=[record])
+        for records in ([a,a], [a,a|dict(source_tile=1,receive_base=0x900a0000)],
+                        [a,a|dict(transfer_id=8,source_tile=1)], list(a), {'a':a}):
+            self.assert_rejected_without_mutation(parameters=dict(router_spm_banks=[0,1,2,3]),network_transfers=records)
+        self.assert_rejected_without_mutation(network_transfers=[a])  # NIU bank permissions
+        self.assert_rejected_without_mutation(parameters=dict(router_spm_banks=[0,1,2,3],cpu_spm_banks=[0,1]),
+            network_transfers=[a])
+        self.assert_rejected_without_mutation(parameters=dict(router_spm_banks=[0,1,2,3]),network_transfers=[a],
+            router_parameters=dict(posted_receive_slots_per_source=0))
+
+    def test_removed_directional_controls_and_invalid_capacities_are_rejected(self):
+        for options in (dict(net_connections=4),dict(mesh_x_dim=2),dict(net_receive_slots=2),
+                        dict(net_receive_bases=[0,0,0,0]),dict(net_receive_slot_bytes=4096),
+                        dict(net_ticket_capacity=1),dict(net_ticket_capacity=1025),dict(net_command_queue_depth=0)):
+            self.assert_rejected_without_mutation(router_parameters=options)
 
     def test_later_missing_elf_is_checked_before_first_backing_is_truncated(self):
         self.assert_rejected_without_mutation(elfs=[*self.elfs[:3], self.root / "missing.elf"])
@@ -313,7 +395,7 @@ class TileMeshConfigurationTests(unittest.TestCase):
         graph = Composition()
         a = self.build(graph, name="a", memory_directory=self.root / "a")
         b = self.build(graph, name="b", memory_directory=self.root / "b")
-        self.assertEqual((len(graph.nodes), len(graph.links)), (48, 56))
+        self.assertEqual((len(graph.nodes), len(graph.links)), (48, 64))
         self.assertFalse({t["memory_file"] for t in a["tiles"]} & {t["memory_file"] for t in b["tiles"]})
 
     def test_default_tile_names_and_links_remain_unchanged(self):

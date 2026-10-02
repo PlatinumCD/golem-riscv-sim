@@ -53,7 +53,11 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
         if (!depth || depth > MITTENS_SYNC_LSQ_CAPACITY)
             throw std::invalid_argument("load_store_queue_depth must be 1..64");
         loadStoreDepth_ = depth;
-        const auto analogDepth = p.find<std::uint64_t>("analog_command_queue_depth", 0);
+        const auto scalarDepth = p.find<std::uint64_t>("scalar_load_store_queue_depth", 8);
+        if (scalarDepth > MITTENS_SYNC_SLQ_CAPACITY)
+            throw std::invalid_argument("scalar_load_store_queue_depth must be 0..64");
+        scalarDepth_ = scalarDepth;
+        const auto analogDepth = p.find<std::uint64_t>("analog_command_queue_depth", 4);
         analogByteCapacity_ = p.find<std::uint64_t>("analog_command_queue_bytes", 16384);
         if (analogDepth > MITTENS_SYNC_ASQ_CAPACITY || analogByteCapacity_ < 1024 ||
             analogByteCapacity_ > 16384 || analogByteCapacity_ % 4)
@@ -90,6 +94,7 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
         bridge_.create(0);
         bridge_.configureInstructionSegments(1);
         bridge_.configureLoadStoreQueue(loadStoreDepth_);
+        bridge_.configureScalarQueue(scalarDepth_);
         bridge_.configureAnalogQueue(analogDepth_);
         void* mapped = ::mmap(nullptr, capacity_, PROT_READ | PROT_WRITE, MAP_SHARED, backingFd_, 0);
         if (mapped == MAP_FAILED) throw std::runtime_error("cannot map CPU load/store queue backing");
@@ -108,7 +113,12 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
         if (!commit_) throw std::invalid_argument("SPM external_commit link is required");
         analog_ = configureLink("analog_commands", clock_,
             new SST::Event::Handler<RiscvQemu, &RiscvQemu::analogResponse>(this));
+        network_ = configureLink("network_commands", clock_,
+            new SST::Event::Handler<RiscvQemu, &RiscvQemu::networkResponse>(this));
         if (const auto dir = CycleProfile::traceDirectory(); !dir.empty()) {
+            networkTrace_.open(std::string(dir) + "/" + getName() + "-network.csv");
+            if (!networkTrace_) throw std::runtime_error("cannot open network command trace");
+            networkTrace_ << "event,cycle,operation,first,second,result\n";
             taskTrace_.open(std::string(dir) + "/" + getName() + "-tasks.csv");
             if (!taskTrace_) throw std::runtime_error("cannot open CPU task trace");
             taskTrace_ << "event,cycle,task_id,execution_id,instructions,vector_instructions,"
@@ -117,7 +127,8 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
                           "instruction_bytes,icache_fetches,icache_hits,icache_misses,icache_fills,"
                           "icache_fill_bytes,icache_evictions,icache_invalidations,icache_stall_cycles,"
                           "vector_memory_beats,vector_read_bytes,vector_write_bytes,"
-                          "lsq_enqueued,lsq_completed,lsq_stall_cycles\n";
+                          "lsq_enqueued,lsq_completed,lsq_stall_cycles,"
+                          "slq_enqueued,slq_completed,slq_stall_cycles\n";
             cacheTrace_.open(std::string(dir) + "/" + getName() + "-icache.csv");
             if (!cacheTrace_) throw std::runtime_error("cannot open instruction cache trace");
             cacheTrace_ << "event,cycle,address,bytes\n";
@@ -127,6 +138,11 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
             loadStoreTrace_.open(std::string(dir) + "/" + getName() + "-lsq.csv");
             if (!loadStoreTrace_) throw std::runtime_error("cannot open load/store queue trace");
             loadStoreTrace_ << "event,cycle,token,slot,pc,address,bytes,write,occupancy,reason\n";
+            scalarTrace_.open(std::string(dir) + "/" + getName() + "-slq.csv");
+            scalarWaitTrace_.open(std::string(dir) + "/" + getName() + "-slq-waits.csv");
+            if (!scalarTrace_ || !scalarWaitTrace_) throw std::runtime_error("cannot open scalar queue traces");
+            scalarTrace_ << "event,cycle,token,slot,pc,address,bytes,write,occupancy,reason\n";
+            scalarWaitTrace_ << "start_cycle,end_cycle,reason,stop_reason,pc\n";
             waitTrace_.open(std::string(dir) + "/" + getName() + "-waits.csv");
             if (!waitTrace_) throw std::runtime_error("cannot open CPU wait trace");
             waitTrace_ << "start_cycle,end_cycle,reason,stop_reason,pc\n";
@@ -213,6 +229,7 @@ void RiscvQemu::resume() {
 }
 
 void RiscvQemu::dispatch() {
+    if (scalarBarrier()) return;
     if (loadStoreBarrier()) return;
     if (analogQueueBarrier()) return;
     switch (event_->stopReason) {
@@ -245,9 +262,12 @@ void RiscvQemu::dispatch() {
         if (instructionCache_) instructionFetch(); else access(true);
         break;
     case MITTENS_SYNC_STOP_MEMORY_ACCESS: access(false); break;
+    case MITTENS_SYNC_STOP_SLQ_SUBMIT: enqueueScalar(); break;
+    case MITTENS_SYNC_STOP_SLQ_WAIT: resume(); break;
     case MITTENS_SYNC_STOP_LSQ_SUBMIT: enqueueLoadStore(); break;
     case MITTENS_SYNC_STOP_LSQ_WAIT: resume(); break;
     case MITTENS_SYNC_STOP_VECTOR_ANALOG: analogCommand(); break;
+    case MITTENS_SYNC_STOP_NETWORK: networkCommand(); break;
     case MITTENS_SYNC_STOP_ASQ_SUBMIT: enqueueAnalog(); break;
     case MITTENS_SYNC_STOP_ASQ_WAIT: resume(); break;
     case MITTENS_SYNC_STOP_MEMORY_FENCE: resume(); break;
@@ -288,7 +308,8 @@ void RiscvQemu::traceTask() {
         << ',' << cache.fills << ',' << cache.fillBytes << ',' << cache.evictions
         << ',' << cache.invalidations << ',' << cache.stallCycles
         << ',' << vectorMemoryBeats_ << ',' << vectorReadBytes_ << ',' << vectorWriteBytes_
-        << ',' << lsqEnqueued_ << ',' << lsqCompleted_ << ',' << lsqStallCycles_ << '\n';
+        << ',' << lsqEnqueued_ << ',' << lsqCompleted_ << ',' << lsqStallCycles_
+        << ',' << slqEnqueued_ << ',' << slqCompleted_ << ',' << slqStallCycles_ << '\n';
 }
 
 void RiscvQemu::traceCache(const char* event, std::uint64_t address, std::uint64_t bytes) {
@@ -399,6 +420,10 @@ void RiscvQemu::issueMemory(std::uint64_t address, std::uint64_t size, bool writ
 
 void RiscvQemu::memoryResponse(Memory::Request* response) {
     try {
+        if (scalarRequests_.count(response->getID())) {
+            scalarResponse(response);
+            return;
+        }
         if (loadStoreRequests_.count(response->getID())) {
             loadStoreResponse(response);
             return;
@@ -430,13 +455,52 @@ void RiscvQemu::memoryResponse(Memory::Request* response) {
     } catch (const std::exception& error) { fail(error.what()); }
 }
 
+void RiscvQemu::networkCommand() {
+    const auto request = bridge_.networkCommand(*event_);
+    if (networkPending_) throw std::runtime_error("duplicate guest network command");
+    if (!network_) {
+        bridge_.completeNetwork(*event_, std::uint64_t(-8));
+        resume(); return;
+    }
+    auto* command = new NetworkCommand;
+    command->token = event_->eventSequence;
+    command->operation = request.operation;
+    command->first = request.first; command->second = request.second;
+    networkPending_ = true; networkStart_ = getCurrentSimTime(clock_);
+    if (networkTrace_) networkTrace_ << "issue," << networkStart_ << ',' << request.operation << ','
+        << request.first << ',' << request.second << ",0\n";
+    network_->send(command);
+}
+
+void RiscvQemu::networkResponse(SST::Event* event) {
+    std::unique_ptr<SST::Event> owned(event);
+    try {
+        const auto* response = dynamic_cast<NetworkCommand*>(event);
+        if (!response || !response->response || !networkPending_ || !event_ ||
+            response->token != event_->eventSequence)
+            throw std::runtime_error("unmatched guest network response");
+        const auto command = bridge_.networkCommand(*event_);
+        if (command.operation != response->operation || command.first != response->first ||
+            command.second != response->second)
+            throw std::runtime_error("network response changed operands");
+        const auto now = getCurrentSimTime(clock_);
+        ++networkCommands_; networkCycles_ += now - networkStart_;
+        if (networkTrace_) networkTrace_ << "complete," << now << ',' << command.operation << ','
+            << command.first << ',' << command.second << ',' << response->result << '\n';
+        bridge_.completeNetwork(*event_, std::uint64_t(response->result));
+        networkPending_ = false;
+        resume();
+    } catch (const std::exception& error) { fail(error.what()); }
+}
+
 void RiscvQemu::analogCommand() {
     const auto transfer = bridge_.vectorAnalog(*event_);
     if (analogPending_ || transfer.status != UINT32_MAX)
         throw std::runtime_error("duplicate analog command");
-    if (!analog_ || transfer.operation > 3 || transfer.array_id > UINT32_MAX ||
+    if (!analog_ || transfer.operation > 4 || transfer.array_id > UINT32_MAX ||
         transfer.element_count > sizeof(transfer.data) / 4 || transfer.reserved ||
-        (transfer.operation == 2 && (transfer.element_count || transfer.element_offset))) {
+        (transfer.operation == 2 && (transfer.element_count || transfer.element_offset)) ||
+        (transfer.operation == 4 && transfer.element_count)) {
         bridge_.completeVectorAnalog(*event_, 1); resume(); return;
     }
     auto* command = new ArrayCommand;
@@ -533,7 +597,8 @@ void RiscvQemu::guestExit() {
             throw std::runtime_error("QEMU did not exit after guest-exit synchronization");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (!pending_.empty() || !loadStoreEntries_.empty() || !loadStoreRequests_.empty() || lsqWaiting_ ||
+    if (!scalarEntries_.empty() || !scalarRequests_.empty() || slqWaiting_ ||
+        !pending_.empty() || !loadStoreEntries_.empty() || !loadStoreRequests_.empty() || lsqWaiting_ ||
         analogPending_ || !startedExecutions_.empty() || executionDrainWaiting_ ||
         !analogEntries_.empty() || asqWaiting_ || analogAdmissionToken_)
         throw std::runtime_error("guest exited with outstanding requests");
@@ -549,6 +614,8 @@ void RiscvQemu::finish() {
     if (cacheTrace_) cacheTrace_.flush();
     if (memoryTrace_) memoryTrace_.flush();
     if (loadStoreTrace_) loadStoreTrace_.flush();
+    if (scalarTrace_) scalarTrace_.flush();
+    if (scalarWaitTrace_) scalarWaitTrace_.flush();
     if (analogQueueTrace_) analogQueueTrace_.flush();
     if (analogWaitTrace_) analogWaitTrace_.flush();
     const auto counts = ledger_.snapshot();
@@ -565,12 +632,20 @@ void RiscvQemu::finish() {
         << ",\"stops\":" << stops_ << ",\"end_cycle\":" << endCycle_
         << ",\"analog_commands\":" << analogCommands_ << ",\"analog_read_bytes\":" << analogReadBytes_
         << ",\"analog_write_bytes\":" << analogWriteBytes_
+        << ",\"network_commands\":" << networkCommands_ << ",\"network_command_cycles\":" << networkCycles_
         << ",\"instruction_bytes\":" << instructionBytes_
         << ",\"icache_fetches\":" << cache.fetches << ",\"icache_hits\":" << cache.hits
         << ",\"icache_misses\":" << cache.misses << ",\"icache_fills\":" << cache.fills
         << ",\"icache_fill_bytes\":" << cache.fillBytes << ",\"icache_evictions\":" << cache.evictions
         << ",\"icache_invalidations\":" << cache.invalidations
         << ",\"icache_stall_cycles\":" << cache.stallCycles
+        << ",\"scalar_load_store_queue_depth\":" << scalarDepth_
+        << ",\"slq_enqueued\":" << slqEnqueued_ << ",\"slq_completed\":" << slqCompleted_
+        << ",\"slq_peak_occupancy\":" << slqPeak_
+        << ",\"slq_register_stalls\":" << slqRegisterStalls_
+        << ",\"slq_full_stalls\":" << slqFullStalls_
+        << ",\"slq_drain_stalls\":" << slqDrainStalls_
+        << ",\"slq_stall_cycles\":" << slqStallCycles_
         << ",\"load_store_queue_depth\":" << loadStoreDepth_
         << ",\"lsq_enqueued\":" << lsqEnqueued_ << ",\"lsq_completed\":" << lsqCompleted_
         << ",\"lsq_peak_occupancy\":" << lsqPeak_

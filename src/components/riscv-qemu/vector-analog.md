@@ -10,7 +10,16 @@ arrays. They are implemented by the project's LLVM assembler, the isolated
 | `mvm.vl vsrc, xarray, xoffset` | Load array inputs from vector registers | 7 | `0x0e00700b` |
 | `mvm.vs vdst, xarray, xoffset` | Read array outputs into vector registers | 8 | `0x1000700b` |
 
-All are 32-bit CUSTOM_0 instructions (`opcode=0x0b`, `funct3=7`, decoder mask
+The scalar active-region instruction uses funct7=9 (match `0x1200700b`):
+`.insn r 0x0b, 7, 9, xstatus, xarray, xshape`, with
+`xshape = (uint64_t(active_rows) << 32) | active_cols`. Both extents must be
+nonzero and bounded by the physical shape. It returns zero on success, nonzero
+for invalid or undrained arrays. It has no RVV-state prerequisite. It fences
+prior memory/analog-transfer queues; buffered array results must still be read
+before reconfiguration. No assembler mnemonic is added for this instruction.
+The complete state/reset contract is in [active regions](../analog-arrays/README.md#active-regions).
+
+The three vector instructions are 32-bit CUSTOM_0 instructions (`opcode=0x0b`, `funct3=7`, decoder mask
 `0xfe00707f`). The vector register number occupies bits 11:7, `xarray` bits 19:15,
 and `xoffset` bits 24:20. Unlike the old memory instructions, the first operand
 names a vector register, not a scalar status register. `xarray` and `xoffset`
@@ -28,9 +37,12 @@ destination element beyond `vl`, including under tail-agnostic configuration.
 They do not change `vl` or `vtype`.
 
 Offsets are measured in elements. Weight offset `row * array_cols + column`
-addresses the flat row-major matrix; contiguous chunks may cross rows. Input
+addresses the flat row-major matrix; contiguous chunks may cross rows only
+when every physical column is active. Input
 and output offsets address their corresponding buffers. Require
-`offset + vl <= capacity`, where capacity is `rows*cols`, `cols`, or `rows`.
+`offset + vl <= capacity`, where Program uses the physical matrix capacity
+and must include only active cells, while Load/Store capacities are active
+columns/rows. The default active shape equals the physical shape.
 Range checking avoids integer overflow. Zero-length transfers still validate
 the array and range (allowing offset equal to capacity), preserve all state,
 and consume no data-link or programming service.
@@ -40,8 +52,9 @@ and input elements, so a first MVM requires complete coverage of both buffers.
 Coverage persists across later partial updates. In blocking mode, nonempty writes
 invalidate the old computed output. In the default pipeline mode, input loads
 preserve queued results and weight programming requires all results to be drained.
-A nonempty `mvm.vs` waits for the oldest queued result to finish. No automatic
-zero padding, implicit programming epoch, or final-chunk marker is used.
+A nonempty `mvm.vs` waits for the oldest queued result to finish. Configure
+masks inactive cells to logical zero without transferring zero padding. Within
+an unchanged shape, partial transfers do not implicitly clear other values.
 
 Use the existing `mvm xstatus, xarray, xarray` instruction to compute. In this
 composition the default pipeline mode returns 0 after validated compute start,
@@ -63,10 +76,11 @@ cpu, arrays, scratchpad = connect_riscv_arrays(
 )
 ```
 
-With the default `analog_command_queue_depth=0`, each vector transfer blocks
-until its command completes. The optional [analog command queue](analog-command-queue.md)
-allows independent CPU instructions to continue after guaranteed admission. Register snapshots and
-results travel through the local synchronization bridge v34 and SST command
+The [analog command queue](analog-command-queue.md) defaults to
+`analog_command_queue_depth=4`, allowing independent CPU instructions to
+continue after guaranteed admission. Set the depth to zero to block each vector
+transfer until its command completes. Register snapshots and
+results travel through the local synchronization bridge v35 and SST command
 events, with little-endian float32 payloads. They consume the existing shared
 `array_link_width` bandwidth, duplex policy, finite in-flight buffer, and transit
 latency. They issue no SPM requests themselves. The RVV instructions used to
@@ -83,11 +97,13 @@ can service one full LMUL=1 register each cycle. Integer LMUL groups contain
 multiple registers and need proportionally more service cycles; LMUL does not
 change the physical link width. Command transport and device latency are additional.
 
-Each **nonempty `mvm.vset` chunk** pays `cost_per_array_program_cycles` once,
-after its bytes cross the link. MVM uses `cost_per_mvm_cycles`. There is
-no hidden matrix-level finalization cost. With the default analog command queue
-disabled, vector analog transfers block individually while started MVM computations
-are tracked independently. Arrays have no StandardMem slot or direct SPM path. The old
+With `array_program_delay_scope=per_command`, each **nonempty `mvm.vset` chunk**
+pays `cost_per_array_program_cycles` once, after its bytes cross the link.
+The `initial_full_array` alternative charges once when every active weight in
+the current configuration epoch arrives. MVM uses `cost_per_mvm_cycles`.
+The analog command queue is enabled
+by default; started MVM computations are tracked independently. Arrays have no
+StandardMem slot or direct SPM path. The old
 `mvm.set/l/s/mv` instructions trap immediately as illegal instructions; their
 QEMU device and memory helpers are removed. All array data passes through
 architectural vector registers. `connect()` creates independent test fixtures;
@@ -118,13 +134,13 @@ bandwidth limits continue to apply.
 `mvm.vs` reads the oldest reserved result after it finishes. An enabled analog
 queue may admit the instruction earlier when that result can be reserved safely;
 its destination remains unavailable until the timed transfer completes.
-Successfully reading every output element releases that result slot. Reads
+Successfully reading every active output element releases that result slot. Reads
 may be split, reordered, or repeated; coverage counts unique elements. Once
 the last unread element is read, subsequent stores select the next result.
 A zero-length Store neither waits for nor consumes a result. Software must
 finish draining the oldest result before submitting a third job, because a
 full two-slot FIFO backpressures the next `mvm`. Partial result reads therefore
-must eventually cover all rows. A nonempty `mvm.vset` is rejected while an
+must eventually cover all active rows. A nonempty `mvm.vset` is rejected while an
 execution or buffered result remains; drain results before changing weights.
 
 A typical schedule after programming weights is:

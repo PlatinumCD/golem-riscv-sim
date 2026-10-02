@@ -10,6 +10,7 @@
 #include "instructionCache.h"
 #include "sharedSyncMemoryBridge.h"
 #include "../analog-arrays/commands.h"
+#include "../mordred/networkCommand.h"
 #include <fstream>
 #include <map>
 #include <memory>
@@ -32,7 +33,8 @@ public:
         {"instruction_budget", "Instructions per QEMU synchronization grant", "256"},
         {"issue_width", "Maximum scalar instructions issued per CPU cycle", "1"},
         {"load_store_queue_depth", "Outstanding RVV memory beats, 1 retains the blocking baseline; 1..64", "1"},
-        {"analog_command_queue_depth", "Asynchronous vector analog commands; zero disables; 0..16", "0"},
+        {"scalar_load_store_queue_depth", "Outstanding scalar memory operations; zero disables; 0..64", "8"},
+        {"analog_command_queue_depth", "Asynchronous vector analog commands; zero disables; 0..16", "4"},
         {"analog_command_queue_bytes", "Maximum active analog payload bytes; 1024..16384", "16384"},
         {"instruction_cache_enabled", "Enable the scratchpad-backed instruction cache", "true"},
         {"instruction_cache_bytes", "Instruction cache capacity", "8192"},
@@ -48,6 +50,7 @@ public:
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
         {"qemu_memory", "Uncached SPM timing requests", "SST::Interfaces::StandardMem"})
     SST_ELI_DOCUMENT_PORTS(
+        {"network_commands", "Guest network command/completion control path", {"TileComponents.NetworkCommand"}},
         {"external_commit", "Release SPM byte ranges after the QEMU access commits", {"TileComponents.ExternalCommit"}},
         {"analog_commands", "Vector transfers and MVM start/completion responses", {"TileComponents.ArrayCommand"}})
 
@@ -65,6 +68,10 @@ private:
     SST::Link* cacheWake_ = nullptr;
     SST::Link* commit_ = nullptr;
     SST::Link* analog_ = nullptr;
+    SST::Link* network_ = nullptr;
+    bool networkPending_ = false;
+    std::uint64_t networkCommands_ = 0, networkCycles_ = 0, networkStart_ = 0;
+    std::ofstream networkTrace_;
     SST::TimeConverter clock_;
     Riscv::QemuConfiguration config_{};
     Riscv::SharedSyncMemoryBridge bridge_;
@@ -94,6 +101,18 @@ private:
     std::string lsqWaitReason_;
     bool lsqWaiting_ = false, lsqWaitAny_ = false;
     std::ofstream loadStoreTrace_, waitTrace_;
+    std::map<std::uint64_t, LoadStoreEntry> scalarEntries_;
+    std::map<Memory::Request::id_t, std::uint64_t> scalarRequests_;
+    std::uint32_t scalarDepth_ = 0;
+    std::uint64_t lastScalarToken_ = 0;
+    std::uint64_t slqEnqueued_ = 0, slqCompleted_ = 0, slqPeak_ = 0;
+    std::uint64_t slqRegisterStalls_ = 0, slqFullStalls_ = 0, slqDrainStalls_ = 0;
+    std::uint64_t slqStallCycles_ = 0, slqWaitStart_ = 0, slqWaitMask_ = 0;
+    std::uint64_t slqWaitPc_ = 0;
+    std::uint32_t slqWaitStopReason_ = 0;
+    std::string slqWaitReason_;
+    bool slqWaiting_ = false, slqWaitAny_ = false;
+    std::ofstream scalarTrace_, scalarWaitTrace_;
     std::uint64_t observationStartTask_ = 0;
     bool observationTaskPending_ = false;
     std::uint8_t* backingBytes_ = nullptr;
@@ -156,6 +175,14 @@ private:
     void traceLoadStore(const char* kind, const LoadStoreEntry* entry = nullptr,
                         const char* reason = "");
     void traceLoadStoreMemory(const char* kind, const LoadStoreEntry& entry);
+    bool scalarBarrier();
+    bool scalarWaitSatisfied(std::uint64_t mask, bool any) const;
+    void enqueueScalar();
+    void scalarResponse(Memory::Request* response);
+    void retireScalars();
+    void traceScalar(const char* kind, const LoadStoreEntry* entry = nullptr,
+                        const char* reason = "");
+    void traceScalarMemory(const char* kind, const LoadStoreEntry& entry);
     bool analogQueueBarrier();
     bool analogQueueWaitSatisfied(std::uint64_t mask, bool any, std::uint32_t reason) const;
     void enqueueAnalog();
@@ -163,6 +190,8 @@ private:
     void wakeAnalogQueue();
     void traceAnalogQueue(const char* kind, const AnalogEntry* entry = nullptr);
     void analogCommand();
+    void networkCommand();
+    void networkResponse(SST::Event* response);
     void analogResponse(SST::Event* response);
     void traceTask();
     void guestExit();

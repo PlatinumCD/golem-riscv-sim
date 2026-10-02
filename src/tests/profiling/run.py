@@ -1,4 +1,4 @@
-"""Verify passive cycle profiling on the maintained four-tile correctness fixture."""
+"""Verify passive cycle profiling on guest MVM → multi-hop message → MVM."""
 import argparse
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -14,10 +14,9 @@ import time
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parents[1]
 ROOT = SOURCE.parent
-FIXTURE = HERE.parent / 'mordred-spm'
+FIXTURE = HERE.parent / 'network-instructions'
 sys.path[:0] = [str(SOURCE), str(FIXTURE)]
 from build import load_build_info
-from validate import validate_trial
 
 spec = importlib.util.spec_from_file_location('profile_mesh_fixture', FIXTURE / 'run.py')
 fixture = importlib.util.module_from_spec(spec)
@@ -63,8 +62,8 @@ def audit(trial):
             'pending_messages', 'active_byte_ranges', 'requests_awaiting_service',
             'tx_flits', 'rx_packets', 'router_credits'} <= seen, ('Missing resource observations', seen)
     for tile in range(4):
-        for suffix in ('icache', 'memory', 'lsq', 'asq', 'waits', 'asq-waits'):
-            path = trial / f'tile_mesh.tile{tile}.riscv-{suffix}.csv'
+        for suffix in ('icache', 'memory', 'lsq', 'slq', 'asq', 'waits', 'slq-waits', 'asq-waits'):
+            path = trial / f'net.tile{tile}.riscv-{suffix}.csv'
             assert path.is_file() and path.stat().st_size > 0, ('Missing CPU trace', path)
     return dict(component_profiles=len(files), distinct_flits=len(sends),
                 observed_link_hops=sum(map(len, sends.values())),
@@ -78,19 +77,20 @@ def main():
     parser.add_argument('--qemu', type=Path, default=ROOT / 'build/src/qemu/qemu-system-riscv64')
     parser.add_argument('--compiler', type=Path, default=ROOT / 'install/llvm/bin/clang')
     args = parser.parse_args()
-    info = load_build_info(args.build_info, extra_sources=[FIXTURE / 'initiator.cc'])
+    info = load_build_info(args.build_info)
     output = (args.output or ROOT / 'tests/results/profiling' / str(time.time_ns())).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    case = fixture.cases()[0]
-    case.update(elfs=fixture.compile_guests(output / 'guests', args.compiler.resolve(), case),
-                qemu=str(args.qemu.resolve()))
+    case = fixture.configure(next(c for c in fixture.cases() if c['name'] == 'mvm-multi-hop-mvm'), args.qemu)
+    guests = output / 'guests'
+    guests.mkdir()
+    case['elfs'] = fixture.compile_guests(guests, case, args.compiler.resolve())
     measurements, profiles = {}, {}
     for name, flag, budget in (('default-off', None, 256), ('explicit-off', '0', 256),
                               ('on', '1', 256), ('on-budget1', '1', 1)):
         trial = output / name
         trial.mkdir()
         current = deepcopy(case)
-        current.update(name=name, cycle_profiling=flag == '1')
+        current.update(name=name, profile=flag == '1')
         current['cpu_parameters']['instruction_budget'] = budget
         write(trial / 'case.json', current)
         env = {k: v for k, v in os.environ.items()
@@ -105,7 +105,7 @@ def main():
         with (trial / 'simulation.log').open('w') as stream:
             subprocess.run(command, env=env, stdout=stream, stderr=subprocess.STDOUT,
                            timeout=180, check=True)
-        checks = validate_trial(trial, current, 0)
+        checks = fixture.validate(trial, current)
         measurements[name] = checks
         write(trial / 'validation.json', dict(passed=True, checks=checks))
         if flag == '1':
@@ -123,13 +123,13 @@ def main():
     # Synchronization grant size only changes host rendezvous bookkeeping.
     normal, single = deepcopy(measurements['on']), deepcopy(measurements['on-budget1'])
     for record in (normal, single):
-        for tile in record['tiles']:
-            tile['cpu'].pop('grants', None)
-            tile['cpu'].pop('stops', None)
+        for cpu in record['cpu']:
+            cpu.pop('grants', None)
+            cpu.pop('stops', None)
     assert normal == single, 'Instruction budget changed architectural timing/traffic'
     write(output / 'validation.json', dict(passed=True, cases=4,
         default_off=True, explicit_off=True, identical_profile_on_off_timing_and_values=True,
-        identical_legacy_event_traces=True, identical_instruction_budget_timing=True, profiles=profiles))
+        identical_event_traces=True, identical_instruction_budget_timing=True, profiles=profiles))
     print(f'PASS profiling regression: {output}', flush=True)
 
 

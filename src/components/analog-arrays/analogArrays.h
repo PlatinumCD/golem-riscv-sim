@@ -38,6 +38,7 @@ private:
         struct Result {
             std::vector<float> values;
             std::vector<bool> delivered;
+            unsigned activeRows = 0, activeCols = 0;
             std::size_t deliveredRows = 0;
             bool ready = false;
             std::uint64_t token = 0;
@@ -54,6 +55,10 @@ private:
         bool inputCaptured = false;
         bool programDelayCharged = false, initialProgramClosed = false;
         bool programmed = false, loaded = false, computed = false;
+        unsigned activeRows = 0, activeCols = 0;
+        std::uint64_t configurationEpoch = 0;
+        std::vector<bool> outputDelivered;
+        std::size_t deliveredRows = 0;
         std::vector<float> weights, input, output;
         std::vector<bool> weightInitialized, inputInitialized;
         std::size_t initializedWeights = 0, initializedInputs = 0;
@@ -69,6 +74,7 @@ private:
     };
     bool tick(SST::Cycle_t);
     void command(SST::Event*);
+    void configure(ArrayCommand*);
     void start(unsigned, std::uint64_t);
     void beginTransfer(unsigned, std::uint64_t);
     void startPipeline(unsigned, std::uint64_t);

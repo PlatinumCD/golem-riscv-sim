@@ -63,7 +63,16 @@ payload command port and no memory interface.
 
 `connect_riscv_arrays()` returns `(cpu, arrays, scratchpad)` and connects the
 CPU's `analog_commands` port. It supports `mvm.vset`, `mvm.vl`, and `mvm.vs`
-register chunks plus `mvm` execution. See the [instruction contract](vector-analog.md)
+register chunks plus `mvm` execution and scalar active-region configuration.
+Configure uses CUSTOM_0 (`0x0b`), funct3=7, funct7=9: `rs1` is the array slot,
+`rs2` packs `(uint64_t(rows) << 32) | cols`, and `rd` receives zero on success
+or nonzero on rejection. It is available through `.insn r 0x0b, 7, 9, rd, rs1, rs2`;
+no assembler mnemonic extension is needed. The instruction conservatively drains
+prior scalar, vector-memory, and analog-transfer queues before issuing. An
+unread array result still causes a nonzero status, avoiding a wait that would
+prevent its own required Store. Slots wider than 32 bits are rejected before
+conversion, rather than aliasing a valid slot.
+See the [instruction contract](vector-analog.md)
 for operands, LLVM compilation, chunk timing, and validation.
 The array command link is their only external port. The arrays have no SPM
 connection or fd43 analog device. Legacy `mvm.set/l/s/mv` instructions trap
@@ -84,7 +93,8 @@ CPU options use `cpu_parameters`; VLEN is shared with the architecture:
 | `instruction_budget` | 256 | Instructions allowed per host synchronization grant |
 | `issue_width` | 1 | Scalar issue width; vector instructions consume at least one issue cycle |
 | `load_store_queue_depth` | 1 | Outstanding vector memory beats, 1–64; depth 1 preserves blocking behavior |
-| `analog_command_queue_depth` | 0 | Outstanding vector analog commands, 0–16; zero preserves blocking transfers |
+| `scalar_load_store_queue_depth` | 8 | Outstanding scalar operations, 0–64; zero selects blocking accesses |
+| `analog_command_queue_depth` | 4 | Outstanding vector analog commands, 0–16; zero selects blocking transfers |
 | `analog_command_queue_bytes` | 16384 | Active analog payload-byte limit, a multiple of four from 1024 through 16384 |
 | `instruction_cache_enabled` | true | Enable the instruction cache; false uses direct SPM fetches |
 | `instruction_cache_bytes` | 8192 | Instruction-cache capacity in bytes |
@@ -111,7 +121,9 @@ or change the SPM backing file, including when the cache is disabled.
 
 ## Memory and timing contract
 
-The default `load_store_queue_depth=1` retains the blocking contract below.
+The scalar queue defaults to `scalar_load_store_queue_depth=8`; set it to zero
+for blocking scalar accesses. See the [scalar queue contract](scalar-load-store-queue.md).
+The separate default `load_store_queue_depth=1` retains blocking vector accesses.
 Set it to 2–64 to overlap eligible independent vector loads/stores while
 preserving timed data visibility and dependencies. See the
 [load/store queue contract](load-store-queue.md) for eligibility, ordering,
@@ -179,8 +191,9 @@ starting the next line fill. There is no deferred QEMU access for a cache fill.
 This also permits cache lines smaller than the SPM request size without
 retaining a range across the next fill.
 
-At LSQ depth 1, instruction-cache fills and data accesses complete before
-their corresponding guest operation proceeds. Analog register transfers block
+Instruction-cache fills complete before the corresponding instruction proceeds.
+Vector accesses block at vector LSQ depth 1; scalar accesses block when
+`scalar_load_store_queue_depth=0`. Enabled queues allow independent work to overlap. Analog register transfers block
 when `analog_command_queue_depth=0`; depths 1–16 let independent CPU work
 continue after guaranteed admission. Source registers remain pinned until timed
 capture, and outputs remain pending until completion, including at LSQ depth 1.

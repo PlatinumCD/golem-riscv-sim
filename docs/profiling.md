@@ -30,7 +30,7 @@ configure(enabled=True, output_directory="/tmp/tile-profile")
 The maintained runner also accepts the flag:
 
 ```sh
-bash tests/run-all.sh --case network/mordred-spm --profile
+bash tests/run-all.sh --case network/guest-instructions --profile
 bash tests/run-all.sh --case platform/profiling
 ```
 
@@ -44,7 +44,7 @@ using the explicit output directory above, without setting test variables.
 
 | Component | Observations |
 | --- | --- |
-| RISC-V CPU | Instruction segments, instruction-cache accesses, memory operations, LSQ and analog-command-queue events, and recorded waits |
+| RISC-V CPU | Instruction segments, instruction-cache accesses, memory operations, separate scalar/vector load-store queues, analog-command-queue events, and recorded waits |
 | Analog accelerator | Command occupancy, active computation, result slots and command events |
 | Shared SPM | Controller ordering/admission, connection request queues, bank service and channel activity |
 | NIU | Memory fragments, pending messages and receive/storage credits |
@@ -60,6 +60,12 @@ is configured differently. Existing CPU/event CSVs retain their documented
 schemas. These are observations of the modeled components, not an additional
 physical component or a model of every internal signal.
 
+`<cpu>-slq.csv` contains scalar queue lifetimes and `<cpu>-slq-waits.csv` contains
+actual scalar-queue CPU waiting intervals. Scalar requests also appear in the
+memory trace. A request's issue-to-completion interval can overlap independent
+CPU work; use the wait trace to measure CPU stalls and bank traces to measure
+actual SPM service. Task snapshots include cumulative scalar-queue stall cycles.
+
 No profiling clock, event or simulated latency is added. The observed SPM
 connection component is generated from the pinned SST Bus source with passive
 recording hooks. Mordred hooks are applied to a build-local copy of its pinned
@@ -67,7 +73,7 @@ source. Both are included in the ordinary simulator build. Recording can
 increase host runtime and disk use; disabled runs do not create profile files.
 
 The [profiling regression](../src/tests/profiling/README.md) runs the maintained
-four-tile fixture with profiling unset, explicitly off, and on. It compares
+four-tile guest MVM → multi-hop message → MVM fixture with profiling unset, explicitly off, and on. It compares
 results, timing and event traces, checks network flit conservation and physical
 link timing, and repeats the enabled run with a one-instruction QEMU grant.
 The trace files are the supported output; this release adds no dashboard viewer.

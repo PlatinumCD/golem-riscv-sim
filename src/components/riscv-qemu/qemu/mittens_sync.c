@@ -264,6 +264,7 @@ void helper_mittens_sync_instruction_fetch(
         }
         return;
     }
+    mittens_slq_before_instruction(program_counter, instruction, instruction_length);
     mittens_lsq_before_instruction(program_counter, instruction, instruction_length);
     if (s->fetch_segment_index < s->fetch_segment_count) {
         const uint32_t index = s->fetch_segment_index++;
@@ -280,7 +281,7 @@ void helper_mittens_sync_instruction_fetch(
     s->fetch_segment_index = 0;
     s->bridge->fetch_segment_proposed = 1;
     s->bridge->fetch_segment_approved = 1;
-    if (!mittens_sync_lsq_enabled() && !mittens_sync_asq_enabled() &&
+    if (!mittens_sync_lsq_enabled() && !mittens_sync_asq_enabled() && !mittens_sync_slq_enabled() &&
         s->bridge->fetch_segment_limit > 1 &&
         instruction_length == 4 && current_cpu != NULL) {
         /* M-mode, masked interrupts, and a single mapped page. No translation
@@ -328,6 +329,7 @@ void helper_mittens_sync_instruction_fetch(
     s->fetch_segment_index = 1;
 reset_metadata:
     mittens_lsq_after_instruction_fetch();
+    mittens_slq_after_instruction_fetch();
     s->fetch_vector_baseline = s->vector_instructions_executed;
     /* Dependency metadata belongs to this instruction only. In particular,
      * code rewritten at the same PC must not inherit a prior scalar access. */
@@ -756,6 +758,24 @@ bool mittens_sync_vector_analog_enabled(void)
            mittens_sync_instance->scratchpad_strict_sync;
 }
 
+uint64_t mittens_sync_network(uint32_t operation, uint64_t first, uint64_t second)
+{
+    MittensSyncNetwork *command = &mittens_sync_instance->bridge->network;
+    *command = (MittensSyncNetwork) { .first = first, .second = second,
+                                   .operation = operation };
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_NETWORK, MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX, 0, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, 0,
+        0, 0, MITTENS_SYNC_MEMORY_FLAG_NONE,
+        mittens_sync_current_executed(), true);
+    if (command->operation != operation || command->first != first ||
+        command->second != second || command->completed != 1) {
+        mittens_sync_set_error(MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE,
+                              "network command resumed without matching completion");
+    }
+    return command->result;
+}
+
 uint32_t mittens_sync_vector_analog(
     uint32_t operation, uint64_t array_id, uint64_t element_offset,
     uint32_t element_count, uint8_t *data)
@@ -764,11 +784,12 @@ uint32_t mittens_sync_vector_analog(
     uint32_t byte_count;
 
     if (!mittens_sync_vector_analog_enabled() ||
-        operation > MITTENS_SYNC_VECTOR_ANALOG_STORE ||
+        operation > MITTENS_SYNC_VECTOR_ANALOG_CONFIGURE ||
         element_count > MITTENS_SYNC_VECTOR_ANALOG_BYTES / sizeof(uint32_t) ||
         (element_count != 0 && data == NULL) ||
         (operation == MITTENS_SYNC_VECTOR_ANALOG_EXECUTE &&
-         (element_count != 0 || element_offset != 0))) {
+         (element_count != 0 || element_offset != 0)) ||
+        (operation == MITTENS_SYNC_VECTOR_ANALOG_CONFIGURE && element_count != 0)) {
         return MITTENS_SYNC_VECTOR_ANALOG_PENDING;
     }
 
@@ -910,10 +931,63 @@ bool mittens_sync_scratchpad_host_matches(const void *host, uint64_t address,
                    (address - s->scratchpad_base);
 }
 
+/* A trap whose handler is outside executable SPM can fault during translation
+ * indefinitely, without consuming icount or reaching a fetch rendezvous. Check
+ * the resolved target after QEMU has applied delegation and vector offsets. */
+void mittens_sync_check_trap_target(uint64_t program_counter)
+{
+    if (mittens_sync_instruction_fetch_timing_enabled() &&
+        !mittens_sync_scratchpad_contains(program_counter, 2)) {
+        mittens_sync_lsq_error("no instruction-fetch progress in local SPM: trap handler is outside the configured scratchpad");
+    }
+}
+
 void mittens_sync_lsq_error(const char *message)
 {
     mittens_sync_set_error(MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE, message);
     cpu_loop_exit(current_cpu);
+}
+
+MittensSyncScalarQueue *mittens_sync_slq_queue(void)
+{
+    MittensSyncDeviceState *s = mittens_sync_instance;
+    return s && s->bridge ? mittens_sync_scalar_queue(s->bridge) : NULL;
+}
+
+bool mittens_sync_slq_enabled(void)
+{
+    MittensSyncScalarQueue *queue = mittens_sync_slq_queue();
+    return mittens_sync_vector_memory_enabled() &&
+           mittens_sync_instruction_fetch_timing_enabled() && queue &&
+           queue->depth > 0 && queue->depth <= MITTENS_SYNC_SLQ_CAPACITY;
+}
+
+void mittens_sync_slq_submit(uint32_t slot)
+{
+    MittensSyncScalarQueue *queue = mittens_sync_slq_queue();
+    if (!mittens_sync_slq_enabled() || slot >= queue->depth) {
+        mittens_sync_lsq_error("invalid deferred scalar submission slot");
+        return;
+    }
+    const MittensSyncScalarSlot *entry = &queue->slots[slot];
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_SLQ_SUBMIT, MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX, entry->program_counter, slot, 0,
+        UINT32_MAX, UINT32_MAX, 0, entry->address, entry->size,
+        entry->write ? MITTENS_SYNC_MEMORY_FLAG_WRITE : 0,
+        mittens_sync_current_executed(), true);
+}
+
+void mittens_sync_slq_wait(uint64_t mask, bool any)
+{
+    if (!mittens_sync_slq_enabled() || !mask) {
+        mittens_sync_lsq_error("invalid deferred scalar wait mask");
+        return;
+    }
+    mittens_sync_publish_event(
+        MITTENS_SYNC_STOP_SLQ_WAIT, MITTENS_SYNC_EVENT_FLAG_NONE,
+        UINT32_MAX, 0, UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, 0,
+        mask, 0, any ? 1 : 0, mittens_sync_current_executed(), true);
 }
 
 void mittens_sync_lsq_submit(uint32_t slot)

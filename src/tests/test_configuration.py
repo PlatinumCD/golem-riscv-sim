@@ -395,6 +395,52 @@ class ConfigurationTests(unittest.TestCase):
                                     cpu_parameters=dict(load_store_queue_depth=depth))
                         self.assertFalse(backing.exists())
 
+    def test_scalar_queue_default_disabled_and_custom_depths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            elf, qemu = directory / "guest.elf", directory / "qemu"
+            elf.touch(); qemu.touch()
+            for connect in (connect_riscv, connect_riscv_arrays):
+                for depth in (None, 0, 1, 2, 4, 8, 16, 64):
+                    options = {} if depth is None else dict(scalar_load_store_queue_depth=depth)
+                    with self.subTest(connect=connect.__name__, depth=depth):
+                        nodes = connect(Composition(), {}, elf=elf, qemu=qemu,
+                            memory_file=directory / "spm.bin", cpu_parameters=options)
+                        self.assertEqual(nodes[0].params["scalar_load_store_queue_depth"],
+                                         8 if depth is None else depth)
+                        for node in nodes[1:]:
+                            self.assertNotIn("scalar_load_store_queue_depth", node.params)
+
+    def test_invalid_scalar_queue_depth_preserves_backing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            elf, qemu, backing = directory / "guest.elf", directory / "qemu", directory / "spm.bin"
+            elf.touch(); qemu.touch()
+            for connect in (connect_riscv, connect_riscv_arrays):
+                for depth in (-1, 65, True, False, 1.0, "8", None):
+                    with self.subTest(connect=connect.__name__, depth=depth):
+                        composition = Composition()
+                        backing.write_bytes(b"preserve existing backing")
+                        with self.assertRaisesRegex(ValueError, "scalar_load_store_queue_depth"):
+                            connect(composition, {}, elf=elf, qemu=qemu, memory_file=backing,
+                                    cpu_parameters=dict(scalar_load_store_queue_depth=depth))
+                        self.assertFalse(composition.nodes)
+                        self.assertEqual(backing.read_bytes(), b"preserve existing backing")
+                        backing.unlink()
+                        with self.assertRaisesRegex(ValueError, "scalar_load_store_queue_depth"):
+                            connect(composition, {}, elf=elf, qemu=qemu, memory_file=backing,
+                                    cpu_parameters=dict(scalar_load_store_queue_depth=depth))
+                        self.assertFalse(backing.exists())
+
+    def test_tile_profiles_inherit_scalar_queue(self):
+        import json
+        from configuration import _cpu_options
+        profiles = json.loads((Path(__file__).resolve().parents[1] / "tile_profiles.json").read_text())
+        for name, profile in profiles.items():
+            with self.subTest(profile=name):
+                options = _cpu_options(resolve(profile["parameters"]), profile["cpu_parameters"])
+                self.assertEqual(options["scalar_load_store_queue_depth"], 8)
+
     def test_instruction_cache_custom_and_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -460,7 +506,7 @@ class ConfigurationTests(unittest.TestCase):
                         nodes = connect(Composition(), {}, elf=elf, qemu=qemu,
                             memory_file=directory / "spm.bin", cpu_parameters=options)
                         self.assertEqual(nodes[0].params["analog_command_queue_depth"],
-                                         options.get("analog_command_queue_depth", 0))
+                                         options.get("analog_command_queue_depth", 4))
                         self.assertEqual(nodes[0].params["analog_command_queue_bytes"],
                                          options.get("analog_command_queue_bytes", 16384))
                         for node in nodes[1:]:

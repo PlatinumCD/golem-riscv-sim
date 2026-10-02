@@ -64,6 +64,7 @@ AnalogArrays::AnalogArrays(SST::ComponentId_t id, SST::Params& p) : Component(id
         (duplex != "shared" && duplex != "independent"))
         fatal(CALL_INFO, -1, "invalid analog-array configuration\n");
     for (auto& a : arrays_) {
+        a.activeRows = rows_; a.activeCols = cols_;
         a.weights.resize(std::size_t(rows_) * cols_);
         a.input.resize(cols_); a.output.resize(rows_);
         a.weightInitialized.resize(a.weights.size()); a.inputInitialized.resize(cols_);
@@ -87,12 +88,12 @@ AnalogArrays::AnalogArrays(SST::ComponentId_t id, SST::Params& p) : Component(id
         waits_ << "cycle,array,token,operation,buffered,remaining\n";
         programmingTrace_.open(detail + "-programming.csv");
         if (!programmingTrace_) fatal(CALL_INFO, -1, "cannot open array programming trace\n");
-        programmingTrace_ << "event,cycle,array,token,scope,element_offset,element_count,initialized_weights,total_weights,delay_cycles\n";
+        programmingTrace_ << "event,cycle,array,token,scope,element_offset,element_count,initialized_weights,total_weights,delay_cycles,active_rows,active_cols,active_weights,configuration_epoch\n";
         if (std::getenv("TILE_COMPONENT_TRACE_START_TASK") ||
             std::getenv("TILE_COMPONENT_PROGRAM_PROOF")) {
             initialProgramTrace_.open(detail + "-initial-program.csv");
             if (!initialProgramTrace_) fatal(CALL_INFO, -1, "cannot open initial-program proof trace\n");
-            initialProgramTrace_ << "array,first_program_start_cycle,cycle,final_token,scope,program_commands,delivered_bytes,initialized_weights,total_weights,delay_cycles,delay_charges,initial_completions,weights_fnv1a64\n";
+            initialProgramTrace_ << "array,first_program_start_cycle,cycle,final_token,scope,program_commands,delivered_bytes,initialized_weights,total_weights,delay_cycles,delay_charges,initial_completions,weights_fnv1a64,active_rows,active_cols,active_weights,configuration_epoch\n";
         }
     }
 }
@@ -172,12 +173,55 @@ bool AnalogArrays::projectedNonpipelineOutput(const Array& a) const {
     return valid;
 }
 
+void AnalogArrays::configure(ArrayCommand* request) {
+    auto& a = arrays_[request->array];
+    const auto rows = std::uint32_t(request->elementOffset >> 32);
+    const auto cols = std::uint32_t(request->elementOffset);
+    // Error, rather than retryable Busy: a CPU blocked retrying Configure
+    // cannot issue the Store that releases an unread result. No state changes
+    // on rejection. A successful Configure starts a fresh initialization epoch.
+    if (!rows || !cols || rows > rows_ || cols > cols_ ||
+        a.active || a.compute || !a.queue.empty() || !a.results.empty() ||
+        (!pipeline_ && a.computed && a.deliveredRows < a.activeRows)) {
+        ++errors_; reply(*request, CommandStatus::Error); delete request; return;
+    }
+    ++accepted_; reply(*request, CommandStatus::Accepted);
+    recordCommand("start", request->array, *request, getCurrentSimTime(clock_));
+    // Invalidate coverage, not physical storage. Old bits may remain resident
+    // but cannot satisfy readiness; inactive cells are masked by the compute
+    // geometry and by the effective-matrix proof. No hardware clear is implied.
+    std::fill(a.weightInitialized.begin(), a.weightInitialized.end(), false);
+    a.activeRows = rows; a.activeCols = cols;
+    ++a.configurationEpoch;
+    a.inputInitialized.assign(cols, false);
+    a.initializedWeights = a.initializedInputs = 0;
+    a.projectedWeightInitialized.clear(); a.projectedInitializedWeights = 0;
+    a.programmed = a.loaded = a.computed = false;
+    a.initialProgramClosed = a.programDelayCharged = false;
+    a.observedProgramCommands = a.observedProgramBytes = a.observedProgramFirstCycle = 0;
+    a.outputDelivered.clear(); a.deliveredRows = 0;
+    ++completed_;
+    recordCommand("complete", request->array, *request, getCurrentSimTime(clock_));
+    reply(*request, CommandStatus::Complete); delete request;
+}
+
 void AnalogArrays::command(SST::Event* event) {
     auto* request = dynamic_cast<ArrayCommand*>(event);
     if (!request) fatal(CALL_INFO, -1, "unknown array event\n");
     const auto op = request->operation;
+    if (request->status != CommandStatus::Request || request->array >= arrays_.size() ||
+        op > Operation::Configure || tokens_.count(request->token)) {
+        ++errors_; reply(*request, CommandStatus::Error); delete request; return;
+    }
+    if (op == Operation::Configure) {
+        if (request->deferred || request->elementCount || !request->payload.empty()) {
+            ++errors_; reply(*request, CommandStatus::Error); delete request; return;
+        }
+        configure(request); return;
+    }
+    auto& a = arrays_[request->array];
     const std::uint64_t elements = op == Operation::Program ? std::uint64_t(rows_) * cols_ :
-                                   op == Operation::Load ? cols_ : op == Operation::Store ? rows_ : 0;
+                                   op == Operation::Load ? a.activeCols : op == Operation::Store ? a.activeRows : 0;
     const std::uint64_t bytes = std::uint64_t(request->elementCount) * 4;
     const bool input = op == Operation::Program || op == Operation::Load;
     if (request->status != CommandStatus::Request || request->array >= arrays_.size() ||
@@ -188,9 +232,18 @@ void AnalogArrays::command(SST::Event* event) {
         (input ? request->payload.size() != bytes : !request->payload.empty())) {
         ++errors_; reply(*request, CommandStatus::Error); delete request; return;
     }
-    auto& a = arrays_[request->array];
-    // A fresh array is the only epoch in initial_full_array mode. Close it
-    // as soon as all weights arrive, including while its delay is outstanding.
+    if (op == Operation::Program && request->elementCount) {
+        const auto firstRow = request->elementOffset / cols_;
+        const auto firstCol = request->elementOffset % cols_;
+        const auto lastRow = (request->elementOffset + request->elementCount - 1) / cols_;
+        if (lastRow >= a.activeRows || firstCol >= a.activeCols ||
+            (firstRow == lastRow ? firstCol + request->elementCount > a.activeCols :
+                                  a.activeCols != cols_)) {
+            ++errors_; reply(*request, CommandStatus::Error); delete request; return;
+        }
+    }
+    // Close each configured initialization epoch when all active weights
+    // arrive, including while its programming delay remains outstanding.
     if (initialProgram_ && a.initialProgramClosed && op == Operation::Program && request->elementCount) {
         ++errors_; reply(*request, CommandStatus::Error); delete request; return;
     }
@@ -211,7 +264,7 @@ void AnalogArrays::command(SST::Event* event) {
             // A guaranteed command must not sit behind an admitted range that
             // will close the epoch. Legacy clients keep their old late-error
             // behavior, but their accepted ranges still affect projection.
-            if (request->deferred && a.projectedInitializedWeights == a.weights.size()) {
+            if (request->deferred && a.projectedInitializedWeights == std::size_t(a.activeRows) * a.activeCols) {
                 ++errors_; reply(*request, CommandStatus::Error); delete request; return;
             }
             initializeRange(a.projectedWeightInitialized, a.projectedInitializedWeights,
@@ -291,6 +344,9 @@ void AnalogArrays::complete(unsigned index, CommandStatus status) {
             if (initializeRange(result.delivered, result.deliveredRows,
                                 a.active->elementOffset, a.active->elementCount))
                 a.results.pop_front();
+        } else if (!pipeline_ && a.active->elementCount) {
+            initializeRange(a.outputDelivered, a.deliveredRows,
+                            a.active->elementOffset, a.active->elementCount);
         }
         a.active->payload = std::move(a.transfer);
     }
@@ -316,7 +372,8 @@ void AnalogArrays::startCompute(unsigned index, ArrayCommand* request, std::uint
     // Program cannot run until every pending result has drained, so weights
     // remain stable. Inputs are captured before allowing later Loads to run.
     a.computeInput = a.input;
-    a.results.push_back(Array::Result{std::vector<float>(rows_), std::vector<bool>(rows_)});
+    a.results.push_back(Array::Result{std::vector<float>(a.activeRows),
+                                     std::vector<bool>(a.activeRows), a.activeRows, a.activeCols});
     a.results.back().token = request->token;
     a.compute = request;
     a.computeReady = now + execCost_;
@@ -330,9 +387,9 @@ void AnalogArrays::progressCompute(unsigned index, std::uint64_t now) {
     if (!a.compute || now < a.computeReady) return;
     auto& result = a.results.back();
     if (result.ready) fatal(CALL_INFO, -1, "pipeline compute lost its output reservation\n");
-    for (unsigned row = 0; row < rows_; ++row) {
+    for (unsigned row = 0; row < result.activeRows; ++row) {
         double sum = 0;
-        for (unsigned col = 0; col < cols_; ++col)
+        for (unsigned col = 0; col < result.activeCols; ++col)
             sum += double(a.weights[std::size_t(row) * cols_ + col]) * a.computeInput[col];
         result.values[row] = static_cast<float>(sum);
     }
@@ -410,12 +467,13 @@ void AnalogArrays::progress(unsigned index, std::uint64_t now) {
     if (!a.active || now < a.ready) return;
     const auto op = a.active->operation;
     if (op == Operation::Execute) {
-        for (unsigned row = 0; row < rows_; ++row) {
+        for (unsigned row = 0; row < a.activeRows; ++row) {
             double sum = 0;
-            for (unsigned col = 0; col < cols_; ++col)
+            for (unsigned col = 0; col < a.activeCols; ++col)
                 sum += double(a.weights[std::size_t(row) * cols_ + col]) * a.input[col];
             a.output[row] = static_cast<float>(sum);
         }
+        a.outputDelivered.assign(a.activeRows, false); a.deliveredRows = 0;
         a.computed = true; ++mvms_; complete(index); return;
     }
     if (!a.total) { captureInput(index); complete(index); return; }
@@ -448,8 +506,9 @@ void AnalogArrays::progress(unsigned index, std::uint64_t now) {
                 // Coverage describes received weights. The command still owns
                 // its payload and programmed readiness remains false until its
                 // selected delay finishes and the payload is committed below.
-                const bool full = initializeRange(a.weightInitialized, a.initializedWeights,
-                                                  a.active->elementOffset, a.total / 4);
+                initializeRange(a.weightInitialized, a.initializedWeights,
+                                a.active->elementOffset, a.total / 4);
+                const bool full = a.initializedWeights == std::size_t(a.activeRows) * a.activeCols;
                 a.programDelayCharged = !initialProgram_ || full;
                 const auto delay = a.programDelayCharged ? programCost_ : 0;
                 if (delay > UINT64_MAX - now || delay > UINT64_MAX - programDelayCycles_)
@@ -465,7 +524,7 @@ void AnalogArrays::progress(unsigned index, std::uint64_t now) {
             }
             if (now < a.ready) return;
             decodeVectorPayload(a.weights.data() + a.active->elementOffset, a.transfer);
-            a.programmed = a.initializedWeights == a.weights.size();
+            a.programmed = a.initializedWeights == std::size_t(a.activeRows) * a.activeCols;
             if (initialProgramTrace_) {
                 ++a.observedProgramCommands;
                 a.observedProgramBytes += a.total;
@@ -593,10 +652,13 @@ void AnalogArrays::finish() {
 void AnalogArrays::recordInitialProgram(unsigned index, std::uint64_t now) {
     if (!initialProgramTrace_) return;
     const auto& a = arrays_[index];
-    // Hash the committed resident matrix, not the incoming command payload.
+    // Hash the effective physical matrix, not the incoming command payload.
+    // Inactive resident bits are masked to +0 without clearing hardware storage.
     // Its byte order is explicitly LE float32 on every simulator host.
     std::uint64_t hash = UINT64_C(14695981039346656037);
-    for (const auto value : a.weights) {
+    for (std::size_t i = 0; i < a.weights.size(); ++i) {
+        const float value = i / cols_ < a.activeRows && i % cols_ < a.activeCols ?
+                            a.weights[i] : 0.0f;
         std::uint32_t bits;
         std::memcpy(&bits, &value, sizeof(bits));
         for (unsigned byte = 0; byte < 4; ++byte) {
@@ -607,7 +669,8 @@ void AnalogArrays::recordInitialProgram(unsigned index, std::uint64_t now) {
     initialProgramTrace_ << index << ',' << a.observedProgramFirstCycle << ',' << now << ','
         << a.active->token << ",initial_full_array," << a.observedProgramCommands << ','
         << a.observedProgramBytes << ',' << a.initializedWeights << ',' << a.weights.size()
-        << ',' << programCost_ << ",1,1," << hash << '\n';
+        << ',' << programCost_ << ",1,1," << hash << ',' << a.activeRows << ',' << a.activeCols
+        << ',' << std::size_t(a.activeRows) * a.activeCols << ',' << a.configurationEpoch << '\n';
 }
 
 void AnalogArrays::recordProgramming(const char* event, unsigned index, std::uint64_t now) {
@@ -616,7 +679,9 @@ void AnalogArrays::recordProgramming(const char* event, unsigned index, std::uin
     programmingTrace_ << event << ',' << now << ',' << index << ',' << a.active->token << ','
         << (initialProgram_ ? "initial_full_array" : "per_command") << ','
         << a.active->elementOffset << ',' << a.active->elementCount << ','
-        << a.initializedWeights << ',' << a.weights.size() << ',' << programCost_ << '\n';
+        << a.initializedWeights << ',' << a.weights.size() << ',' << programCost_ << ','
+        << a.activeRows << ',' << a.activeCols << ',' << std::size_t(a.activeRows) * a.activeCols
+        << ',' << a.configurationEpoch << '\n';
 }
 
 void AnalogArrays::recordTransfer(const char* event, unsigned index, unsigned offset, unsigned bytes) {

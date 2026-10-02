@@ -177,8 +177,10 @@ def main():
         assert by_case["spm-slow"]["array_command_cycles"] == by_case["default"]["array_command_cycles"]
     if {"default", "program-17"} <= by_case.keys():
         reference, delayed = by_case["default"], by_case["program-17"]
-        assert reference["program_chunks"] > 0
-        assert delayed["cpu"]["end_cycle"] - reference["cpu"]["end_cycle"] == 17 * reference["program_chunks"]
+        assert reference["program_chunks"] == delayed["program_chunks"] > 0
+        # Queued programming overlaps CPU work. Check the exact delay charged
+        # by the array; it no longer adds directly to CPU elapsed time.
+        assert delayed["arrays"]["program_delay_cycles"] - reference["arrays"]["program_delay_cycles"] == 17 * reference["program_chunks"]
     # The guest handles illegal-instruction traps and resumes. Cache lookup
     # credit must not leak across those traps or synchronization grants.
     for name in ("budget-1", "issue-4"):

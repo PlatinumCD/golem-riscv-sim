@@ -1,0 +1,108 @@
+{
+  "small": {
+    "parameters": {
+      "spm_capacity_bytes": 1048576,
+      "spm_banks": 2,
+      "cpu_spm_banks": [
+        0,
+        1
+      ],
+      "router_spm_banks": [
+        0,
+        1
+      ],
+      "riscv_vector_length_bits": 128,
+      "array_pipeline_enabled": true
+    },
+    "cpu_parameters": {
+      "load_store_queue_depth": 8
+    },
+    "router_parameters": {
+      "request_window": 8,
+      "memory_queue_depth": 8,
+      "max_request_bytes": 256,
+      "posted_receive_slots_per_source": 16
+    },
+    "mesh_parameters": {
+      "flit_size_bits": 128,
+      "router_input_buffer_flits": 8,
+      "router_output_buffer_flits": 8
+    }
+  },
+  "medium": {
+    "parameters": {
+      "spm_capacity_bytes": 1572864,
+      "spm_banks": 4,
+      "cpu_spm_banks": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "router_spm_banks": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "riscv_vector_length_bits": 256,
+      "array_pipeline_enabled": true
+    },
+    "cpu_parameters": {
+      "load_store_queue_depth": 8
+    },
+    "router_parameters": {
+      "request_window": 16,
+      "memory_queue_depth": 16,
+      "max_request_bytes": 256,
+      "posted_receive_slots_per_source": 32
+    },
+    "mesh_parameters": {
+      "flit_size_bits": 256,
+      "router_input_buffer_flits": 8,
+      "router_output_buffer_flits": 4
+    }
+  },
+  "large": {
+    "parameters": {
+      "spm_capacity_bytes": 2097152,
+      "spm_banks": 8,
+      "cpu_spm_banks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "router_spm_banks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "riscv_vector_length_bits": 512,
+      "array_pipeline_enabled": true
+    },
+    "cpu_parameters": {
+      "load_store_queue_depth": 8
+    },
+    "router_parameters": {
+      "request_window": 32,
+      "memory_queue_depth": 32,
+      "max_request_bytes": 256,
+      "posted_receive_slots_per_source": 64
+    },
+    "mesh_parameters": {
+      "flit_size_bits": 512,
+      "router_input_buffer_flits": 8,
+      "router_output_buffer_flits": 2
+    }
+  }
+}

@@ -191,6 +191,7 @@ static uint64_t pending_mask(void)
 
 void mittens_lsq_drain(void)
 {
+    mittens_slq_drain();
     if (!mittens_sync_lsq_enabled() && !mittens_sync_asq_enabled()) {
         return;
     }
@@ -476,6 +477,15 @@ void mittens_lsq_before_instruction(uint64_t pc, uint32_t instruction, uint32_t 
         decoded = true;
     } else if (analog_registers(env, instruction, length, &reads, &writes)) {
         decoded = true;
+    } else if (length == 4 && (instruction & 127) == 0x2b &&
+               (((instruction >> 25) == 0 && ((instruction >> 12) & 7) <= 4) ||
+                ((instruction >> 25) == 1 && (((instruction >> 12) & 7) == 1 ||
+                                              ((instruction >> 12) & 7) == 4)))) {
+        /* Scalar network control. SST orders prior stores for send;
+         * recv/wait preserve unrelated vector and analog progress. */
+    } else if (mittens_sync_slq_enabled() && mittens_slq_memory_instruction(instruction, length)) {
+        /* Scalar requests use their own queue and the same SPM range ordering;
+         * they do not touch vector registers. Unsafe accesses drain at fallback. */
     } else if (!independent_scalar(env, instruction, length) &&
                !independent_vector_configuration(env, instruction, length)) {
         drain = true;

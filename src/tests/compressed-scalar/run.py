@@ -258,7 +258,7 @@ def validate(trial, case, log):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--build-info', type=Path, default=ROOT / 'build/source_new-mordred-posted/build.json')
+    parser.add_argument('--build-info', type=Path, default=ROOT / 'build/src/components/build.json')
     parser.add_argument('--before-qemu', type=Path, default=ROOT / 'build/src/qemu/qemu-system-riscv64')
     parser.add_argument('--after-qemu', type=Path, required=True,
                         help='Current source_new QEMU build with scalar arithmetic queue overlap')

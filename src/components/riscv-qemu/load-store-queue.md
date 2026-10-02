@@ -1,7 +1,9 @@
 # Vector load/store queue
 
 Set `cpu_parameters={"load_store_queue_depth": 8}` when composing the CPU.
-The supported range is 1 through 64. Depth 1 uses the blocking CPU path.
+The supported range is 1 through 64. Depth 1 uses blocking vector accesses.
+Scalar accesses use the separate [scalar queue](scalar-load-store-queue.md),
+which defaults to eight entries and can be disabled with depth zero.
 Depths greater than 1 enable a non-speculative,
 in-order vector load/store unit with multiple outstanding requests. This is
 independent of `array_pipeline_enabled`.
@@ -70,8 +72,8 @@ LMUL group; scalar/vector moves and reduction scalar operands cover one register
 Legal `vsetvl`, `vsetvli`, and `vsetivli` can proceed because older transfers
 retain their original register, element-width, VL and tail metadata. Unknown
 instructions drain the queue. Fences, instruction fences, task boundaries,
-scalar memory operations and guest exit drain outstanding
-requests. Trap entry also drains older work, including instruction-fetch faults
+guest exit and scalar memory fallbacks drain outstanding requests. Eligible
+scalar loads/stores use their own queue and may overlap vector traffic. Trap entry also drains older work, including instruction-fetch faults
 which happen before the runtime fetch rendezvous.
 
 Independent scalar arithmetic includes the base compressed integer ALU operations

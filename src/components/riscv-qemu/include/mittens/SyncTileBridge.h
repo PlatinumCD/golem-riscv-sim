@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(34)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(36)
 #define MITTENS_SYNC_FETCH_SEGMENT_CAPACITY UINT32_C(16)
 #define MITTENS_SYNC_MEMORY_BATCH_CAPACITY UINT32_C(1024)
 #define MITTENS_SYNC_GLOBAL_DMA_BATCH_CAPACITY UINT32_C(8)
@@ -59,7 +59,10 @@ enum MittensSyncStopReason {
     MITTENS_SYNC_STOP_LSQ_WAIT = 30,
     MITTENS_SYNC_STOP_ASQ_SUBMIT = 31,
     MITTENS_SYNC_STOP_ASQ_WAIT = 32,
-    MITTENS_SYNC_STOP_COUNT = 33,
+    MITTENS_SYNC_STOP_NETWORK = 33,
+    MITTENS_SYNC_STOP_SLQ_SUBMIT = 34,
+    MITTENS_SYNC_STOP_SLQ_WAIT = 35,
+    MITTENS_SYNC_STOP_COUNT = 36,
 };
 
 enum MittensSyncEpochContribution {
@@ -110,6 +113,11 @@ enum MittensSyncBridgeError {
     MITTENS_SYNC_BRIDGE_ERROR_BAD_STATE = 2,
     MITTENS_SYNC_BRIDGE_ERROR_BAD_BUDGET = 3,
 };
+
+typedef struct MittensSyncNetwork {
+    uint64_t first, second, result;
+    uint32_t operation, completed;
+} MittensSyncNetwork;
 
 typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t magic;
@@ -165,6 +173,7 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t fetch_segment_proposed;
     uint32_t fetch_segment_approved;
     uint32_t fetch_segment_reserved;
+    MittensSyncNetwork network;
 } MittensSyncBridge;
 
 typedef struct MittensSyncMemoryAccess {
@@ -228,6 +237,7 @@ enum MittensSyncVectorAnalogOperation {
     MITTENS_SYNC_VECTOR_ANALOG_LOAD = 1,
     MITTENS_SYNC_VECTOR_ANALOG_EXECUTE = 2,
     MITTENS_SYNC_VECTOR_ANALOG_STORE = 3,
+    MITTENS_SYNC_VECTOR_ANALOG_CONFIGURE = 4,
 };
 typedef struct MittensSyncVectorAnalog {
     uint64_t array_id;
@@ -320,6 +330,28 @@ typedef struct MittensSyncAnalogQueue {
     MittensSyncAnalogQueueSlot slots[MITTENS_SYNC_ASQ_CAPACITY];
 } MittensSyncAnalogQueue;
 
+#define MITTENS_SYNC_SLQ_CAPACITY UINT32_C(64)
+typedef struct MittensSyncScalarSlot {
+    uint64_t token;
+    uint64_t address;
+    uint64_t program_counter;
+    uint32_t size;
+    uint32_t write;
+    uint32_t destination;
+    uint32_t element_bytes;
+    uint32_t state;
+    uint32_t reserved;
+    uint8_t data[8];
+} MittensSyncScalarSlot;
+
+typedef struct MittensSyncScalarQueue {
+    uint32_t depth;
+    uint32_t wait_reason;
+    uint64_t wait_mask;
+    MittensSyncScalarSlot slots[MITTENS_SYNC_SLQ_CAPACITY];
+} MittensSyncScalarQueue;
+
+
 #define MITTENS_SYNC_BRIDGE_MAPPING_SIZE \
     (sizeof(MittensSyncBridge) + \
      sizeof(MittensSyncMemoryAccess) * \
@@ -328,9 +360,19 @@ typedef struct MittensSyncAnalogQueue {
          MITTENS_SYNC_GLOBAL_DMA_BATCH_CAPACITY + \
      sizeof(MittensSyncAnalogSubmit) * \
          MITTENS_SYNC_ANALOG_BATCH_CAPACITY + \
+     sizeof(MittensSyncScalarQueue) + \
      sizeof(MittensSyncLoadStoreQueue) + \
      sizeof(MittensSyncVectorAnalog) + \
      sizeof(MittensSyncAnalogQueue))
+
+static inline MittensSyncScalarQueue*
+mittens_sync_scalar_queue(MittensSyncBridge* bridge)
+{
+    return (MittensSyncScalarQueue*)((uint8_t*)bridge +
+        MITTENS_SYNC_BRIDGE_MAPPING_SIZE - sizeof(MittensSyncAnalogQueue) -
+        sizeof(MittensSyncVectorAnalog) - sizeof(MittensSyncLoadStoreQueue) -
+        sizeof(MittensSyncScalarQueue));
+}
 
 static inline MittensSyncAnalogQueue*
 mittens_sync_analog_queue(MittensSyncBridge* bridge)
@@ -466,7 +508,7 @@ static inline void mittens_sync_store_u64_relaxed(
 #ifdef __cplusplus
 }
 
-static_assert(sizeof(MittensSyncBridge) == 192);
+static_assert(sizeof(MittensSyncBridge) == 256);
 static_assert(sizeof(MittensSyncMemoryAccess) == 64);
 static_assert(sizeof(MittensSyncGlobalDMASubmit) == 88);
 static_assert(sizeof(MittensSyncAnalogSubmit) == 32);
@@ -475,8 +517,12 @@ static_assert(sizeof(MittensSyncLoadStoreSlot) == 176);
 static_assert(sizeof(MittensSyncLoadStoreQueue) == 11280);
 static_assert(sizeof(MittensSyncAnalogQueueSlot) == 1088);
 static_assert(sizeof(MittensSyncAnalogQueue) == 17424);
+static_assert(sizeof(MittensSyncScalarSlot) == 56);
+static_assert(sizeof(MittensSyncScalarQueue) == 3600);
 #else
-_Static_assert(sizeof(MittensSyncBridge) == 192,
+_Static_assert(sizeof(MittensSyncScalarSlot) == 56, "scalar slot ABI changed");
+_Static_assert(sizeof(MittensSyncScalarQueue) == 3600, "scalar queue ABI changed");
+_Static_assert(sizeof(MittensSyncBridge) == 256,
                "MittensSyncBridge ABI changed");
 _Static_assert(sizeof(MittensSyncMemoryAccess) == 64,
                "MittensSyncMemoryAccess ABI changed");

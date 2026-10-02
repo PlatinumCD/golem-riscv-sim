@@ -38,6 +38,7 @@ def copies():
     instructions = HERE / "qemu"
     result += [(instructions / "golem_analog_helper.c", "target/riscv/golem_analog_helper.c"),
                (instructions / "golem_lsq_helper.c", "target/riscv/golem_lsq_helper.c"),
+               (instructions / "golem_slq_helper.c", "target/riscv/golem_slq_helper.c"),
                (instructions / "trans_golem_analog.c.inc",
                 "target/riscv/insn_trans/trans_golem_analog.c.inc")]
     return result

@@ -43,6 +43,8 @@ struct QemuSyncEvent {
     std::uint32_t analogWaitReason = 0;
     std::uint64_t loadStoreWaitMask = 0;
     std::uint32_t loadStoreWaitReason = 0;
+    std::uint64_t scalarWaitMask = 0;
+    std::uint32_t scalarWaitReason = 0;
     std::uint64_t memoryProgramCounter() const noexcept
     {
         return analogSequence;
@@ -90,6 +92,8 @@ class SharedSyncMemoryBridge final
     void configureInstructionSegments(std::uint32_t limit);
     void configureAnalogQueue(std::uint32_t depth);
     MittensSyncAnalogQueue& analogQueue();
+    void configureScalarQueue(std::uint32_t depth);
+    MittensSyncScalarQueue& scalarQueue();
     void configureLoadStoreQueue(std::uint32_t depth);
     MittensSyncLoadStoreQueue& loadStoreQueue();
     void approveInstructionSegment(std::uint32_t count);
@@ -106,6 +110,8 @@ class SharedSyncMemoryBridge final
             std::chrono::microseconds::zero());
     void resume(const QemuSyncEvent& event);
     MittensSyncVectorAnalog vectorAnalog(const QemuSyncEvent& event);
+    MittensSyncNetwork networkCommand(const QemuSyncEvent& event);
+    void completeNetwork(const QemuSyncEvent& event, std::uint64_t result);
     void completeVectorAnalog(const QemuSyncEvent& event, std::uint32_t status,
                               const std::vector<std::uint8_t>& payload = {});
 

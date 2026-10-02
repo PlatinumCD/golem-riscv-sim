@@ -214,7 +214,9 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         };
         event.analogWaitMask = analogQueue().wait_mask;
         event.analogWaitReason = analogQueue().wait_reason;
-        event.loadStoreWaitMask = loadStoreQueue().wait_mask;
+        event.scalarWaitMask = scalarQueue().wait_mask;
+    event.scalarWaitReason = scalarQueue().wait_reason;
+    event.loadStoreWaitMask = loadStoreQueue().wait_mask;
         event.loadStoreWaitReason = loadStoreQueue().wait_reason;
         event.fetchInstructionCount = event.stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH
             ? std::max(UINT32_C(1), mapping_->fetch_segment_proposed) : 1;
@@ -328,6 +330,8 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
     };
     event.analogWaitMask = analogQueue().wait_mask;
     event.analogWaitReason = analogQueue().wait_reason;
+    event.scalarWaitMask = scalarQueue().wait_mask;
+    event.scalarWaitReason = scalarQueue().wait_reason;
     event.loadStoreWaitMask = loadStoreQueue().wait_mask;
     event.loadStoreWaitReason = loadStoreQueue().wait_reason;
     event.fetchInstructionCount = event.stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH
@@ -415,6 +419,19 @@ MittensSyncAnalogQueue& SharedSyncMemoryBridge::analogQueue()
     return *mittens_sync_analog_queue(mapping_);
 }
 
+void SharedSyncMemoryBridge::configureScalarQueue(std::uint32_t depth)
+{
+    if (!mapping_ || depth > MITTENS_SYNC_SLQ_CAPACITY || mapping_->state != MITTENS_SYNC_STATE_IDLE)
+        throw std::invalid_argument("invalid scalar queue depth or state");
+    scalarQueue().depth = depth;
+}
+
+MittensSyncScalarQueue& SharedSyncMemoryBridge::scalarQueue()
+{
+    if (!mapping_) throw std::logic_error("scalar queue bridge is closed");
+    return *mittens_sync_scalar_queue(mapping_);
+}
+
 void SharedSyncMemoryBridge::configureLoadStoreQueue(std::uint32_t depth)
 {
     if (!mapping_ || depth == 0 || depth > MITTENS_SYNC_LSQ_CAPACITY ||
@@ -443,6 +460,22 @@ void SharedSyncMemoryBridge::approveInstructionSegment(std::uint32_t count)
         count > std::max(UINT32_C(1), mapping_->fetch_segment_proposed))
         throw std::logic_error("invalid instruction segment approval");
     mapping_->fetch_segment_approved = count;
+}
+
+MittensSyncNetwork SharedSyncMemoryBridge::networkCommand(const QemuSyncEvent& event)
+{
+    if (!mapping_ || mittens_sync_load_acquire(&mapping_->state) != MITTENS_SYNC_STATE_EVENT ||
+        mapping_->stop_reason != MITTENS_SYNC_STOP_NETWORK || mapping_->network.completed ||
+        mapping_->grant_epoch != event.grantEpoch || mapping_->event_sequence != event.eventSequence)
+        throw std::runtime_error("invalid network synchronization event");
+    return mapping_->network;
+}
+
+void SharedSyncMemoryBridge::completeNetwork(const QemuSyncEvent& event, std::uint64_t result)
+{
+    (void)networkCommand(event);
+    mapping_->network.result = result;
+    mapping_->network.completed = 1;
 }
 
 MittensSyncVectorAnalog SharedSyncMemoryBridge::vectorAnalog(const QemuSyncEvent& event)

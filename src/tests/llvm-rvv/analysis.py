@@ -32,8 +32,8 @@ def rows(path):
 def one(trial, suffix):
     paths = list(Path(trial).glob('*' + suffix))
     if suffix == '-waits.csv':
-        # Analog command-queue waits are a separate trace, not CPU/LSQ waits.
-        paths = [path for path in paths if not path.name.endswith('-asq-waits.csv')]
+        # Scalar and analog queues have separate wait traces.
+        paths = [path for path in paths if not path.name.endswith(('-asq-waits.csv', '-slq-waits.csv'))]
     assert len(paths) == 1, (suffix, paths)
     return paths[0]
 
@@ -46,6 +46,8 @@ def phase_of(trial, task_id):
     for r in (start, finish):
         assert r['memory_requests'] == r['completed_requests']
         assert r['lsq_enqueued'] == r['lsq_completed']
+        if 'slq_enqueued' in r:
+            assert r['slq_enqueued'] == r['slq_completed']
     delta = {k: finish[k] - start[k] for k in start if k not in ('task_id', 'execution_id')}
     return dict(start_cycle=start['cycle'], end_cycle=finish['cycle'],
                 **{('cycles' if k == 'cycle' else k): v for k, v in delta.items()})
@@ -189,6 +191,37 @@ def analyze_trial(trial, elf, kernel_symbols=('transfer_kernel',), task_id=1):
                 'Noncontiguous beats attributed to one vector instruction', identity, beats)
     assert len(async_instructions) <= counts['vector_memory_instructions']
 
+    # Scalar queue requests can overlap instructions and vector requests. Their
+    # lifetimes must not be charged again as blocking CPU memory waits below.
+    scalar_bytes = Counter()
+    scalar_occupancy = scalar_peak = scalar_area = scalar_enqueues = scalar_completions = 0
+    scalar_last = start
+    scalar_paths = list(trial.glob('*-slq.csv'))
+    if scalar_paths:
+        assert len(scalar_paths) == 1
+        for row in rows(scalar_paths[0]):
+            event, cycle = row['event'], int(row['cycle'])
+            if not start <= cycle <= end:
+                continue
+            if event == 'issue' and cycle < end:
+                key = tuple(int(row[k]) for k in ('cycle', 'pc', 'address', 'bytes', 'write'))
+                asynchronous[key] += 1
+                scalar_bytes['write' if int(row['write']) else 'read'] += int(row['bytes'])
+                assert instructions[int(row['pc'])]['category'] == (
+                    'scalar_store' if int(row['write']) else 'scalar_load'), row
+            if event not in ('enqueue', 'complete'):
+                continue
+            scalar_area += scalar_occupancy * (cycle - scalar_last)
+            scalar_last = cycle
+            scalar_occupancy += 1 if event == 'enqueue' else -1
+            assert scalar_occupancy == int(row['occupancy']) and scalar_occupancy >= 0
+            scalar_peak = max(scalar_peak, scalar_occupancy)
+            scalar_enqueues += event == 'enqueue'
+            scalar_completions += event == 'complete'
+        assert scalar_occupancy == 0 and scalar_enqueues == scalar_completions
+        if 'slq_enqueued' in phase:
+            assert scalar_enqueues == phase['slq_enqueued'] == phase['slq_completed']
+
     waits, wait_events, wait_intervals = Counter(), Counter(), []
     for row in rows(one(trial, '-waits.csv')):
         lo, hi = int(row['start_cycle']), int(row['end_cycle'])
@@ -210,6 +243,20 @@ def analyze_trial(trial, elf, kernel_symbols=('transfer_kernel',), task_id=1):
         wait_events[category] += 1
         wait_intervals.append((lo, hi, category))
     assert sum(waits.values()) == phase['lsq_stall_cycles'], (waits, phase)
+
+    scalar_waits = Counter()
+    scalar_wait_paths = list(trial.glob('*-slq-waits.csv'))
+    if scalar_wait_paths:
+        assert len(scalar_wait_paths) == 1
+        for row in rows(scalar_wait_paths[0]):
+            lo, hi = int(row['start_cycle']), int(row['end_cycle'])
+            if hi <= start or lo >= end or lo == hi:
+                continue
+            assert start <= lo < hi <= end and row['reason'] in ('register', 'full', 'drain')
+            scalar_waits[row['reason']] += hi - lo
+            wait_intervals.append((lo, hi, 'slq_' + row['reason']))
+    if 'slq_stall_cycles' in phase:
+        assert sum(scalar_waits.values()) == phase['slq_stall_cycles']
 
     pending, traffic = defaultdict(deque), Counter()
     blocking_intervals = []
@@ -252,7 +299,8 @@ def analyze_trial(trial, elf, kernel_symbols=('transfer_kernel',), task_id=1):
         assert a[1] <= b[0], ('Overlapping CPU waits', a, b)
     attribution = dict(issue=phase['issue_cycles'], instruction_cache=phase['icache_stall_cycles'],
         blocking_memory=blocks, lsq_register=waits['lsq_register'], lsq_full=waits['lsq_full'],
-        in_kernel_drain=waits['in_kernel_drain'], final_drain=waits['final_drain'])
+        in_kernel_drain=waits['in_kernel_drain'], final_drain=waits['final_drain'],
+        slq_register=scalar_waits['register'], slq_full=scalar_waits['full'], slq_drain=scalar_waits['drain'])
     assert sum(attribution.values()) == cycles, ('Incomplete or overlapping cycle attribution', attribution, phase)
 
     # Backend utilization is concurrent with CPU issue/waits, not an elapsed-time term.
@@ -328,6 +376,9 @@ def analyze_trial(trial, elf, kernel_symbols=('transfer_kernel',), task_id=1):
             split_vector_instructions=sum(len(beats) > 1 for beats in async_instructions.values()),
             max_beats_per_instruction=max(map(len, async_instructions.values()), default=0),
             async_vector_byte_fraction=sum(async_bytes.values()) / vector_bytes if vector_bytes else 0),
+        slq=dict(enqueued=scalar_enqueues, peak_occupancy=scalar_peak,
+                 mean_occupancy=scalar_area / cycles, wait_cycles=dict(scalar_waits),
+                 async_bytes=dict(scalar_bytes)),
         backend=backend,
         provenance=dict(elf=str(elf.resolve()), elf_sha256=elf_sha,
             analysis_sha256=digest(__file__), instruction_method='executed fetch PCs reconciled with retired task counters'))

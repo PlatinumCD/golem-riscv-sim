@@ -13,8 +13,7 @@ from hardware_paths import ROOT, resolve_paths
 from hardware_suite import selected_cases
 
 FIXTURES = ('riscv-qemu/peer.cc', 'array-pipeline/protocol.cc', 'programming-delay/protocol.cc',
-            'range-ordering/protocol.cc', 'bank-connections/driver.cc', 'mordred-local/driver.cc',
-            'mordred-posted/fixturedriver.cc', 'mordred-spm/initiator.cc')
+            'range-ordering/protocol.cc', 'bank-connections/driver.cc')
 
 
 def execute(command, log, timeout, env):
@@ -73,6 +72,7 @@ def main():
     source_files = [path for folder in ('src', 'tools/hardware', 'tools/compiler/sculptor_deployment')
                     for path in (ROOT/folder).rglob('*')
                     if path.is_file() and path.suffix in ('.py', '.c', '.cc', '.h', '.S', '.ld', '.patch', '.inc')]
+    source_files.append(ROOT / 'src/tile_profiles.json')
     report['source_sha256'] = {str(path): digest(path) for path in source_files}
     manifest = output / 'results.json'
     def save(): manifest.write_text(json.dumps(report, indent=2)+'\n')

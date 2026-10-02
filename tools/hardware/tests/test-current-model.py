@@ -41,7 +41,9 @@ class CurrentModelTests(unittest.TestCase):
         for case in cases:
             self.assertTrue(case.script.is_file(), case.script)
             self.assertNotIn('src/sst', str(case.script))
-        with self.assertRaises(ValueError): selected_cases(names=['network/mesh-3x3'])
+        for name in ('network/mesh-3x3', 'network/mordred-spm', 'network/local-spm', 'network/posted-transfers'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                selected_cases(names=[name])
         self.assertEqual([c.name for c in selected_cases('compiler')], ['compiler/sculptor'])
 
     def test_output_guard_resolves_compatibility_alias(self):
@@ -72,7 +74,8 @@ class CurrentModelTests(unittest.TestCase):
     def test_cli_lists_current_cases_without_simulator(self):
         result=subprocess.run(['bash',str(ROOT/'tests/run-all.sh'),'--list'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('network/posted-transfers',result.stdout)
+        self.assertIn('network/guest-instructions',result.stdout)
+        self.assertNotIn('network/posted-transfers',result.stdout)
         self.assertIn('platform/llvm-rvv',result.stdout)
         self.assertNotIn('global-ram',result.stdout)
 

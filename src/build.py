@@ -58,7 +58,9 @@ def build(output, with_tests=False, extra_sources=()):
                HERE / "components/scratchpad/exactConvertor.cc", HERE / "components/analog-arrays/analogArrays.cc"]
     cpu = HERE / "components/riscv-qemu"
     sources.append(HERE / "components/mordred/spmEndpoint.cc")
-    sources += [cpu / name for name in ("riscvQemu.cc", "loadStoreQueue.cc", "analogCommandQueue.cc", "instructionCache.cc", "qemuProcess.cc",
+    sources.append(HERE / "components/mordred/networkEngine.cc")
+    sources.append(HERE / "components/dram_tile/dramTile.cc")
+    sources += [cpu / name for name in ("riscvQemu.cc", "loadStoreQueue.cc", "scalarLoadStoreQueue.cc", "analogCommandQueue.cc", "instructionCache.cc", "qemuProcess.cc",
                 "sharedSyncMemoryBridge.cc", "scratchpadBootImage.cc")]
     if with_tests:
         sources.append(HERE / "tests/driver.cc")

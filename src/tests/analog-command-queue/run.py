@@ -93,6 +93,8 @@ def canonical_traces(trial):
 
 def validate(trial,case):
     log=(trial/'simulation.log').read_text();cpu=existing.stats(log,'RISCV_STATS');arrays=existing.stats(log,'ARRAY_STATS')
+    if case['variant']!='baseline':
+        assert cpu['analog_command_queue_depth']==case['asq_depth'],cpu
     entries,stalls=existing.check_lsq(trial,case,cpu)
     checked=expected_memory(trial,case)
     assert cpu['memory_requests']==cpu['completed_requests']
@@ -200,8 +202,13 @@ def simulate(output,name,guest,variant,vlen,asq_depth,lsq_depth,bytecap,budget,m
     trial=Path(output)/name;trial.mkdir()
     build=model['build']
     cpu=dict(load_store_queue_depth=lsq_depth,instruction_budget=budget,host_timeout_seconds=120)
-    if variant!='baseline':cpu.update(analog_command_queue_depth=asq_depth,analog_command_queue_bytes=bytecap)
-    case=dict(name=name,variant=variant,asq_depth=asq_depth,depth=lsq_depth,budget=budget,**guest,
+    if variant=='baseline':
+        cpu['analog_command_queue_depth']=0
+    else:
+        cpu['analog_command_queue_bytes']=bytecap
+        if asq_depth is not None:cpu['analog_command_queue_depth']=asq_depth
+    # None exercises omitted-parameter admission through the public composition.
+    case=dict(name=name,variant=variant,asq_depth=4 if asq_depth is None else asq_depth,depth=lsq_depth,budget=budget,**guest,
         component_source=model['source'],qemu=model['qemu'],qemu_sha256=model['qemu_sha256'],
         plugin_sha256=model['plugin_sha256'],build_info=model['build_info'],
         parameters=resolve(dict(riscv_vector_length_bits=vlen,array_rows=vlen//4,array_cols=vlen//4,
@@ -224,7 +231,7 @@ def simulate(output,name,guest,variant,vlen,asq_depth,lsq_depth,bytecap,budget,m
 
 
 def run(output,guest,variant,vlen,asq_depth,lsq_depth,bytecap,budget,model):
-    name=f'{variant}-v{vlen}-a{asq_depth}-l{lsq_depth}-b{bytecap}-q{budget}'
+    name=f'{variant}-v{vlen}-a{"default" if asq_depth is None else asq_depth}-l{lsq_depth}-b{bytecap}-q{budget}'
     trial,case=simulate(output,name,guest,variant,vlen,asq_depth,lsq_depth,bytecap,budget,model)
     result=validate(trial,case)
     write(trial/'validation.json',dict(passed=True,validator_sha256=sha(Path(__file__)),
@@ -242,7 +249,13 @@ def compare_results(results):
         assert normal['memory_sha256']==replay['memory_sha256'] and normal['phases']==replay['phases']
         assert normal['cpu']['end_cycle']==replay['cpu']['end_cycle']
         assert normal['canonical_trace_hashes']==replay['canonical_trace_hashes'],'Host budget changed modeled traces'
-    return dict(disabled_matches_baseline=bool(baseline and disabled),budget_replay_checked=bool(normal and replay))
+    default=results.get('candidate-v256-adefault-l16-b16384-q256')
+    if normal and default:
+        assert default['memory_sha256']==normal['memory_sha256'] and default['phases']==normal['phases']
+        assert default['cpu']['end_cycle']==normal['cpu']['end_cycle']
+        assert default['canonical_trace_hashes']==normal['canonical_trace_hashes'],'Default queue differs from explicit depth 4'
+    return dict(disabled_matches_baseline=bool(baseline and disabled),budget_replay_checked=bool(normal and replay),
+                default_matches_explicit=bool(normal and default))
 
 
 def main():
@@ -274,13 +287,13 @@ def main():
     guests={v:compile_guest(output/'guests'/f'v{v}',v,args.compiler) for v in (256,1024)}
     if args.compile_only:print('Compiled both guests');return
     models=models_from_arguments(args,parser,candidate=not args.baseline_only)
-    variants=[('baseline',256,0,16,16384,256),('candidate',256,0,16,16384,256),
+    variants=[('baseline',256,0,16,16384,256),('candidate',256,None,16,16384,256),('candidate',256,0,16,16384,256),
         ('candidate',256,1,16,16384,256),('candidate',256,4,16,16384,256),('candidate',256,8,16,16384,256),
         ('candidate',1024,4,16,16384,256),('candidate',1024,8,16,1024,256),
         ('candidate',256,4,1,16384,256),('candidate',256,4,16,16384,1)]
     variants=[v for v in variants if v[0] in models]
     if args.candidate_only:variants=[v for v in variants if v[0]=='candidate']
-    if args.asq_depth is not None:variants=[v for v in variants if v[2]==args.asq_depth]
+    if args.asq_depth is not None:variants=[v for v in variants if (4 if v[2] is None else v[2])==args.asq_depth]
     if not variants:parser.error('Empty case selection')
     write(output/'metadata.json',dict(models=models,guests=guests,variants=variants,
         sources={p.name:sha(p) for p in HERE.iterdir() if p.is_file()}))

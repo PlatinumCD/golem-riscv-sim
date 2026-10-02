@@ -1,8 +1,9 @@
 # Analog command queue
 
 `analog_command_queue_depth` enables a bounded CPU queue for `mvm.vset`,
-`mvm.vl`, and `mvm.vs`. Zero (the default) preserves blocking transfers; 1–16
-allows independent instructions to proceed after safe admission. It is separate
+`mvm.vl`, and `mvm.vs`. The default is four entries; depths 1–16
+allow independent instructions to proceed after safe admission. Set the depth
+to zero to disable the queue and use blocking transfers. It is separate
 from `load_store_queue_depth` and `array_pipeline_enabled`. Scalar `mvm` still
 returns at Complete, or at Started when array pipelining is enabled.
 

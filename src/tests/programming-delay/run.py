@@ -174,7 +174,11 @@ def compare(results, selected):
         assert old['program_cycles'] == base['program_cycles']
         assert old['trace_sha256'] == base['trace_sha256'], 'D=0 changed array event timing'
         assert old['cpu'] == base['cpu'], 'D=0 changed CPU timing/counters'
-        assert added['program_cycles'] - base['program_cycles'] == 23
+        # ASQ admission lets the CPU overlap its remaining loop/marker setup
+        # with the final device delay. validate() checks the exact 23 cycles
+        # from byte delivery to command completion; marker time need only
+        # expose the unhidden part of that delay.
+        assert 0 <= added['program_cycles'] - base['program_cycles'] <= 23
         assert old['program_chunks'] == base['program_chunks'] == added['program_chunks']
         checks += 1
     return checks

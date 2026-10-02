@@ -195,7 +195,8 @@ CPU_DEFAULTS = {
     "instruction_budget": 256,
     "issue_width": 1,
     "load_store_queue_depth": 1,
-    "analog_command_queue_depth": 0,
+    "scalar_load_store_queue_depth": 8,
+    "analog_command_queue_depth": 4,
     "analog_command_queue_bytes": 16384,
     "instruction_cache_enabled": True,
     "instruction_cache_bytes": 8192,
@@ -227,6 +228,9 @@ def _cpu_options(p, cpu_parameters):
     depth = options["load_store_queue_depth"]
     if type(depth) is not int or not 1 <= depth <= 64:
         raise ValueError("load_store_queue_depth must be an integer from 1 through 64")
+    scalar_depth = options["scalar_load_store_queue_depth"]
+    if type(scalar_depth) is not int or not 0 <= scalar_depth <= 64:
+        raise ValueError("scalar_load_store_queue_depth must be an integer from 0 through 64")
     depth = options["analog_command_queue_depth"]
     if type(depth) is not int or not 0 <= depth <= 16:
         raise ValueError("analog_command_queue_depth must be an integer from 0 through 16")

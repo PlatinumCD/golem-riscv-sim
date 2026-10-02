@@ -99,8 +99,8 @@ Two upstream limitations matter for later performance studies:
   the completed packet. The completed-packet queue is unbounded; the NIC input
   buffer is not a bound on unread application data. Slow-receiver backpressure
   is therefore not modeled accurately by this upstream transport alone. The
-  SPM request/response protocol adds bounded outstanding requests retired after
-  bank completion; its finite sender window bounds reachable receive traffic.
+  NIU whole-message transport reserves finite packet storage until bank commit
+  and separate application slots until release. Those credits bound receive traffic.
 - The NIC can emit a flit for each VN in one clock and shares its head timestamp
   across VNs. The composition helper currently accepts only one VN. Upstream's
   `average_noc_latency` also assumes a fixed core-time conversion; use the

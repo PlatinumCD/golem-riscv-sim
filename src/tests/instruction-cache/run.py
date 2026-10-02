@@ -258,7 +258,18 @@ def main():
             assert by_case["uncached"]["cpu"]["fetch_bytes"] > reference["cpu"]["fetch_bytes"]
             assert by_case["uncached"]["cpu"]["end_cycle"] > reference["cpu"]["end_cycle"]
         if "hit-4" in by_case:
-            assert by_case["hit-4"]["cpu"]["end_cycle"] - reference["cpu"]["end_cycle"] == 3 * reference["cpu"]["icache_fetches"]
+            slow = by_case["hit-4"]
+            # The pure instruction loops still pay exactly three extra cycles
+            # per lookup. Longer lookups can cover outstanding scalar service;
+            # account for that overlap instead of assuming all delays add.
+            for phase in ("1", "2"):
+                a, b = reference["phases"][phase], slow["phases"][phase]
+                assert b["icache_stall_cycles"] - a["icache_stall_cycles"] == 3 * a["icache_fetches"]
+                assert b["cycle"] - a["cycle"] == 3 * a["icache_fetches"] + b["slq_stall_cycles"] - a["slq_stall_cycles"]
+            a, b = reference["cpu"], slow["cpu"]
+            assert b["end_cycle"] > a["end_cycle"]
+            assert b["end_cycle"] - a["end_cycle"] == sum(
+                b[key] - a[key] for key in ("icache_stall_cycles", "slq_stall_cycles"))
         for name in ("budget-1", "budget-7"):
             if name in by_case:
                 assert by_case[name]["cpu"]["end_cycle"] == reference["cpu"]["end_cycle"]

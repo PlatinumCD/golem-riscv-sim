@@ -8,7 +8,7 @@ JOBS=8 bash bootstrap.sh build-hardware
 python3 -B tools/hardware/verify.py
 bash tests/run-all.sh --list
 bash tests/run-all.sh --suite hardware
-bash tests/run-all.sh --case network/posted-transfers
+bash tests/run-all.sh --case network/guest-instructions
 bash tests/run-all.sh --suite compiler
 ```
 

@@ -200,15 +200,16 @@ def canonical_trace_hashes(trial):
     event, ordering, timestamp, address, size and remaining field is preserved.
     Non-analog CSVs are compared byte for byte.
     """
-    analog = {p.name:rows(p) for p in trial.glob('array*.csv')}
-    tokens = sorted({int(r['token']) for rs in analog.values() for r in rs if 'token' in r})
-    mapping = {token:index for index,token in enumerate(tokens)}
+    analog = {p.name:rows(p) for p in trial.glob('*.csv')
+              if p.name.startswith('array') or p.name == 'riscv-asq.csv'}
+    tokens = sorted({int(r['token']) for rs in analog.values() for r in rs if r.get('token') and int(r['token'])})
+    mapping = {token:index+1 for index,token in enumerate(tokens)}
     hashes = {}
     for path in trial.glob('*.csv'):
         if path.name not in analog:
             hashes[path.name] = digest(path)
             continue
-        canonical = [{k:(mapping[int(v)] if k == 'token' else v) for k,v in r.items()}
+        canonical = [{k:(mapping[int(v)] if k == 'token' and int(v) else v) for k,v in r.items()}
                      for r in analog[path.name]]
         hashes[path.name] = hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
     return hashes

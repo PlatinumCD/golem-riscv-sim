@@ -27,8 +27,26 @@ memory instructions and `mvm.vset`, `mvm.vl`, or `mvm.vs`.
   with a tested 2×2 mesh and payload-checking endpoints.
 - [Mesh-connected tiles](components/mordred/spm-interface.md): complete RISC-V/SPM/array
   tiles with explicit CPU/router access to physical scratchpad banks.
+- [DRAM Tile](components/dram_tile/README.md): a control CPU and timed DRAM
+  interface that dispatches weights to compute tiles over the same mesh.
 - [Instruction contract](components/riscv-qemu/vector-analog.md): assembly,
   chunk offsets/counts, compiler support, errors and timing.
+
+## Small, Medium and Large profiles
+
+[`tile_profiles.json`](tile_profiles.json) contains the current per-tile presets:
+Small **1 MiB / 2 banks / VLEN 128**, Medium **1.5 MiB / 4 banks / VLEN 256**,
+and Large **2 MiB / 8 banks / VLEN 512**. Every bank is shared by CPU and NIU.
+Pass the selected entry's four parameter groups to `connect_riscv_mesh` along
+with the guest ELFs, backing directory and deployment transfers. Array dimensions
+and deployment storage remain workload choices; unspecified settings use the
+component defaults. NIUs split whole messages up to `max_request_bytes` (256 B).
+
+These capacities include guest code, stack, payloads and receive slots. The
+32×32 network/MVM correctness fixtures fit the Small profile. A dense 1024×1024
+FP32 weight image needs 4 MiB before other allocations, so the old 32 MiB study
+layout must be replaced with a bounded working set before reusing that workload.
+Historical bandwidth measurements with 32 MiB are not measurements of these presets.
 
 ## Build and validate
 
@@ -39,12 +57,13 @@ python3 -B src/components/riscv-qemu/build_qemu.py
 python3 -B src/build.py
 python3 -B src/tests/test_configuration.py
 python3 -B src/tests/mordred/test_configuration.py
-python3 -B src/tests/mordred-spm/test_configuration.py
+python3 -B src/tests/network-instructions/test_configuration.py
 python3 -B src/tests/mordred/run.py
 python3 -B src/tests/run.py
 python3 -B src/tests/riscv-qemu/run.py
 python3 -B src/tests/vector-memory/run.py
 python3 -B src/tests/load-store-queue/run.py
+python3 -B src/tests/scalar-load-store-queue/run.py
 python3 -B src/tests/analog-register-dependencies/run.py
 python3 -B src/tests/instruction-cache/run.py
 python3 -B src/tests/vector-analog/run.py
@@ -96,8 +115,9 @@ python3 -B src/tests/sculptor/run.py
 The [integration suite](tests/sculptor/README.md) covers linear/ReLU,
 linear/sigmoid, four packed arrays, convolution, padding, RVV tails, and repeated
 inputs with resident weights. The current supported deployment is one tile;
-this runtime uses bounded local SPM copies. Guest-controlled mesh networking is
-tracked separately in the migration record.
+this runtime uses bounded local SPM copies. The hardware's
+[guest network interface](components/mordred/network-instructions.md) is available
+for multi-tile runtime integration.
 Use VLEN >= 256 for digitally vectorized `golem-analog` programs.
 
 ## Composition
@@ -130,10 +150,10 @@ SPM has four physical banks: `cpu_spm_banks=[0,1,2,3]` and
 `router_spm_banks=[2,3]`. The router interface issues timed StandardMem requests
 to those actual banks; it shares their existing ports and channels with the
 CPU. A request touching a bank outside its list is rejected before functional
-memory changes. The optional SST `requests` event port submits remote reads
-and writes; there is no guest descriptor mailbox, polling engine, or new CPU
-instruction. See the [router-facing SPM interface](components/mordred/spm-interface.md)
-for addressing, bounded requests and completion semantics.
+memory changes. Guest CPUs use [network instructions](components/mordred/network-instructions.md)
+for whole-message sends and receive ownership, with no guest polling engine or
+CPU payload copying. See the [router-facing SPM interface](components/mordred/spm-interface.md)
+for the underlying packet transport and bank service.
 
 Instruction fetches use an 8 KiB, two-way cache with 64-byte lines and one-cycle
 hits by default. Misses fill lines through the banked SPM. `fence.i` invalidates
@@ -141,6 +161,12 @@ cached instruction lines. CPU `instruction_cache_*` options configure the cache;
 `instruction_cache_enabled=False` provides a direct-fetch control. Data loads
 and stores remain uncached. Contiguous active RVV elements use timed beats of
 at most VLEN/8 bytes, split into requests at SPM ordering-line boundaries.
+The dedicated [scalar load/store queue](components/riscv-qemu/scalar-load-store-queue.md)
+defaults to eight entries on all tile profiles. Set
+`cpu_parameters={"scalar_load_store_queue_depth": 0}` for blocking scalar accesses,
+or select 1–64 entries. It shares the existing SPM banks and preserves register
+dependencies, byte-range ordering, and precise fault boundaries.
+
 `cpu_parameters={"load_store_queue_depth": 8}` enables multiple outstanding
 eligible vector transfers, with captured stores, load dependency tracking and
 ordered completion. Depth 1 is the unchanged blocking baseline; valid depths
@@ -150,9 +176,9 @@ and integer-LMUL 2/4/8 transfers use the same queue as LMUL1, split into
 VLEN-sized beats with dependencies across every register in the group.
 Legal analog instructions use those register dependencies too: unrelated
 queued memory can progress while `mvm.vset`, `mvm.vl`, or `mvm.vs` transfers
-register data. By default the analog instruction waits for completion. Set
-`cpu_parameters={"analog_command_queue_depth": 4}` to admit multiple vector
-analog commands and continue independent CPU work; depth 0 disables this queue.
+register data. The analog command queue defaults to four entries, allowing
+multiple vector analog commands and independent CPU work after safe admission.
+Set `cpu_parameters={"analog_command_queue_depth": 0}` to disable this queue.
 The [queue contract](components/riscv-qemu/analog-command-queue.md) specifies
 source capture, pending destinations, finite register-port bandwidth, and
 precise exceptions. This setting is independent of LSQ depth and array pipelining.

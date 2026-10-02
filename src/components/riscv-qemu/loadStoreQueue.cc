@@ -27,6 +27,16 @@ bool RiscvQemu::loadStoreBarrier() {
     bool any = false;
     const char* reason = "drain";
     switch (event_->stopReason) {
+    case MITTENS_SYNC_STOP_NETWORK: {
+        const auto command = bridge_.networkCommand(*event_);
+        if (command.operation == 0) {
+            // Release ordering for descriptors and source data, without
+            // draining unrelated vector loads or analog operations.
+            for (const auto& [token, entry] : loadStoreEntries_)
+                if (entry.write) mask |= UINT64_C(1) << entry.slot;
+        }
+        break;
+    }
     case MITTENS_SYNC_STOP_INSTRUCTION_FETCH:
     case MITTENS_SYNC_STOP_VECTOR_ANALOG:
         // QEMU checks analog source/destination groups before executing its

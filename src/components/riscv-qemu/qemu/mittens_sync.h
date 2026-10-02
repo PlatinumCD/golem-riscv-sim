@@ -20,6 +20,7 @@ void helper_mittens_sync_memory_instruction(
 
 bool mittens_sync_available(void);
 bool mittens_sync_vector_analog_enabled(void);
+uint64_t mittens_sync_network(uint32_t operation, uint64_t first, uint64_t second);
 uint32_t mittens_sync_vector_analog(
     uint32_t operation, uint64_t array_id, uint64_t element_offset,
     uint32_t element_count, uint8_t *data);
@@ -37,8 +38,17 @@ bool mittens_sync_vector_memory_begin(
     uint32_t element_size, bool write, uint64_t program_counter,
     uint64_t return_address);
 void mittens_sync_vector_memory_finish(void);
+void mittens_sync_check_trap_target(uint64_t program_counter);
 /* Deferred vector-memory queue. The target owns register snapshots and applies
  * completion payloads only at explicit QEMU instruction/trap boundaries. */
+bool mittens_sync_slq_enabled(void);
+MittensSyncScalarQueue *mittens_sync_slq_queue(void);
+void mittens_sync_slq_submit(uint32_t slot);
+void mittens_sync_slq_wait(uint64_t mask, bool any);
+void mittens_slq_before_instruction(uint64_t pc, uint32_t instruction, uint32_t length);
+void mittens_slq_after_instruction_fetch(void);
+void mittens_slq_drain(void);
+bool mittens_slq_memory_instruction(uint32_t instruction, uint32_t length);
 bool mittens_sync_lsq_enabled(void);
 MittensSyncLoadStoreQueue *mittens_sync_lsq_queue(void);
 bool mittens_sync_scratchpad_host_matches(const void *host, uint64_t address,

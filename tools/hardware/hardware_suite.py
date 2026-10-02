@@ -27,6 +27,7 @@ def hardware_cases():
         case('platform/instruction-cache', 'instruction-cache', 'platform', qemu=True),
         case('platform/vector-memory', 'vector-memory', 'platform', qemu=True),
         case('platform/load-store-queue', 'load-store-queue', 'platform', qemu=True),
+        case('platform/scalar-load-store-queue', 'scalar-load-store-queue', 'platform', qemu=True),
         case('platform/compressed-scalar', 'compressed-scalar', 'platform', arguments=('--variants', 'after')),
         case('platform/llvm-rvv', 'llvm-rvv', 'platform', qemu=True),
         case('platform/profiling', 'profiling', 'platform', qemu=True),
@@ -40,9 +41,8 @@ def hardware_cases():
         case('analog/command-admission', 'analog-command-queue', 'analog', qemu=True, arguments=()),
         case('analog/command-backend', 'analog-command-queue-backend', 'analog', build_info=False),
         case('network/mesh-2x2', 'mordred', 'network', build_info=False),
-        case('network/mordred-spm', 'mordred-spm', 'network', qemu=True),
-        case('network/local-spm', 'mordred-local', 'network'),
-        case('network/posted-transfers', 'mordred-posted', 'network'),
+        case('network/guest-instructions', 'network-instructions', 'network', qemu=True),
+        case('network/dram-tile', 'dram-tile', 'network', qemu=True),
     ]
 
 

@@ -1,6 +1,6 @@
 # Analog command queue validation and measured results
 
-Reference revision: `c563e02` (selective LSQ dependencies already enabled). The promoted queue preserves the experiment’s functional implementation; the SST parameter description no longer labels it experimental. ASQ depth 0 remains the default.
+Reference revision: `c563e02` (selective LSQ dependencies already enabled). The promoted queue preserves the experiment’s functional implementation; the SST parameter description no longer labels it experimental. These measurements used an explicit depth-0 baseline. The current default is depth 4.
 
 ## Matched performance
 

@@ -27,8 +27,11 @@ def cases():
         dict(name="issue-4", parameters={}, cpu_parameters=dict(issue_width=4)),
         dict(name="guest-failure", parameters={}, negative=1,
              expected_failure="guest failed: exit status 7", cpu_parameters=dict(host_timeout_seconds=2)),
+        # Bound the deliberately unmapped trap loop to a one-instruction grant
+        # so the no-fetch guard is tested before the host watchdog can race it.
         dict(name="outside-spm", parameters={}, negative=2,
-             expected_failure="no instruction-fetch progress in local SPM", cpu_parameters=dict(host_timeout_seconds=2)),
+             expected_failure="no instruction-fetch progress in local SPM",
+             cpu_parameters=dict(host_timeout_seconds=2, instruction_budget=1)),
     ]
 
 

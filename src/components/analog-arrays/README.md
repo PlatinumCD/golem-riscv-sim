@@ -20,6 +20,33 @@ use flat row-major matrix order; input and output offsets index their vectors.
 | `Load` | Transfer exactly `elementCount × 4` payload bytes into input elements starting at `elementOffset` |
 | `Execute` | Wait `cost_per_mvm_cycles` and calculate the MVM; offset/count must be zero and the payload empty |
 | `Store` | Transfer selected output elements into the successful `Complete` reply's payload; the request payload must be empty |
+| `Configure` | Set persistent active rows/columns from `(rows << 32) | cols` in `elementOffset`; count zero, empty payload, synchronous status |
+
+### Active regions
+
+An array defaults to its physical shape. Configure can select a nonempty
+top-left rectangle bounded by that shape. Only those weights and input columns
+must be initialized, and only those output rows are available for Store.
+Program offsets retain the **physical column stride**: active row 1 of a
+512-column array begins at offset 512 even when only 19 columns are active.
+A nonempty Program range may not include inactive cells; when columns are
+cropped, submit each row separately. Load and Store ranges must remain within
+the active columns and rows. RVV VL determines the exact transferred count.
+
+Inactive weights and inputs are semantically positive zero without SPM or
+array-link transfers. Execute computes the active dot products; the configured
+`cost_per_mvm_cycles` remains unchanged (100 cycles in the default machine).
+Each queued result snapshots its active dimensions and input. Reading every
+unique active row releases its result slot; physical padding is not read.
+
+Configure requires no accepted/pending commands, active compute, or unread
+result on the selected array. Invalid extents and undrained arrays return Error,
+not retryable Busy, and preserve existing state. Successful Configure clears
+weight/input coverage, even if the shape is unchanged. Old physical bits may
+remain resident; inactive cells are masked, not cleared by a free transfer.
+It starts a fresh programming epoch. A short-to-long reconfiguration therefore
+cannot resurrect stale data. Configuration is per array and persists until
+explicitly changed. Deferred Configure is unsupported.
 
 Arrays receive data only through register-transfer commands. The component has
 one `commands` port and no memory interface. Ordinary CPU vector loads/stores
@@ -55,7 +82,8 @@ outstanding. Store data is published only in Complete. See the CPU
 
 Partial updates preserve untouched elements. Initialization coverage is tracked
 for every weight and input element, and the first Execute requires both to be
-fully initialized. Coverage persists after execution and later partial updates.
+fully initialized. Coverage persists after execution and later partial updates
+within the configured active region. Configure resets that coverage.
 In blocking mode, nonempty Program and Load commands invalidate the previous result; Store may
 return different slices of a computed output through multiple commands.
 
@@ -126,7 +154,7 @@ no programming cost. Load and Store have no additional fixed operation cost.
 
 The opt-in `array_program_delay_scope="initial_full_array"` uses a fresh array as
 one initial programming epoch. Chunks receive no per-command programming delay.
-After unique received-weight coverage first reaches the entire matrix, the
+After unique received-weight coverage first reaches the entire active matrix, the
 coverage-completing command waits `cost_per_array_program_cycles` exactly once.
 It remains outstanding and the array is unavailable for execution until that
 delay expires. Duplicate or overlapping writes before full coverage replace
@@ -139,8 +167,8 @@ during or after the delay. Zero-length commands remain no-ops, and Load,
 Execute and Store can reuse the resident weights. The restriction applies even
 when the delay is zero. For the initial programming pass, zero delay preserves
 the default mode's timing. Both modes support the execution pipeline and give
-each array its own deadline. Repeated whole-array programming epochs are not
-supported by this mode. This is an abstract whole-array timing assumption,
+each array its own deadline. Configure begins a new epoch after the preceding
+work and output have drained. This is an abstract whole-array timing assumption,
 not a physical NVM programming model or a new memory path.
 
 Input/output registers and the vectors used to assemble functional payloads are
@@ -163,7 +191,7 @@ buffered bytes per array.
 
 `array-programming.csv` separately records programming observations without
 changing the events in `arrays.csv`. Its columns are
-`event,cycle,array,token,scope,element_offset,element_count,initialized_weights,total_weights,delay_cycles`.
+`event,cycle,array,token,scope,element_offset,element_count,initialized_weights,total_weights,delay_cycles,active_rows,active_cols,active_weights,configuration_epoch`.
 Each nonempty successful Program emits `delivered` when its final byte completes
 link transit, one cycle after its last link-service event. `initialized_weights`
 counts uniquely received elements, including that command, while execution
@@ -190,11 +218,17 @@ That filter also enables `array-initial-program.csv`; alternatively, set
 In `initial_full_array` mode it records one row per committed initial epoch:
 array ID, first command start, final commit cycle/token, scope, successful
 nonempty program command count, delivered bytes, unique initialized/total
-weights, configured delay, one charge/completion, and `weights_fnv1a64`.
+weights, configured delay, one charge/completion, and `weights_fnv1a64`, followed
+by `active_rows,active_cols,active_weights,configuration_epoch`.
 The hash is unsigned decimal FNV-1a-64 (offset 14695981039346656037, prime
-1099511628211, arithmetic modulo 2^64) over the actual resident matrix's
+1099511628211, arithmetic modulo 2^64) over the effective matrix's
 little-endian FP32 bytes in row-major order. It is a reproducibility checksum,
-not a cryptographic proof. Total bytes plus unique coverage detect duplicate
+not a cryptographic proof. The hash covers the full physical matrix, including
+logical positive zeros outside the active rectangle. `total_weights` remains
+the physical capacity; `initialized_weights` counts actual unique active cells;
+`delivered_bytes` counts actual register-transfer payload, never omitted zeros.
+The configuration epoch starts at zero and increments on each successful
+Configure. Total bytes plus unique coverage detect duplicate
 or missing weight transfers; the checksum checks committed values. Fine
 setup ordering and bank service can only be re-audited when their full traces
 are retained. Neither optional environment variable changes functional work,

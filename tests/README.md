@@ -20,6 +20,7 @@ bash tests/run-all.sh --suite compiler
 | SPM | Byte/range ordering, shared CPU/router bank permissions, bank ports and channel service |
 | Analog accelerator | Register-only payloads, numerical outputs, program delay, overlapping computation and command backpressure |
 | Mordred | 2×2 routing, payload integrity, local bank service, posted transfers, receive reservations and credit return |
+| Guest messaging | Whole-message instructions, ordered receive, generation tokens, descriptor capture, bounded queues and MVM/transfer overlap |
 | LLVM | Freshly compiled copy, addition, checksum and stencil kernels at two VLENs and two LSQ depths |
 | Profiling | Default-off behavior, unchanged on/off timing and results, component traces and physical flit timing |
 | Sculptor (optional compiler suite) | Compiler-generated single-tile linear/convolution programs, packing, tails and resident-weight reuse |
@@ -35,4 +36,5 @@ The old `platform`, `memory`, `network` and `analog` test groups were retired wi
 the old simulator and are recoverable from [Git history](../docs/migration.md).
 Other older runtime/validation research fixtures are outside the maintained
 hardware suite. In particular, their legacy multi-tile runtime is not the new
-NIU programming interface. Current guest-initiated networking remains follow-up work.
+NIU programming interface. Current guest-initiated networking is covered by the
+[network instruction tests](../src/tests/network-instructions/README.md).

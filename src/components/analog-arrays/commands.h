@@ -4,7 +4,7 @@
 #include <vector>
 
 namespace TileComponents {
-enum class Operation : std::uint8_t { Program, Load, Execute, Store };
+enum class Operation : std::uint8_t { Program, Load, Execute, Store, Configure };
 enum class CommandStatus : std::uint8_t {
     Request = 0, Accepted = 1, Complete = 2, Busy = 3, Error = 4, Started = 5,
     Guaranteed = 6, Captured = 7

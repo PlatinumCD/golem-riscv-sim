@@ -51,13 +51,28 @@ their results do not establish coverage of the current hardware. Legacy hardware
 comparison commands fail with a retirement message instead of selecting an old
 installation.
 
+## Tile networking API
+
+Tile communication uses the destination-addressed whole-message instructions only.
+The optional NIU `requests` and `arrivals` ports, `MordredSpmRequest`, remote reads,
+nonposted writes and the 40-byte packet format have been removed. There is no
+compatibility flag. Configure receive reservations in `network_transfers`, then
+submit and consume messages through `net.send`, `net.recv`, `net.info`,
+`net.release` and `net.wait`.
+
+The retired `network/mordred-spm`, `network/local-spm` and
+`network/posted-transfers` fixtures are replaced by `network/guest-instructions`.
+Composition checks live beside that guest suite; cycle profiling also uses the
+guest transport. Standalone Mordred router tests remain independent of the NIU.
+
 ## Remaining application integration
 
-Guest-controlled tile-to-tile sends are still pending. Current multi-tile tests
-use a test controller to submit NIU requests. Guest CPUs access local SPM;
-transfer payloads travel through SPM service, NIU, NIC and routers. A future guest
-command interface must specify transfers and expose receive readiness while
-preserving that payload path and finite storage credits.
+Guest-controlled tile-to-tile sends use the [network instruction
+interface](../src/components/mordred/network-instructions.md). Multi-guest tests
+cover destination-addressed multi-hop messages, source-agnostic ordered receive,
+compiler identities, per-transfer receive reservations, slot ownership, queue limits,
+and independent NIU/analog progress. Transfer payloads travel through SPM
+service, NIU, NIC and routers. CPU registers carry only control information.
 
 Compiled Sculptor execution currently supports one tile. Connecting its multi-tile
 runtime to the new NIU is separate follow-up work. This migration does not claim
