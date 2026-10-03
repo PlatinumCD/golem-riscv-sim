@@ -45,6 +45,17 @@ Regenerate with `python3 tools/hardware/parameter-reference.py > docs/parameters
 |---|---|
 | `instruction_budget` | `256` |
 | `issue_width` | `1` |
+| `instruction_fetch_width` | `0` |
+| `integer_issue_units` | `2` |
+| `memory_issue_units` | `1` |
+| `integer_latency_cycles` | `1` |
+| `integer_initiation_interval` | `1` |
+| `floating_latency_cycles` | `3` |
+| `floating_initiation_interval` | `1` |
+| `vector_latency_cycles` | `1` |
+| `vector_initiation_interval` | `1` |
+| `multiply_latency_cycles` | `3` |
+| `divide_latency_cycles` | `16` |
 | `load_store_queue_depth` | `1` |
 | `scalar_load_store_queue_depth` | `8` |
 | `analog_command_queue_depth` | `4` |

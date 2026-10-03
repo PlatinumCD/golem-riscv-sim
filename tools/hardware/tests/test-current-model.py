@@ -84,12 +84,13 @@ class CurrentModelTests(unittest.TestCase):
         self.assertEqual(resolve_paths({'GOLEM_BUILD_SCOPE':'shared'})['GOLEM_INSTALL_ROOT'],str(ROOT/'install'))
         with self.assertRaises(ValueError): resolve_paths({'GOLEM_HARDWARE_TREE':'old_src'})
 
-    def test_cpu_wait_trace_is_distinct_from_analog_queue_waits(self):
+    def test_cpu_wait_trace_is_distinct_from_queue_and_issue_waits(self):
         analysis = load_module('migration_transfer_analysis', ROOT/'src/tests/llvm-rvv/analysis.py')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root/'riscv-asq-waits.csv').touch()
-            with self.assertRaises(AssertionError): analysis.one(root, '-waits.csv')
+            for name in ('riscv-asq-waits.csv', 'riscv-slq-waits.csv', 'riscv-issue-waits.csv'):
+                (root/name).touch()
+                with self.assertRaises(AssertionError): analysis.one(root, '-waits.csv')
             cpu = root/'riscv-waits.csv'; cpu.touch()
             self.assertEqual(analysis.one(root, '-waits.csv'), cpu)
 

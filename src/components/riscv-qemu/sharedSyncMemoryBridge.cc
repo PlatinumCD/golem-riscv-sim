@@ -212,6 +212,8 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
             {},
             {},
         };
+        event.instructionBits = mapping_->instruction_bits;
+        event.instructionVtype = mapping_->instruction_vtype;
         event.analogWaitMask = analogQueue().wait_mask;
         event.analogWaitReason = analogQueue().wait_reason;
         event.scalarWaitMask = scalarQueue().wait_mask;
@@ -328,6 +330,8 @@ std::optional<QemuSyncEvent> SharedSyncMemoryBridge::waitForEvent(
         {},
         {},
     };
+    event.instructionBits = mapping_->instruction_bits;
+    event.instructionVtype = mapping_->instruction_vtype;
     event.analogWaitMask = analogQueue().wait_mask;
     event.analogWaitReason = analogQueue().wait_reason;
     event.scalarWaitMask = scalarQueue().wait_mask;

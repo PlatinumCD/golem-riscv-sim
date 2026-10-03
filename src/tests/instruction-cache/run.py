@@ -275,7 +275,13 @@ def main():
                 assert by_case[name]["cpu"]["end_cycle"] == reference["cpu"]["end_cycle"]
                 assert by_case[name]["cpu"]["issue_cycles"] == reference["cpu"]["issue_cycles"]
         if "issue-4" in by_case:
-            assert by_case["issue-4"]["cpu"]["end_cycle"] == reference["cpu"]["end_cycle"]
+            # Fetch blocks now supply multiple independent instructions. Wider
+            # issue improves this guest while preserving instruction traffic.
+            wider = by_case["issue-4"]["cpu"]
+            assert wider["end_cycle"] < reference["cpu"]["end_cycle"]
+            assert 1 < wider["peak_issue_width"] <= 4
+            for key in ("instructions", "icache_fetches", "icache_fills", "fetch_bytes"):
+                assert wider[key] == reference["cpu"][key], key
         if "request-4" in by_case:
             assert by_case["request-4"]["cpu"]["fetch_bytes"] == reference["cpu"]["fetch_bytes"]
             assert by_case["request-4"]["cpu"]["memory_requests"] > reference["cpu"]["memory_requests"]

@@ -20,9 +20,28 @@
 #include <unistd.h>
 
 namespace TileComponents {
+namespace {
+Riscv::IssueConfiguration issueConfiguration(SST::Params& p) {
+    Riscv::IssueConfiguration c;
+    c.width = p.find<unsigned>("issue_width", 1);
+    c.units[unsigned(Riscv::IssueUnit::Integer)].count = p.find<unsigned>("integer_issue_units", 2);
+    c.units[unsigned(Riscv::IssueUnit::Memory)].count = p.find<unsigned>("memory_issue_units", 1);
+    for (const auto& [name, unit] : {std::pair{"integer", Riscv::IssueUnit::Integer},
+                                   std::pair{"floating", Riscv::IssueUnit::Floating},
+                                   std::pair{"vector", Riscv::IssueUnit::Vector}}) {
+        auto& u = c.units[unsigned(unit)];
+        u.latency = p.find<std::uint64_t>(std::string(name) + "_latency_cycles", u.latency);
+        u.interval = p.find<std::uint64_t>(std::string(name) + "_initiation_interval", u.interval);
+    }
+    c.units[unsigned(Riscv::IssueUnit::Multiply)].latency = p.find<std::uint64_t>("multiply_latency_cycles", 3);
+    auto& divide = c.units[unsigned(Riscv::IssueUnit::Divide)];
+    divide.latency = divide.interval = p.find<std::uint64_t>("divide_latency_cycles", 16);
+    return c;
+}
+}
 
 RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
-    : Component(id), ledger_(p.find<std::uint64_t>("issue_width", 1)),
+    : Component(id), ledger_(p.find<std::uint64_t>("issue_width", 1)), issue_(issueConfiguration(p)),
       budget_(p.find<std::uint64_t>("instruction_budget", 256)),
       capacity_(p.find<std::uint64_t>("spm_capacity_bytes", 2097152)),
       requestBytes_(p.find<std::uint64_t>("spm_request_bytes", 32)),
@@ -53,6 +72,9 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
             requestBytes_ > 2 * 1024 * 1024 || (requestBytes_ & (requestBytes_ - 1)) ||
             capacity_ % requestBytes_)
             throw std::invalid_argument("invalid CPU budget, timeout, SPM capacity or request size");
+        fetchWidth_ = p.find<unsigned>("instruction_fetch_width", 0);
+        if (!fetchWidth_) fetchWidth_ = issue_.configuration().width;
+        if (fetchWidth_ > 4) throw std::invalid_argument("instruction_fetch_width must be 0..4");
         const auto depth = p.find<std::uint64_t>("load_store_queue_depth", 1);
         if (!depth || depth > MITTENS_SYNC_LSQ_CAPACITY)
             throw std::invalid_argument("load_store_queue_depth must be 1..64");
@@ -110,6 +132,8 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
             new SST::Event::Handler<RiscvQemu, &RiscvQemu::step>(this));
         cacheWake_ = configureSelfLink("instruction_cache", clock_,
             new SST::Event::Handler<RiscvQemu, &RiscvQemu::cacheLookup>(this));
+        issueWake_ = configureSelfLink("instruction_issue", clock_,
+            new SST::Event::Handler<RiscvQemu, &RiscvQemu::issueInstruction>(this));
         memory_ = loadUserSubComponent<Memory>("qemu_memory", SST::ComponentInfo::SHARE_NONE,
             clock_, new Memory::Handler<RiscvQemu, &RiscvQemu::memoryResponse>(this));
         if (!memory_) throw std::invalid_argument("qemu_memory StandardMem interface is required");
@@ -136,6 +160,11 @@ RiscvQemu::RiscvQemu(SST::ComponentId_t id, SST::Params& p)
             cacheTrace_.open(std::string(dir) + "/" + getName() + "-icache.csv");
             if (!cacheTrace_) throw std::runtime_error("cannot open instruction cache trace");
             cacheTrace_ << "event,cycle,address,bytes\n";
+            issueTrace_.open(std::string(dir) + "/" + getName() + "-issue.csv");
+            issueWaitTrace_.open(std::string(dir) + "/" + getName() + "-issue-waits.csv");
+            if (!issueTrace_ || !issueWaitTrace_) throw std::runtime_error("cannot open instruction issue traces");
+            issueTrace_ << "cycle,pc,instruction,unit,pipeline_ready_cycle\n";
+            issueWaitTrace_ << "start_cycle,end_cycle,reason,pc\n";
             memoryTrace_.open(std::string(dir) + "/" + getName() + "-memory.csv");
             if (!memoryTrace_) throw std::runtime_error("cannot open CPU memory trace");
             memoryTrace_ << "event,cycle,pc,address,bytes,write,vector\n";
@@ -215,14 +244,12 @@ void RiscvQemu::capture() {
     ledger_.validateCaptured(event_->grantEpoch, counts);
     const bool boundary = event_->stopReason != MITTENS_SYNC_STOP_QUANTUM_END &&
                           event_->stopReason != MITTENS_SYNC_STOP_INSTRUCTION_FETCH;
-    const auto charge = ledger_.accountTo(counts, boundary);
-    // Cache lookup already paid for one issue cycle. Preserve the original
-    // cache's credit reconciliation, including issue_width > 1 and traps.
-    const auto credit = std::min(prepaidIssue_, charge.cycles.value);
-    prepaidIssue_ -= credit;
+    // Counts remain a checked QEMU retirement ledger. Timing is now authorized
+    // instruction-by-instruction by the issue scheduler, never count/width.
+    ledger_.accountTo(counts, boundary);
     // The preceding resume has now performed the ordinary shared-memory access.
     releaseAccessRanges();
-    wake_->send(charge.cycles.value - credit, new SST::Event);
+    wake_->send(0, new SST::Event);
 }
 
 void RiscvQemu::resume() {
@@ -280,6 +307,7 @@ void RiscvQemu::dispatch() {
             instructionCache_->invalidate();
             traceCache("invalidate", 0, 0);
         }
+        fetchRemaining_ = 0;
         resume(); break;
     case MITTENS_SYNC_STOP_TASK_START:
     case MITTENS_SYNC_STOP_TASK_FINISH: traceTask(); resume(); break;
@@ -305,7 +333,7 @@ void RiscvQemu::traceTask() {
     const auto cache = instructionCache_ ? instructionCache_->statistics() : Riscv::InstructionCacheStatistics{};
     taskTrace_ << (event_->stopReason == MITTENS_SYNC_STOP_TASK_START ? "start" : "finish")
         << ',' << getCurrentSimTime(clock_) << ',' << event_->taskId << ',' << event_->executionId
-        << ',' << counts.total.instructions << ',' << counts.total.vectors << ',' << counts.totalCycles
+        << ',' << counts.total.instructions << ',' << counts.total.vectors << ',' << issue_.issueCycles()
         << ',' << reads_ << ',' << writes_ << ',' << fetches_ << ',' << requests_ << ',' << completions_
         << ',' << analogCommands_ << ',' << analogReadBytes_ << ',' << analogWriteBytes_
         << ',' << instructionBytes_ << ',' << cache.fetches << ',' << cache.hits << ',' << cache.misses
@@ -331,7 +359,20 @@ void RiscvQemu::instructionFetch() {
     const auto lineBytes = instructionCache_->configuration().lineBytes;
     cacheLine_ = (address - config_.scratchpadBase) & ~(std::uint64_t(lineBytes) - 1);
     cacheLastLine_ = (address - config_.scratchpadBase + bytes - 1) & ~(std::uint64_t(lineBytes) - 1);
-    cacheWake_->send(instructionCache_->configuration().hitLatencyCycles, new SST::Event);
+    // One fetched block may supply multiple adjacent instructions. Keep its
+    // unused slots during a dependency/unit stall. QEMU still rendezvous before
+    // every instruction: no batching across dependencies, traps, memory or
+    // accelerator boundaries.
+    bundledFetch_ = hit && fetchRemaining_ && cacheStart_ >= fetchBundleCycle_ &&
+        address == fetchNextPc_ && cacheLine_ == fetchBundleLine_ && cacheLastLine_ == cacheLine_;
+    if (bundledFetch_) {
+        --fetchRemaining_;
+        fetchNextPc_ = address + bytes;
+        advanceInstructionFetch();
+    } else {
+        fetchRemaining_ = 0;
+        cacheWake_->send(instructionCache_->configuration().hitLatencyCycles, new SST::Event);
+    }
 }
 
 void RiscvQemu::cacheLookup(SST::Event* event) {
@@ -351,11 +392,17 @@ void RiscvQemu::advanceInstructionFetch() {
         }
         cacheLine_ += bytes;
     }
-    instructionCache_->accountStall(getCurrentSimTime(clock_) - cacheStart_ - 1);
-    // Any unused preceding credit belongs to an instruction which did not
-    // consume another issue cycle. It must not accumulate across fetches.
-    prepaidIssue_ = 1;
-    resume();
+    const auto now = getCurrentSimTime(clock_);
+    if (!bundledFetch_) {
+        instructionCache_->accountStall(now - cacheStart_ - 1);
+        const auto address = event_->memoryAddress;
+        const auto firstLine = (address - config_.scratchpadBase) & ~(std::uint64_t(bytes) - 1);
+        fetchBundleCycle_ = now;
+        fetchBundleLine_ = firstLine;
+        fetchNextPc_ = address + event_->memorySize;
+        fetchRemaining_ = firstLine == cacheLastLine_ ? fetchWidth_ - 1 : 0;
+    }
+    prepareInstructionIssue();
 }
 
 void RiscvQemu::releaseAccessRanges() {
@@ -452,8 +499,13 @@ void RiscvQemu::memoryResponse(Memory::Request* response) {
                 cacheFillPending_ = false;
                 advanceInstructionFetch();
             } else {
-                if (event_->stopReason == MITTENS_SYNC_STOP_MEMORY_ACCESS) traceMemory("ready");
-                resume();
+                if (event_->stopReason == MITTENS_SYNC_STOP_INSTRUCTION_FETCH) {
+                    releaseAccessRanges();
+                    prepareInstructionIssue();
+                } else {
+                    if (event_->stopReason == MITTENS_SYNC_STOP_MEMORY_ACCESS) traceMemory("ready");
+                    resume();
+                }
             }
         }
     } catch (const std::exception& error) { fail(error.what()); }
@@ -616,6 +668,8 @@ void RiscvQemu::finish() {
     memory_->finish();
     if (taskTrace_) taskTrace_.flush();
     if (cacheTrace_) cacheTrace_.flush();
+    if (issueTrace_) issueTrace_.flush();
+    if (issueWaitTrace_) issueWaitTrace_.flush();
     if (memoryTrace_) memoryTrace_.flush();
     if (loadStoreTrace_) loadStoreTrace_.flush();
     if (scalarTrace_) scalarTrace_.flush();
@@ -628,7 +682,12 @@ void RiscvQemu::finish() {
     std::cout << "RISCV_STATS {\"component\":" << std::quoted(getName())
         << ",\"instructions\":" << counts.total.instructions
         << ",\"vector_instructions\":" << counts.total.vectors
-        << ",\"issue_cycles\":" << counts.totalCycles
+        << ",\"issue_cycles\":" << issue_.issueCycles()
+        << ",\"issue_width\":" << issue_.configuration().width
+        << ",\"instruction_fetch_width\":" << fetchWidth_
+        << ",\"issued_instructions\":" << issue_.instructions()
+        << ",\"peak_issue_width\":" << issue_.peakWidth()
+        << ",\"instruction_issue_wait_cycles\":" << issueWaitCycles_
         << ",\"read_bytes\":" << reads_ << ",\"write_bytes\":" << writes_
         << ",\"fetch_bytes\":" << fetches_ << ",\"memory_requests\":" << requests_
         << ",\"completed_requests\":" << completions_ << ",\"grants\":" << grants_

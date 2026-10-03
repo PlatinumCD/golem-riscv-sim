@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1510" viewBox="0 0 1280 1510" role="img" aria-labelledby="title desc">
   <title id="title">Tile architecture: RISC-V, shared banked scratchpad, analog accelerator and Mordred</title>
-  <desc id="desc">Module diagram of the current src architecture. The CPU contains instruction execution and control, an instruction cache, scalar and vector register files, a vector load/store queue and an analog command queue. Blocking scalar loads/stores bypass the vector queue. They join instruction fetches from SPM and queued vector accesses at one CPU memory port on the CPU boundary. That port and the network interface unit connect to the same SPM bus. The bus connects to the SPM controller, which contains bank/channel scheduling and serves the physical scratchpad banks and their read/write ports below it. The analog accelerator connects exclusively to the CPU vector-register command interface; each replicated unit has a command queue, register-transfer engine, input buffer, analog array and output buffers. The register-transfer engine connects directly to the analog array for programming and through the input buffer for input preparation. The network interface contains local scratchpad request fragments, queued requests, receive buffers, receive ordering and storage-credit control. Its Mordred NIC connects to the mesh router through its local port. The router contains input buffers and virtual channels, routing and arbitration, a router switch, output buffers and link-credit control. Solid arrows show functional data/request/response connections; dashed arrows show control. Repeated bank and array shapes indicate replication without specifying counts. The drawing uses module and connection names without parameter values.</desc>
+  <desc id="desc">Module diagram of the current src architecture. The CPU contains instruction execution and control, an instruction cache, scalar and vector register files, separate scalar and vector load/store queues and an analog command queue. Queued scalar accesses join instruction fetches from SPM and queued vector accesses at one CPU memory port on the CPU boundary. That port and the network interface unit connect to the same SPM bus. The bus connects to the SPM controller, which contains bank/channel scheduling and serves the physical scratchpad banks and their read/write ports below it. The analog accelerator connects exclusively to the CPU vector-register command interface; each replicated unit has a command queue, register-transfer engine, input buffer, analog array and output buffers. The register-transfer engine connects directly to the analog array for programming and through the input buffer for input preparation. The network interface contains local scratchpad request fragments, queued requests, receive buffers, receive ordering and storage-credit control. Its Mordred NIC connects to the mesh router through its local port. The router contains input buffers and virtual channels, routing and arbitration, a router switch, output buffers and link-credit control. Solid arrows show functional data/request/response connections; dashed arrows show control. Repeated bank and array shapes indicate replication without specifying counts. The drawing uses module and connection names without parameter values.</desc>
   <defs>
     <marker id="arrow-end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 1 1 L 9 5 L 1 9 Z" fill="#52677e"/>
@@ -67,16 +67,20 @@
   <text x="648" y="338">command</text>
   <text x="648" y="363">queue</text>
 
-  <!-- Cache fills, blocking scalar accesses and the vector LSQ share one CPU port. -->
+  <rect id="scalar-lsq" class="block cpu-block" x="194" y="436" width="140" height="84" rx="8"/>
+  <text x="264" y="459">Scalar</text>
+  <text x="264" y="484">load/store</text>
+  <text x="264" y="509">queue</text>
+
+  <!-- Cache fills and the scalar/vector queues share one CPU port. -->
   <path id="cache-fill-path" class="branch" d="M 84 182 H 72 V 550 H 610 V 570"/>
-  <path id="scalar-memory-path" class="branch" d="M 184 368 L 184 550"/>
+  <path id="scalar-lsq-interface" class="wire both" d="M 184 368 V 410 H 264 V 436"/>
+  <path id="scalar-memory-path" class="branch" d="M 264 520 V 550"/>
   <path id="vector-memory-path" class="branch" d="M 449 520 L 449 550"/>
   <text x="128" y="467" class="small">Fetch</text>
   <text x="128" y="490" class="small">instructions</text>
   <text x="128" y="513" class="small">from SPM</text>
-  <text x="204" y="443" class="small" style="text-anchor:start">Blocking</text>
-  <text x="204" y="466" class="small" style="text-anchor:start">loads/stores</text>
-  <circle class="junction" cx="184" cy="550" r="3.8"/>
+  <circle class="junction" cx="264" cy="550" r="3.8"/>
   <circle class="junction" cx="449" cy="550" r="3.8"/>
   <rect id="cpu-memory-port" x="602" y="570" width="16" height="16" rx="2" fill="#fff" stroke="#52677e" stroke-width="2"/>
   <text x="592" y="606" class="small" style="text-anchor:end">CPU memory port</text>

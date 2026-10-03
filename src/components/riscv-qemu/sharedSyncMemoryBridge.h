@@ -45,6 +45,8 @@ struct QemuSyncEvent {
     std::uint32_t loadStoreWaitReason = 0;
     std::uint64_t scalarWaitMask = 0;
     std::uint32_t scalarWaitReason = 0;
+    std::uint32_t instructionBits = 0;
+    std::uint64_t instructionVtype = 0;
     std::uint64_t memoryProgramCounter() const noexcept
     {
         return analogSequence;

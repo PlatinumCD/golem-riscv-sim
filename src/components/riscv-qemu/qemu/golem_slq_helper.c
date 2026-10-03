@@ -8,6 +8,11 @@
 
 bool mittens_sync_register_segment_safe(CPUState *cpu);
 
+uint64_t mittens_sync_instruction_vtype(CPUState *cpu)
+{
+    return cpu ? RISCV_CPU(cpu)->env.vtype : 0;
+}
+
 typedef struct ScalarPending {
     bool valid, write, fp, sign;
     uint32_t reg, bytes;

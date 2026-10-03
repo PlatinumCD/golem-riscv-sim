@@ -60,7 +60,7 @@ def build(output, with_tests=False, extra_sources=()):
     sources.append(HERE / "components/mordred/spmEndpoint.cc")
     sources.append(HERE / "components/mordred/networkEngine.cc")
     sources.append(HERE / "components/dram_tile/dramTile.cc")
-    sources += [cpu / name for name in ("riscvQemu.cc", "loadStoreQueue.cc", "scalarLoadStoreQueue.cc", "analogCommandQueue.cc", "instructionCache.cc", "qemuProcess.cc",
+    sources += [cpu / name for name in ("riscvQemu.cc", "instructionTiming.cc", "instructionIssue.cc", "loadStoreQueue.cc", "scalarLoadStoreQueue.cc", "analogCommandQueue.cc", "instructionCache.cc", "qemuProcess.cc",
                 "sharedSyncMemoryBridge.cc", "scratchpadBootImage.cc")]
     if with_tests:
         sources.append(HERE / "tests/driver.cc")

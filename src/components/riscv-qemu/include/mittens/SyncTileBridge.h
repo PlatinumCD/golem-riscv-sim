@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 #define MITTENS_SYNC_BRIDGE_MAGIC UINT32_C(0x4d53594e)
-#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(36)
+#define MITTENS_SYNC_BRIDGE_VERSION UINT32_C(37)
 #define MITTENS_SYNC_FETCH_SEGMENT_CAPACITY UINT32_C(16)
 #define MITTENS_SYNC_MEMORY_BATCH_CAPACITY UINT32_C(1024)
 #define MITTENS_SYNC_GLOBAL_DMA_BATCH_CAPACITY UINT32_C(8)
@@ -174,6 +174,11 @@ typedef struct __attribute__((aligned(64))) MittensSyncBridge {
     uint32_t fetch_segment_approved;
     uint32_t fetch_segment_reserved;
     MittensSyncNetwork network;
+    /* Actual translated instruction and pre-instruction vector configuration.
+     * Valid only for INSTRUCTION_FETCH; published before EVENT release. */
+    uint32_t instruction_bits;
+    uint32_t instruction_reserved;
+    uint64_t instruction_vtype;
 } MittensSyncBridge;
 
 typedef struct MittensSyncMemoryAccess {

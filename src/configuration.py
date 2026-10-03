@@ -194,6 +194,17 @@ def _experimental_controls(experimental):
 CPU_DEFAULTS = {
     "instruction_budget": 256,
     "issue_width": 1,
+    "instruction_fetch_width": 0,
+    "integer_issue_units": 2,
+    "memory_issue_units": 1,
+    "integer_latency_cycles": 1,
+    "integer_initiation_interval": 1,
+    "floating_latency_cycles": 3,
+    "floating_initiation_interval": 1,
+    "vector_latency_cycles": 1,
+    "vector_initiation_interval": 1,
+    "multiply_latency_cycles": 3,
+    "divide_latency_cycles": 16,
     "load_store_queue_depth": 1,
     "scalar_load_store_queue_depth": 8,
     "analog_command_queue_depth": 4,
@@ -225,6 +236,17 @@ def _cpu_options(p, cpu_parameters):
     for name in ("instruction_budget", "issue_width", "host_timeout_seconds"):
         if type(options[name]) is not int or not 1 <= options[name] <= 2**31 - 1:
             raise ValueError(f"{name} must be a positive integer")
+    for name in ("issue_width", "integer_issue_units", "memory_issue_units"):
+        if type(options[name]) is not int or not 1 <= options[name] <= 4:
+            raise ValueError(f"{name} must be an integer from 1 through 4")
+    if type(options["instruction_fetch_width"]) is not int or not 0 <= options["instruction_fetch_width"] <= 4:
+        raise ValueError("instruction_fetch_width must be an integer from 0 through 4")
+    for name in ("integer_latency_cycles", "integer_initiation_interval",
+                 "floating_latency_cycles", "floating_initiation_interval",
+                 "vector_latency_cycles", "vector_initiation_interval",
+                 "multiply_latency_cycles", "divide_latency_cycles"):
+        if type(options[name]) is not int or not 1 <= options[name] <= 1024:
+            raise ValueError(f"{name} must be an integer from 1 through 1024")
     depth = options["load_store_queue_depth"]
     if type(depth) is not int or not 1 <= depth <= 64:
         raise ValueError("load_store_queue_depth must be an integer from 1 through 64")

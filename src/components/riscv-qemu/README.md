@@ -94,7 +94,15 @@ CPU options use `cpu_parameters`; VLEN is shared with the architecture:
 | Parameter | Default | Meaning |
 |---|---:|---|
 | `instruction_budget` | 256 | Instructions allowed per host synchronization grant |
-| `issue_width` | 1 | Scalar issue width; vector instructions consume at least one issue cycle |
+| `issue_width` | 1 | Total instruction issue slots per cycle, 1–4; scalar, vector and custom instructions all count |
+| `instruction_fetch_width` | 0 | Cached sequential instructions per block, 1–4; 0 follows issue width |
+| `integer_issue_units` | 2 | Integer ALU issue ports |
+| `memory_issue_units` | 1 | Shared scalar/RVV memory-instruction issue ports |
+| `integer_latency_cycles` / `integer_initiation_interval` | 1 / 1 | Integer result latency / cycles between admissions per port |
+| `floating_latency_cycles` / `floating_initiation_interval` | 3 / 1 | Scalar FP latency / admission interval |
+| `vector_latency_cycles` / `vector_initiation_interval` | 1 / 1 | RVV arithmetic latency / admission interval |
+| `multiply_latency_cycles` | 3 | Integer multiply result latency; one admission per cycle |
+| `divide_latency_cycles` | 16 | Divide/sqrt latency and admission interval |
 | `load_store_queue_depth` | 1 | Outstanding vector memory beats, 1–64; depth 1 preserves blocking behavior |
 | `scalar_load_store_queue_depth` | 8 | Outstanding scalar operations, 0–64; zero selects blocking accesses |
 | `analog_command_queue_depth` | 4 | Outstanding vector analog commands, 0–16; zero selects blocking transfers |
@@ -103,7 +111,7 @@ CPU options use `cpu_parameters`; VLEN is shared with the architecture:
 | `instruction_cache_bytes` | 8192 | Instruction-cache capacity in bytes |
 | `instruction_cache_line_bytes` | 64 | Bytes fetched from SPM on a cache-line fill |
 | `instruction_cache_ways` | 2 | Ways per set; replacement uses least recently used tags |
-| `instruction_cache_hit_cycles` | 1 | Hit latency including one CPU issue cycle; 1 adds no extra stall cycle |
+| `instruction_cache_hit_cycles` | 1 | Latency to supply a cached fetch block |
 | `riscv_vector_enabled` | true | Enable RVV 1.0 |
 | `riscv_vector_length_bits` | 256 | Shared architecture VLEN, a power of two from 128 to 1024; also sets array link bytes/cycle to VLEN / 8 |
 | `riscv_vector_element_bits` | 64 | RVV ELEN, 32 or 64 |
@@ -139,9 +147,16 @@ each scalar access or safely grouped RVV memory beat. It disables the old
 post-access timing batches, which would execute accesses before SST had modeled
 their completion.
 
+The [in-order issue scheduler](instruction-issue.md) enforces a total issue budget,
+register readiness and execution-unit limits. Set `issue_width=2` for dual issue;
+single issue remains the default. Arithmetic has separate result latency and
+initiation interval, while memory and device completion retain their existing
+queue timing. Synchronization budgets do not change the instruction schedule.
+
 Instruction fetches check an 8 KiB, two-way instruction cache by default, with
 64-byte lines and least recently used replacement. Hits use the configured
-hit latency. Misses fetch complete lines through StandardMem, split at
+hit latency once per sequential fetch block; its width follows `issue_width`
+unless `instruction_fetch_width` is explicit. Misses fetch complete lines through StandardMem, split at
 `spm_request_bytes` boundaries; these fills consume actual SPM bank, port, and
 channel service. An instruction spanning two cache lines can require two fills.
 Setting `instruction_cache_enabled=false` sends each instruction fetch directly

@@ -56,7 +56,8 @@ def cases():
         dict(name='delayed-credit-return', size=64, kind=0, mesh_y=2, destination=3, link_latency='128ns'),
         dict(name='try-receive-ready', size=64, kind=0, try_receive=True, delay=2000),
         dict(name='reserved-encodings', size=64, kind=7),
-        dict(name='mvm-multi-hop-mvm', size=128, kind=4, mesh_y=2, destination=3)] + [
+        dict(name='mvm-multi-hop-mvm', size=128, kind=4, mesh_y=2, destination=3),
+        dict(name='dual-issue-mvm-multi-hop-mvm', size=128, kind=4, mesh_y=2, destination=3, issue_width=2)] + [
         dict(name=f'profile-{profile}-{name}', profile_name=profile, size=size, kind=kind,
              mesh_y=2, destination=3, **extra)
         for profile in TILE_PROFILES
@@ -89,7 +90,8 @@ def configure(case, qemu):
                        spm_bank_width=32 if case.get('shared_banks') else 4,
                        array_rows=32,array_cols=32,arrays_per_tile=2 if case['kind']==4 and case.get('background_array',True) else 1,
                        cost_per_mvm_cycles=50000 if case['kind']==4 and case.get('background_array',True) else 100),
-            cpu_parameters=dict(instruction_budget=case.get('budget',256),load_store_queue_depth=case.get('depth',4)),
+            cpu_parameters=dict(instruction_budget=case.get('budget',256),load_store_queue_depth=case.get('depth',4),
+                                issue_width=case.get('issue_width',1)),
             router_parameters=dict(request_window=case.get('window',8),max_request_bytes=case.get('packet',256),
                 memory_queue_depth=case.get('fragments',8),
                 posted_receive_slots_per_source=case.get('packet_slots',4),

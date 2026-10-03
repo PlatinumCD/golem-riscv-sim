@@ -8,6 +8,7 @@
 #include "scratchpadBootImage.h"
 #include "externalCommit.h"
 #include "instructionCache.h"
+#include "instructionTiming.h"
 #include "sharedSyncMemoryBridge.h"
 #include "../analog-arrays/commands.h"
 #include "../mordred/networkCommand.h"
@@ -31,7 +32,18 @@ public:
         {"spm_capacity_bytes", "SPM size in bytes", "2097152"},
         {"spm_request_bytes", "SPM transport fragment size; ordering uses exact byte ranges", "32"},
         {"instruction_budget", "Instructions per QEMU synchronization grant", "256"},
-        {"issue_width", "Maximum scalar instructions issued per CPU cycle", "1"},
+        {"issue_width", "Maximum total instructions issued per CPU cycle; 1..4", "1"},
+        {"instruction_fetch_width", "Sequential cached instructions per fetch block; 0 follows issue_width", "0"},
+        {"integer_issue_units", "Pipelined integer ALU issue ports; 1..4", "2"},
+        {"memory_issue_units", "Shared scalar/RVV memory instruction issue ports; 1..4", "1"},
+        {"integer_latency_cycles", "Integer ALU result latency", "1"},
+        {"integer_initiation_interval", "Integer ALU cycles between admissions per port", "1"},
+        {"floating_latency_cycles", "Scalar FP result latency; divide/sqrt use divide latency", "3"},
+        {"floating_initiation_interval", "Scalar FP cycles between admissions", "1"},
+        {"vector_latency_cycles", "RVV arithmetic result latency; memory/array service timed separately", "1"},
+        {"vector_initiation_interval", "RVV arithmetic cycles between admissions", "1"},
+        {"multiply_latency_cycles", "Scalar integer multiply result latency; pipelined every cycle", "3"},
+        {"divide_latency_cycles", "Scalar divide/sqrt latency and initiation interval", "16"},
         {"load_store_queue_depth", "Outstanding RVV memory beats, 1 retains the blocking baseline; 1..64", "1"},
         {"scalar_load_store_queue_depth", "Outstanding scalar memory operations; zero disables; 0..64", "8"},
         {"analog_command_queue_depth", "Asynchronous vector analog commands; zero disables; 0..16", "4"},
@@ -40,7 +52,7 @@ public:
         {"instruction_cache_bytes", "Instruction cache capacity", "8192"},
         {"instruction_cache_line_bytes", "Instruction cache line size", "64"},
         {"instruction_cache_ways", "Instruction cache LRU associativity", "2"},
-        {"instruction_cache_hit_cycles", "Lookup cycles including one prepaid issue cycle", "1"},
+        {"instruction_cache_hit_cycles", "Latency to make a sequential cached fetch block available", "1"},
         {"array_pipeline_enabled", "Resume MVM at validated compute start; rd=0 reports started instead of completed", "true"},
         {"riscv_vector_enabled", "Enable RVV 1.0", "true"},
         {"riscv_vector_length_bits", "RVV VLEN in bits", "256"},
@@ -67,6 +79,7 @@ private:
     Memory* memory_ = nullptr;
     SST::Link* wake_ = nullptr;
     SST::Link* cacheWake_ = nullptr;
+    SST::Link* issueWake_ = nullptr;
     SST::Link* commit_ = nullptr;
     SST::Link* analog_ = nullptr;
     SST::Link* network_ = nullptr;
@@ -78,6 +91,13 @@ private:
     Riscv::SharedSyncMemoryBridge bridge_;
     Riscv::QemuProcess process_;
     Riscv::CpuExecutionLedger ledger_;
+    Riscv::InstructionIssue issue_;
+    Riscv::InstructionTiming issueInstruction_;
+    unsigned fetchWidth_ = 1, fetchRemaining_ = 0;
+    std::uint64_t fetchBundleCycle_ = 0, fetchNextPc_ = 0, fetchBundleLine_ = 0;
+    std::uint64_t issueWaitCycles_ = 0;
+    bool bundledFetch_ = false, issuePending_ = false;
+    std::ofstream issueTrace_, issueWaitTrace_;
     Riscv::ScratchpadBootImage boot_;
     std::optional<Riscv::QemuSyncEvent> event_;
     std::map<Memory::Request::id_t, bool> pending_;
@@ -121,7 +141,7 @@ private:
     std::uint64_t reads_ = 0, writes_ = 0, fetches_ = 0, requests_ = 0, completions_ = 0;
     std::uint64_t vectorMemoryBeats_ = 0, vectorReadBytes_ = 0, vectorWriteBytes_ = 0;
     std::uint64_t grants_ = 0, stops_ = 0, endCycle_ = 0;
-    std::uint64_t instructionBytes_ = 0, prepaidIssue_ = 0;
+    std::uint64_t instructionBytes_ = 0;
     std::uint64_t cacheStart_ = 0, cacheLine_ = 0, cacheLastLine_ = 0;
     std::unique_ptr<Riscv::InstructionCache> instructionCache_;
     bool cacheFillPending_ = false;
@@ -165,6 +185,8 @@ private:
     void instructionFetch();
     void cacheLookup(SST::Event* event);
     void advanceInstructionFetch();
+    void prepareInstructionIssue();
+    void issueInstruction(SST::Event* wake);
     void traceCache(const char* event, std::uint64_t address, std::uint64_t bytes);
     void traceMemory(const char* event);
     void memoryResponse(Memory::Request* response);

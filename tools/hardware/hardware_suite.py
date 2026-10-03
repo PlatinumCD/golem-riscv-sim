@@ -25,6 +25,7 @@ def hardware_cases():
         Case('component', SOURCE / 'tests/run.py', 'memory', True),
         case('platform/riscv-qemu', 'riscv-qemu', 'platform', qemu=True),
         case('platform/instruction-cache', 'instruction-cache', 'platform', qemu=True),
+        case('platform/instruction-issue', 'instruction-issue', 'platform', qemu=True),
         case('platform/vector-memory', 'vector-memory', 'platform', qemu=True),
         case('platform/load-store-queue', 'load-store-queue', 'platform', qemu=True),
         case('platform/scalar-load-store-queue', 'scalar-load-store-queue', 'platform', qemu=True),

@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from configuration import (connect_arrays, connect_scratchpad, _connect_scratchpad,
-                           connect_riscv, connect_riscv_arrays, resolve)
+                           connect_riscv, connect_riscv_arrays, resolve, _cpu_options)
 
 
 class Node:
@@ -51,6 +51,22 @@ class Composition:
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_instruction_scheduler_options(self):
+        parameters = resolve()
+        defaults = _cpu_options(parameters, {})
+        self.assertEqual(defaults['issue_width'], 1)
+        options = _cpu_options(parameters, dict(issue_width=2, instruction_fetch_width=2,
+            integer_latency_cycles=3, integer_initiation_interval=1))
+        self.assertEqual(options['integer_latency_cycles'], 3)
+        for name, values in (
+            ('issue_width', (0, 5, True)), ('instruction_fetch_width', (-1, 5, True)),
+            ('integer_issue_units', (0, 5, True)), ('memory_issue_units', (0, 5, True)),
+            ('vector_latency_cycles', (0, 1025, True)),
+            ('floating_initiation_interval', (0, 1025, 1.5))):
+            for value in values:
+                with self.subTest(parameter=name, value=value), self.assertRaises(ValueError):
+                    _cpu_options(parameters, {name: value})
+
     def test_bank_maps_resolve_to_real_ids_and_preserve_snapshots(self):
         defaults = resolve()
         self.assertEqual(defaults["spm_banks"], 8)

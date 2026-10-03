@@ -32,8 +32,9 @@ def rows(path):
 def one(trial, suffix):
     paths = list(Path(trial).glob('*' + suffix))
     if suffix == '-waits.csv':
-        # Scalar and analog queues have separate wait traces.
-        paths = [path for path in paths if not path.name.endswith(('-asq-waits.csv', '-slq-waits.csv'))]
+        # Scalar/analog queues and instruction issue have separate wait traces.
+        paths = [path for path in paths if not path.name.endswith(
+            ('-asq-waits.csv', '-slq-waits.csv', '-issue-waits.csv'))]
     assert len(paths) == 1, (suffix, paths)
     return paths[0]
 

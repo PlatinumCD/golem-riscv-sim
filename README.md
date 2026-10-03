@@ -20,8 +20,9 @@ bash tests/run-all.sh --suite hardware
 Run from the repository root. Tested on ARM hosts. Use `--list` to see individual
 test suites. Cycle profiling is optional and off by default.
 
-The implementation lives in [`src/`](src/README.md). Current network tests launch
-transfers through a test controller; guest-initiated sends remain pending.
+The implementation lives in [`src/`](src/README.md). Guests use
+[network instructions](src/components/mordred/network-instructions.md) to submit
+SPM-to-SPM messages and manage receive buffers.
 
 [Parameters](docs/parameters.md) · [Tests](tests/README.md) ·
 [Profiling](docs/profiling.md) · [Mesh diagram](docs/diagrams/mesh-connections.svg)

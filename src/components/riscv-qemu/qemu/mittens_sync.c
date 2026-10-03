@@ -28,6 +28,7 @@
 #include "mittens/FetchSegment.h"
 /* Implemented in the target translator; the device is built in libcommon. */
 bool mittens_sync_register_segment_safe(CPUState *cpu);
+uint64_t mittens_sync_instruction_vtype(CPUState *cpu);
 
 typedef struct MittensScratchpadDMAJob {
     uint64_t execution_id;
@@ -311,6 +312,9 @@ void helper_mittens_sync_instruction_fetch(
     /* This helper is emitted at the start of a one-instruction TB.  The
      * boundary therefore reports the count before the instruction, while
      * QEMU's normal icount/vector ledger remains unchanged. */
+    s->bridge->instruction_bits = instruction;
+    s->bridge->instruction_reserved = 0;
+    s->bridge->instruction_vtype = mittens_sync_instruction_vtype(current_cpu);
     mittens_sync_publish_event(
         MITTENS_SYNC_STOP_INSTRUCTION_FETCH,
         MITTENS_SYNC_EVENT_FLAG_NONE,

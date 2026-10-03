@@ -181,14 +181,26 @@ def main():
         # Queued programming overlaps CPU work. Check the exact delay charged
         # by the array; it no longer adds directly to CPU elapsed time.
         assert delayed["arrays"]["program_delay_cycles"] - reference["arrays"]["program_delay_cycles"] == 17 * reference["program_chunks"]
-    # The guest handles illegal-instruction traps and resumes. Cache lookup
-    # credit must not leak across those traps or synchronization grants.
+    # The guest handles illegal-instruction traps and resumes. Host grants and
+    # wider issue must preserve its instruction stream and memory/array traffic.
     for name in ("budget-1", "issue-4"):
         if {"default", name} <= by_case.keys():
             reference, candidate = by_case["default"]["cpu"], by_case[name]["cpu"]
-            for key in ("instructions", "vector_instructions", "icache_fetches", "icache_hits", "icache_misses"):
+            for key in ("instructions", "issued_instructions", "vector_instructions",
+                        "instruction_bytes", "icache_fetches", "icache_hits", "icache_misses",
+                        "icache_fill_bytes", "read_bytes", "write_bytes", "memory_requests",
+                        "analog_commands", "analog_read_bytes", "analog_write_bytes"):
                 assert candidate[key] == reference[key], (name, key, candidate, reference)
-            assert candidate["end_cycle"] == reference["end_cycle"], (name, candidate, reference)
+            if name == "budget-1":
+                assert candidate["end_cycle"] == reference["end_cycle"], (name, candidate, reference)
+            else:
+                assert candidate["end_cycle"] < reference["end_cycle"], (name, candidate, reference)
+                assert 1 < candidate["peak_issue_width"] <= 4
+                issued = list(csv.DictReader((output/name/"riscv-issue.csv").open()))
+                per_cycle = Counter(int(row["cycle"]) for row in issued)
+                assert len(issued) == candidate["issued_instructions"]
+                assert len(per_cycle) == candidate["issue_cycles"]
+                assert max(per_cycle.values()) == candidate["peak_issue_width"]
     (output / "validation.json").write_text(json.dumps(dict(passed=True, cases=len(results)), indent=2) + "\n")
     print(f"PASS: {len(results)} LLVM / RVV / analog-array regressions", flush=True)
 
